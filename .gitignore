@@ -1,0 +1,9 @@
+.env
+.env.*
+test-results/
+.runlogs/
+.agents/
+node_modules/
+vendor/
+*.log
+
