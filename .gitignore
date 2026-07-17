@@ -2,8 +2,15 @@
 .env.*
 test-results/
 .runlogs/
+.mysql-data/
 .agents/
 node_modules/
 vendor/
 *.log
-
+app/config/local.php
+.tools/
+.test-mysql-data/
+.test-screenshots/
+.test-*.log
+public/uploads/results/*
+!public/uploads/results/.gitkeep

@@ -58,6 +58,7 @@
     alert: '<path d="M10.3 3.7 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0ZM12 9v4M12 17h.01"/>',
     lock: '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/>',
+    maintenance: '<path d="M14.7 6.3a4 4 0 0 0-5 5l-5.4 5.4a2 2 0 1 0 3 3l5.4-5.4a4 4 0 0 0 5-5l-2.8 2.8-2.8-2.8 2.6-3Z"/>',
     upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
     review: '<path d="M9 11l2 2 4-4M5 4h14v16H5zM8 17h8"/>',
     activity: '<path d="M3 12h4l2-7 4 14 2-7h6"/>',
@@ -75,13 +76,13 @@
       dashboard: ["Admin Dashboard", "A clear view of clinic operations and system activity."],
       users: ["User Management", "Manage system users, roles, and access permissions."],
       facilities: ["Healthcare Facilities", "Manage clinic locations and assigned care teams."],
-      tests: ["Laboratory Test Definitions", "Configure the laboratory test catalog and reference details."],
-      "create-order": ["Create Laboratory Order", "Create an order for any active patient and requesting doctor."],
-      orders: ["Laboratory Orders", "View and track laboratory orders across all facilities."],
-      results: ["Results Management", "View uploaded, verified, released, and rejected results."],
+      tests: ["Laboratory Tests", "Manage active laboratory tests, pricing, and reference details."],
+      orders: ["Laboratory Orders", "Review laboratory orders across all facilities."],
+      results: ["Laboratory Results", "Review result workflow status across the system."],
       reports: ["Reports & Analytics", "Monitor performance, trends, and operational health."],
       audit: ["Audit Trail", "Track system activities, security events, and user actions."],
       notifications: ["Notifications", "Review alerts, updates, and action items across the clinic."],
+      maintenance: ["Maintenance Mode", "Control temporary access restrictions by role or module."],
       settings: ["Settings", "Manage your account, security, and role permissions."],
     },
     Doctor: {
@@ -100,7 +101,6 @@
       upload: ["Results Upload", "Upload structured findings and result values."],
       review: ["Result Review", "Verify, release, or reject uploaded results."],
       operations: ["Assigned Operations", "Review facility workload and active laboratory tasks."],
-      patients: ["Patients", "View patients connected to assigned orders."],
       facilities: ["Assigned Facilities", "View your laboratory facility assignments."],
       queue: ["Test Queue", "Track active tests by priority, status, and date."],
       notifications: ["Notifications", "Review laboratory alerts and workflow updates."],
@@ -136,6 +136,8 @@
     High: "orange",
     Normal: "green",
     Routine: "teal",
+    Regular: "green",
+    Priority: "red",
     Admin: "purple",
     Doctor: "blue",
     "Laboratory Staff": "teal",
@@ -155,16 +157,24 @@
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const h = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+  const safeStorage = {
+    get(key) {
+      try { return localStorage.getItem(key); } catch { return null; }
+    },
+    set(key, value) {
+      try { localStorage.setItem(key, value); } catch { /* Storage can be unavailable in restricted browser modes. */ }
+    },
+  };
 
   function getTextSize() {
-    const saved = localStorage.getItem(TEXT_SIZE_KEY);
+    const saved = safeStorage.get(TEXT_SIZE_KEY);
     return textSizeOptions.some((option) => option.value === saved) ? saved : "default";
   }
 
   function applyTextSize(size = getTextSize()) {
     const next = textSizeOptions.some((option) => option.value === size) ? size : "default";
     document.documentElement.dataset.textSize = next;
-    localStorage.setItem(TEXT_SIZE_KEY, next);
+    safeStorage.set(TEXT_SIZE_KEY, next);
     $$("[data-text-size-option]").forEach((button) => {
       const selected = button.dataset.textSizeOption === next;
       button.classList.toggle("active", selected);
@@ -174,6 +184,13 @@
   const money = (value) => `PHP ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const shortDate = (value) => value ? new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "-";
   const shortDateTime = (value) => value ? new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "-";
+  const datetimeInputValue = (value) => {
+    if (!value) return "";
+    const date = new Date(String(value).replace(" ", "T"));
+    if (Number.isNaN(date.getTime())) return "";
+    const pad = (part) => String(part).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
 
   function icon(name, className = "") {
     return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" ${name === "medical" ? "" : 'fill="none"'}>${iconPaths[name] || iconPaths.file}</svg>`;
@@ -191,7 +208,10 @@
     const response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": window.CLINIC_CSRF_TOKEN || document.querySelector('meta[name="csrf-token"]')?.content || "",
+      },
       body: JSON.stringify(payload),
     });
     const text = await response.text();
@@ -203,12 +223,31 @@
       throw new Error(`The PHP API returned an invalid response (${response.status}). ${snippet || "Empty response"}`);
     }
     if (!response.ok || json.success === false || json.ok === false) {
+      if (response.status === 503 && json.data?.maintenance) {
+        location.href = window.CLINIC_MAINTENANCE_URL || "../maintenance.php";
+      }
       const error = new Error(json.message || "The request could not be completed.");
       error.status = response.status;
       error.response = json;
       throw error;
     }
+    if (json.data?.csrfToken) window.CLINIC_CSRF_TOKEN = json.data.csrfToken;
     return json.data || {};
+  }
+
+  function readAttachments(files) {
+    const allowed = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+    const maxBytes = 10 * 1024 * 1024;
+    return Promise.all([...files].map((file) => new Promise((resolve, reject) => {
+      if (!allowed.includes(file.type) || file.size > maxBytes) {
+        reject(new Error("Attachments must be PDF, JPG, PNG, or WEBP files up to 10 MB."));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => resolve({ name: file.name, type: file.type, size: file.size, data: String(reader.result).split(",")[1] || "" });
+      reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+      reader.readAsDataURL(file);
+    })));
   }
 
   function badge(value) {
@@ -229,7 +268,7 @@
   }
 
   function heading(title, subtitle, actions = "") {
-    return `<div class="page-heading"><div><p class="eyebrow">Clinic Management System</p><h2>${h(title)}</h2><p>${h(subtitle)}</p></div>${actions ? `<div class="heading-actions">${actions}</div>` : ""}</div>`;
+    return `<div class="page-heading"><div><p class="eyebrow">Centralized Laboratory Results System</p><h2>${h(title)}</h2><p>${h(subtitle)}</p></div>${actions ? `<div class="heading-actions">${actions}</div>` : ""}</div>`;
   }
 
   function stat(label, value, iconName, change = "-", color = "teal") {
@@ -321,6 +360,11 @@
 
   function recordBy(collection, id) {
     return (state.data?.[collection] || []).find((item) => String(item.id) === String(id));
+  }
+
+  function apiUrl(action, params = {}) {
+    const query = new URLSearchParams({ action, ...params });
+    return `${API_URL}?${query.toString()}`;
   }
 
   function hydrateProfile() {
@@ -424,14 +468,14 @@
 
   function renderAdminDashboard() {
     const auditRows = state.data.audit.slice(0, 8).map((item) => [shortDateTime(item.createdAt), person(item.userName, item.role, initials(item.userName)), badge(item.action), item.module, `<span class="cell-wrap">${h(item.details)}</span>`]);
-    return `${heading(...pageMeta.Admin.dashboard, `<button class="btn btn-secondary" data-go-page="reports">${icon("chart")} Reports</button><button class="btn btn-primary" data-drawer="user">${icon("plus")} New User</button>`)}
-      <div class="stats-grid stats-eight">${dashboardStats()}</div>
-      <div class="admin-dashboard-layout"><div class="admin-dashboard-main"><div class="charts-pair">${donutCard("Orders by Status", state.data.reports.ordersByStatus, "Orders")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div><section class="card order-activity-card"><div class="card-head"><div><h3 class="card-title">Order Activity</h3><p class="card-subtitle">Counts by current status</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByStatus)}</div></section></div><section class="card notifications-card"><div class="card-head"><div><h3 class="card-title">Latest Notifications</h3><p class="card-subtitle">Database-backed system notices</p></div><button class="card-link" data-go-page="notifications">View all</button></div><div class="card-body notification-list">${notificationArticles(state.data.notifications.slice(0, 4))}</div></section></div>
+    return `${heading(...pageMeta.Admin.dashboard, `<button class="btn btn-secondary" data-go-page="audit">${icon("audit")} Audit Trail</button><button class="btn btn-primary" data-drawer="user">${icon("plus")} New User</button>`)}
+      <div class="stats-grid">${stat("Users", state.data.users.length, "users")}${stat("Active Users", state.data.users.filter((u) => u.status === "Active").length, "check", "-", "green")}${stat("Facilities", state.data.facilities.length, "facility", "-", "blue")}${stat("Audit Records", state.data.audit.length, "audit", "-", "purple")}</div>
+      <div class="admin-dashboard-layout"><div class="admin-dashboard-main"><section class="card order-activity-card"><div class="card-head"><div><h3 class="card-title">Account Overview</h3><p class="card-subtitle">Users by role</p></div></div><div class="card-body">${chartFromCounts(Object.fromEntries(["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => [role, state.data.users.filter((u) => u.role === role).length])))}</div></section></div><section class="card notifications-card"><div class="card-head"><div><h3 class="card-title">Latest Notifications</h3><p class="card-subtitle">Database-backed system notices</p></div><button class="card-link" data-go-page="notifications">View all</button></div><div class="card-body notification-list">${notificationArticles(state.data.notifications.slice(0, 4))}</div></section></div>
       ${table(["Time", "User", "Action", "Module", "Details"], auditRows, "Latest audit records")}`;
   }
 
   function renderUsers() {
-    const rows = state.data.users.map((user) => [person(user.name, `@${user.username}`, user.avatar), h(user.email), badge(user.role), h(user.assignedFacility || "Unassigned"), badge(user.status), `<div class="row-actions"><button class="row-action" data-drawer="user" data-id="${user.id}" aria-label="Edit user">${icon("edit")}</button><button class="row-action" data-toggle-user="${user.id}" data-status="${user.status === "Active" ? "Inactive" : "Active"}" aria-label="Toggle status">${icon(user.status === "Active" ? "lock" : "check")}</button></div>`]);
+    const rows = state.data.users.map((user) => [person(user.name, `@${user.username}`, user.avatar), h(user.email), badge(user.role), h(user.assignedFacility || "Unassigned"), badge(user.status), `<div class="row-actions"><button class="row-action" data-drawer="user" data-id="${user.id}" aria-label="Edit user">${icon("edit")}</button><button class="row-action" data-toggle-user="${user.id}" data-status="${user.status === "Active" ? "Inactive" : "Active"}" aria-label="${user.status === "Active" ? "Deactivate user" : "Activate user"}">${icon(user.status === "Active" ? "lock" : "check")}</button><button class="row-action row-action-danger" data-delete-user="${user.id}" data-user-name="${h(user.name)}" aria-label="Delete user">${icon("trash")}</button></div>`]);
     return `${heading(...pageMeta.Admin.users, `<button class="btn btn-primary" data-drawer="user">${icon("plus")} Add User</button>`)}
       <div class="stats-grid">${stat("Total Users", state.data.users.length, "users")}${stat("Active Users", state.data.users.filter((u) => u.status === "Active").length, "check", "-", "green")}${stat("Doctors", state.data.users.filter((u) => u.role === "Doctor").length, "doctor", "-", "blue")}${stat("Patients", state.data.users.filter((u) => u.role === "Patient").length, "user", "-", "orange")}</div>
       ${filters("Search users", [["All roles", ["Admin", "Doctor", "Laboratory Staff", "Patient"]], ["All statuses", ["Active", "Inactive"]]])}
@@ -454,23 +498,23 @@
       ${table(["Code", "Test Name", "Category", "Sample", "Turnaround", "Price", "Status", "Action"], rows)}`;
   }
 
-  function renderOrders(titleRole = currentUser.role) {
-    const rows = state.data.orders.map((order) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(order.orderNumber)}</span>`, person(order.patientName, order.patientCode, order.patientAvatar, "teal"), h(order.doctorName), h(order.facilityName), `<span class="cell-wrap">${h(order.tests)}</span>`, badge(order.priority), badge(order.status), shortDate(order.createdAt), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
-    const meta = pageMeta[titleRole]?.orders || pageMeta.Admin.orders;
-    const action = ["Admin", "Doctor"].includes(titleRole) ? `<button class="btn btn-primary" data-go-page="create-order">${icon("plus")} Create Order</button>` : "";
+  function renderOrders(titleRole = currentUser.role, pageKey = "orders") {
+    const rows = state.data.orders.map((order) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(order.orderNumber)}</span>`, person(order.patientName, order.patientCode, order.patientAvatar, "teal"), h(order.doctorName), h(order.facilityName), `<span class="cell-wrap">${h(order.tests)}</span>`, badge(order.priority), badge(order.status), `<time datetime="${h(order.createdAt)}">${shortDateTime(order.createdAt)}</time>`, `<time datetime="${h(order.updatedAt || order.createdAt)}">${shortDateTime(order.updatedAt || order.createdAt)}</time>`, `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
+    const meta = pageMeta[titleRole]?.[pageKey] || pageMeta[titleRole]?.orders || pageMeta.Admin.orders;
+    const action = titleRole === "Doctor" ? `<button class="btn btn-primary" data-go-page="create-order">${icon("plus")} Create Order</button>` : "";
     return `${heading(...meta, action)}
-      <div class="stats-grid">${stat("Orders", state.data.orders.length, "orders")}${stat("Open", state.data.orders.filter((o) => !["Released", "Rejected", "Cancelled"].includes(o.status)).length, "clock", "-", "orange")}${stat("Released", state.data.orders.filter((o) => o.status === "Released").length, "check", "-", "green")}${stat("Urgent / High", state.data.orders.filter((o) => ["Urgent", "High"].includes(o.priority)).length, "alert", "-", "red")}</div>
+      <div class="stats-grid">${stat("Orders", state.data.orders.length, "orders")}${stat("Open", state.data.orders.filter((o) => !["Released", "Rejected", "Cancelled"].includes(o.status)).length, "clock", "-", "orange")}${stat("Released", state.data.orders.filter((o) => o.status === "Released").length, "check", "-", "green")}${stat("Priority", state.data.orders.filter((o) => o.priority === "Priority").length, "alert", "-", "red")}</div>
       ${filters("Search orders", [["All statuses", Object.keys(state.data.reports.ordersByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)]])}
-      ${table(["Order No.", "Patient", "Doctor", "Facility", "Tests", "Priority", "Status", "Date", "Action"], rows)}`;
+      ${table(["Order No.", "Patient", "Doctor", "Facility", "Tests", "Priority", "Status", "Created", "Updated", "Action"], rows)}`;
   }
 
   function renderResults(titleRole = currentUser.role) {
-    const rows = state.data.results.map((result) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(result.resultNumber)}</span>`, h(result.orderNumber), person(result.patientName, result.patientCode), h(result.testName), h(result.facilityName), badge(result.status), shortDateTime(result.releasedAt || result.uploadedAt), `<span class="cell-wrap">${h(result.clinicalNote || "No clinical note yet")}</span>`, `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">View</button>`]);
+    const rows = state.data.results.map((result) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(result.resultNumber)}</span>`, h(result.orderNumber), person(result.patientName, result.patientCode), h(result.testName), h(result.facilityName), badge(result.status), `<time datetime="${h(result.createdAt || result.uploadedAt)}">${shortDateTime(result.createdAt || result.uploadedAt)}</time>`, `<time datetime="${h(result.releasedAt || result.updatedAt || result.uploadedAt)}">${shortDateTime(result.releasedAt || result.updatedAt || result.uploadedAt)}</time>`, `<span class="cell-wrap">${h(result.clinicalNote || "No clinical note yet")}</span>`, `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">View</button>`]);
     const meta = pageMeta[titleRole]?.results || pageMeta.Admin.results;
     return `${heading(...meta)}
       <div class="stats-grid">${stat("Results", state.data.results.length, "results")}${stat("Pending Review", state.data.results.filter((r) => r.status === "Pending Review").length, "clock", "-", "orange")}${stat("Verified", state.data.results.filter((r) => r.status === "Verified").length, "check", "-", "green")}${stat("Released", state.data.results.filter((r) => r.status === "Released").length, "download", "-", "blue")}</div>
       ${filters("Search results", [["All statuses", Object.keys(state.data.reports.resultsByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)]])}
-      ${table(["Result ID", "Order No.", "Patient", "Test", "Facility", "Status", "Date", "Clinical Note", "Action"], rows)}`;
+      ${table(["Result ID", "Order No.", "Patient", "Test", "Facility", "Status", "Created", "Updated/Released", "Clinical Note", "Action"], rows)}`;
   }
 
   function renderReports() {
@@ -500,6 +544,53 @@
   function renderAdminSettings() {
     return `${heading(...pageMeta.Admin.settings)}
       <div class="settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Profile</h3><p>Signed in as ${h(currentUser.name)}.</p></div>${avatar(currentUser.avatar)}</div><div class="info-display-grid"><div class="info-display"><span>Email</span><strong>${h(currentUser.email)}</strong></div><div class="info-display"><span>Role</span><strong>${h(currentUser.role)}</strong></div></div></section><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Change your password using the secure API.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}<section class="card settings-card"><div class="settings-card-head"><div><h3>Role Permissions</h3><p>Server-side access is enforced by every API action.</p></div>${icon("lock")}</div>${["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => `<div class="setting-row"><div><strong>${h(role)}</strong><p>${role === "Admin" ? "Full system access" : "Role-scoped records and workflow actions"}</p></div>${toggle(true, "", "disabled aria-label=\"Server enforced\"")}</div>`).join("")}</section></div>`;
+  }
+
+  function renderAdminMaintenance() {
+    const settings = state.data.maintenance || {};
+    const enabled = Boolean(settings.isEnabled);
+    const activeText = settings.isActive ? "Enabled" : enabled ? "Scheduled" : "Disabled";
+    const nextAction = enabled ? "Disable Maintenance Mode" : "Enable Maintenance Mode";
+    return `${heading(...pageMeta.Admin.maintenance)}
+      <div class="maintenance-simple-layout">
+        <section class="card maintenance-hero-card ${enabled ? "is-enabled" : "is-disabled"}">
+          <div class="maintenance-hero-top">
+            <span class="maintenance-hero-icon">${icon(enabled ? "alert" : "shield")}</span>
+            <span class="maintenance-status-badge ${enabled ? "enabled" : "disabled"}">${h(activeText)}</span>
+          </div>
+          <h3>Maintenance Mode is ${enabled ? "enabled" : "disabled"}</h3>
+          <p>When active, the selected non-admin roles or modules are redirected to the maintenance page. Admin users retain access so maintenance can be disabled safely.</p>
+          <div class="maintenance-preview"><strong>Public message</strong><p>${h(settings.message || "The system is currently undergoing maintenance. Please try again later.")}</p>${settings.reason ? `<small>${h(settings.reason)}</small>` : ""}</div>
+        </section>
+
+        <section class="card maintenance-form-card maintenance-control-card">
+          <form data-form="maintenance">
+            <div class="settings-card-head">
+              <div><h3>Maintenance Settings</h3><p>Use this only when the system needs temporary downtime or controlled access.</p></div>
+              ${toggle(enabled, "Enabled", 'name="isEnabled" value="1"')}
+            </div>
+            <div class="maintenance-warning">${icon("alert")} Enabling maintenance mode will prevent patients, doctors, and lab staff from accessing the system.</div>
+            <div class="form-grid">
+              <div class="form-field full"><label>Access Scope</label>${select("scope", [
+                { value: "all", label: "All non-admin users" },
+                { value: "roles", label: "Selected roles" },
+                { value: "pages", label: "Selected modules/pages" },
+              ], settings.scope || "all")}</div>
+              <fieldset class="form-field full maintenance-options"><legend>Affected Roles</legend>
+                ${["Doctor", "Laboratory Staff", "Patient"].map((role) => `<label class="register-check"><input type="checkbox" name="affectedRoles" value="${h(role)}" ${(settings.affectedRoles || []).includes(role) ? "checked" : ""}><span>${h(role)}</span></label>`).join("")}
+              </fieldset>
+              <fieldset class="form-field full maintenance-options"><legend>Affected Modules</legend>
+                ${["dashboard", "orders", "results", "notifications", "settings", "patients", "facilities", "create-order", "upload", "review", "queue", "profile", "registration"].map((page) => `<label class="register-check"><input type="checkbox" name="affectedPages" value="${h(page)}" ${(settings.affectedPages || []).includes(page) ? "checked" : ""}><span>${h(page.replace("-", " "))}</span></label>`).join("")}
+              </fieldset>
+              ${field("Maintenance Message", "message", settings.message || "", "textarea", "rows=\"4\" required maxlength=\"255\"")}
+              ${field("Reason", "reason", settings.reason || "", "text", "maxlength=\"255\" placeholder=\"Optional internal or public reason\"")}
+              ${field("Start Date & Time", "startAt", datetimeInputValue(settings.startAt), "datetime-local")}
+              ${field("End Date & Time", "endAt", datetimeInputValue(settings.endAt), "datetime-local")}
+            </div>
+            <div class="form-actions"><button class="btn ${enabled ? "btn-danger" : "btn-primary"}" type="submit">${icon(enabled ? "close" : "check")} ${h(nextAction)}</button></div>
+          </form>
+        </section>
+      </div>`;
   }
 
   function renderDoctorDashboard() {
@@ -532,12 +623,19 @@
     const patientOptions = state.data.availablePatients.map((patient) => ({ value: patient.id, label: `${patient.name} - ${patient.patientCode}` }));
     const facilityOptions = state.data.facilities.filter((facility) => facility.status === "Active").map((facility) => ({ value: facility.id, label: facility.name }));
     const activeTests = state.data.tests.filter((test) => test.status === "Active");
-    const doctorOptions = (state.data.users || []).filter((user) => user.role === "Doctor" && user.status === "Active").map((user) => ({ value: user.id, label: user.name }));
-    const doctorField = currentUser.role === "Admin" ? `<div class="form-field full"><label>Requesting Doctor</label>${select("doctorId", doctorOptions, doctorOptions[0]?.value || "", "required")}</div>` : "";
+    const cannotSubmit = !patientOptions.length || !facilityOptions.length || !activeTests.length;
+    const disabled = cannotSubmit ? "disabled" : "";
+    const patientSelect = patientOptions.length ? select("patientId", patientOptions, patientOptions[0]?.value || "", "required") : '<select name="patientId" required disabled><option>No active patients</option></select>';
+    const facilitySelect = facilityOptions.length ? select("facilityId", facilityOptions, facilityOptions[0]?.value || "", "required") : '<select name="facilityId" required disabled><option>No active facilities</option></select>';
+    const defaultTestId = activeTests.find((test) => test.code === "CBC")?.id || activeTests[0]?.id || "";
+    const testsMarkup = activeTests.length
+      ? activeTests.map((test) => `<label class="test-choice-card"><input type="checkbox" name="testIds" value="${test.id}" ${String(test.id) === String(defaultTestId) ? "checked" : ""} ${disabled}><span><strong>${h(test.code)} - ${h(test.name)}</strong><small>${h(test.category)} / ${h(test.sampleType)} / ${h(test.turnaroundTime)}</small></span></label>`).join("")
+      : '<div class="empty-state">No active laboratory tests are available.</div>';
+    const formHint = cannotSubmit ? '<div class="form-hint">Add at least one active patient, facility, doctor, and test before submitting an order.</div>' : "";
     const meta = pageMeta[currentUser.role]["create-order"] || pageMeta.Doctor["create-order"];
     return `${heading(...meta)}
       <div class="create-order-layout"><section class="card"><div class="card-head"><div><h3 class="card-title">Available Patients</h3><p class="card-subtitle">Choose from database patient records.</p></div></div><div class="recent-patient-list">${state.data.availablePatients.slice(0, 6).map((patient, index) => `<button class="recent-patient ${index === 0 ? "selected" : ""}" type="button" data-patient-pick="${patient.id}">${avatar(patient.avatar)}<div><strong>${h(patient.name)}</strong><span>${h(patient.patientCode)} - ${h(patient.sex || "No sex recorded")}</span></div></button>`).join("")}</div></section>
-      <form class="card order-compose-card" data-form="create-order"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Laboratory Order Details</h3><p class="card-subtitle">Saved directly to MySQL.</p></div>${badge("Pending")}</div><div class="form-grid"><div class="form-field full"><label>Patient</label>${select("patientId", patientOptions, patientOptions[0]?.value || "", "required")}</div>${doctorField}<div class="form-field full"><label>Facility</label>${select("facilityId", facilityOptions, facilityOptions[0]?.value || "", "required")}</div><div class="form-field full"><label>Ordered Tests</label><div class="selection-box">${activeTests.map((test) => `<label class="selection-chip"><input type="checkbox" name="testIds" value="${test.id}" ${test.code === "CBC" ? "checked" : ""}> ${h(test.code)} - ${h(test.name)}</label>`).join("")}</div></div><div class="form-field"><label>Priority</label>${select("priority", ["Normal", "Routine", "High", "Urgent"], "Normal")}</div><div class="form-field"><label>Initial Status</label>${select("status", ["Pending", "Pending Sample", "Accepted"], "Pending")}</div><div class="form-field full"><label>Clinical Notes</label><textarea name="clinicalNotes" placeholder="Clinical context or special instructions"></textarea></div></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit">${icon("plus-file")} Submit Order</button></div></form>
+      <form class="card order-compose-card" data-form="create-order"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Laboratory Order Details</h3><p class="card-subtitle">New orders are submitted as Pending for laboratory intake.</p></div>${badge("Pending")}</div>${formHint}<div class="form-grid"><div class="form-field full"><label>Patient</label>${patientSelect}</div><div class="form-field full"><label>Facility</label>${facilitySelect}</div><div class="form-field full"><label>Ordered Tests</label><div class="test-choice-grid">${testsMarkup}</div></div><div class="form-field"><label>Priority</label>${select("priority", ["Regular", "Priority"], "Regular", disabled)}</div><div class="form-field"><label>Status</label><div class="readonly-pill">${badge("Pending")} Laboratory staff updates this after intake.</div></div><div class="form-field full"><label>Clinical Notes</label><textarea name="clinicalNotes" ${disabled} placeholder="Clinical context or special instructions"></textarea></div></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("plus-file")} Submit Order</button></div></form>
       <aside class="card order-summary"><p class="eyebrow">Order Summary</p><h3 class="card-title">Database workflow</h3><div class="clinical-note-box"><h4>${icon("shield")} Notifications included</h4><p>Submitting creates an order, notifies laboratory staff and the patient, and writes an audit record.</p></div></aside></div>`;
   }
 
@@ -555,14 +653,14 @@
 
   function renderLabUpload() {
     const activeResultOrderIds = new Set(state.data.results.filter((result) => result.status !== "Rejected").map((result) => String(result.orderId)));
-    const uploadStatuses = new Set(["Pending", "Pending Sample", "Accepted", "Sample Collected", "Processing", "In Progress"]);
+    const uploadStatuses = new Set(["Processing", "In Progress"]);
     const eligible = state.data.orders.filter((order) => uploadStatuses.has(order.status) && !activeResultOrderIds.has(String(order.id)));
     const orderOptions = eligible.map((order) => ({ value: order.id, label: `${order.orderNumber} - ${order.patientName} - ${order.tests}` }));
     const queueRows = eligible.map((order) => [h(order.orderNumber), h(order.patientName), h(order.tests), badge(order.priority), badge(order.status), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
     const disabled = eligible.length ? "" : "disabled";
     const orderSelect = eligible.length ? select("orderId", orderOptions, orderOptions[0]?.value || "", "required") : '<select name="orderId" required disabled><option>No eligible orders</option></select>';
     return `${heading(...pageMeta["Laboratory Staff"].upload)}
-      <div class="upload-layout"><form class="card upload-panel" data-form="upload-result"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Structured Result Entry</h3><p class="card-subtitle">Saved as a pending-review result.</p></div>${icon("upload")}</div><div class="form-grid"><div class="form-field full"><label>Order</label>${orderSelect}</div><div class="form-field full"><label>Findings Summary</label><textarea name="findings" required ${disabled} placeholder="Enter laboratory findings"></textarea></div><div class="form-field full"><label>Remarks</label><textarea name="remarks" ${disabled} placeholder="Specimen notes, QC notes, or review comments"></textarea></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3><table class="parameter-input-table"><thead><tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Reference</th><th>Flag</th></tr></thead><tbody>${["WBC", "Hemoglobin", "Platelets", "CRP"].map((name) => `<tr><td><input name="parameter" value="${name}" ${disabled}></td><td><input name="value" ${disabled}></td><td><input name="unit" ${disabled}></td><td><input name="referenceRange" ${disabled}></td><td><input name="flag" ${disabled}></td></tr>`).join("")}</tbody></table><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("upload")} Upload Result</button></div></form><section>${table(["Order No.", "Patient", "Tests", "Priority", "Status", "Action"], queueRows, "Orders available for result upload")}</section></div>`;
+      <div class="upload-layout"><form class="card upload-panel" data-form="upload-result"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Structured Result Entry</h3><p class="card-subtitle">Saved as a pending-review result.</p></div>${icon("upload")}</div><div class="form-grid"><div class="form-field full"><label>Order</label>${orderSelect}</div><div class="form-field full"><label>Findings Summary</label><textarea name="findings" required ${disabled} placeholder="Enter laboratory findings"></textarea></div><div class="form-field full"><label>Remarks</label><textarea name="remarks" ${disabled} placeholder="Specimen notes, QC notes, or review comments"></textarea></div><div class="form-field full"><label>Result Attachments</label><input name="attachments" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple ${disabled}><small>Attach PDF reports or result images up to 10 MB each.</small></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3><table class="parameter-input-table"><thead><tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Reference</th><th>Flag</th></tr></thead><tbody>${["WBC", "Hemoglobin", "Platelets", "CRP"].map((name) => `<tr><td><input name="parameter" value="${name}" ${disabled}></td><td><input name="value" ${disabled}></td><td><input name="unit" ${disabled}></td><td><input name="referenceRange" ${disabled}></td><td><input name="flag" ${disabled}></td></tr>`).join("")}</tbody></table><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("upload")} Upload Result</button></div></form><section>${table(["Order No.", "Patient", "Tests", "Priority", "Status", "Action"], queueRows, "Orders available for result upload")}</section></div>`;
   }
 
   function renderLabReview() {
@@ -609,9 +707,9 @@
   }
 
   const renderers = {
-    Admin: { dashboard: renderAdminDashboard, users: renderUsers, facilities: renderFacilities, tests: renderTests, "create-order": renderCreateOrder, orders: () => renderOrders("Admin"), results: () => renderResults("Admin"), reports: renderReports, audit: renderAudit, notifications: () => renderNotifications("Admin"), settings: renderAdminSettings },
+    Admin: { dashboard: renderAdminDashboard, users: renderUsers, facilities: renderFacilities, tests: renderTests, orders: () => renderOrders("Admin"), results: () => renderResults("Admin"), reports: renderReports, audit: renderAudit, notifications: () => renderNotifications("Admin"), maintenance: renderAdminMaintenance, settings: renderAdminSettings },
     Doctor: { dashboard: renderDoctorDashboard, patients: () => renderPatients("Doctor"), facilities: renderFacilitiesAndTests, "create-order": renderCreateOrder, orders: () => renderOrders("Doctor"), results: () => renderResults("Doctor"), notifications: () => renderNotifications("Doctor"), settings: renderDoctorSettings },
-    "Laboratory Staff": { dashboard: renderLabDashboard, orders: () => renderOrders("Laboratory Staff"), upload: renderLabUpload, review: renderLabReview, operations: renderLabOperations, patients: () => renderPatients("Laboratory Staff"), facilities: renderLabFacilities, queue: () => renderOrders("Laboratory Staff"), notifications: () => renderNotifications("Laboratory Staff"), settings: renderLabSettings },
+    "Laboratory Staff": { dashboard: renderLabDashboard, orders: () => renderOrders("Laboratory Staff"), upload: renderLabUpload, review: renderLabReview, operations: renderLabOperations, facilities: renderLabFacilities, queue: () => renderOrders("Laboratory Staff", "queue"), notifications: () => renderNotifications("Laboratory Staff"), settings: renderLabSettings },
     Patient: { dashboard: renderPatientDashboard, orders: () => renderOrders("Patient"), results: () => renderResults("Patient"), notifications: () => renderNotifications("Patient"), profile: renderPatientProfile, settings: renderPatientSettings },
   };
 
@@ -624,12 +722,27 @@
 
   function setPage(requested = "dashboard", updateHash = true) {
     const role = currentUser.role;
-    const page = renderers[role][requested] ? requested : "dashboard";
+    const roleRenderers = renderers[role] || {};
+    const page = roleRenderers[requested] ? requested : "dashboard";
+    const maintenance = state.data?.maintenance;
+    const roleBlocked = maintenance?.scope === "all"
+      || (maintenance?.scope === "roles" && (maintenance.affectedRoles || []).includes(role));
+    const pageBlocked = maintenance?.scope === "pages" && (maintenance.affectedPages || []).includes(page);
+    if (role !== "Admin" && maintenance?.isActive && (roleBlocked || pageBlocked)) {
+      location.href = window.CLINIC_MAINTENANCE_URL || "../maintenance.php";
+      return;
+    }
+    const renderer = roleRenderers[page];
+    if (!renderer) {
+      $("#page-content").innerHTML = '<section class="card"><div class="empty-state">This workspace is not available for your role.</div></section>';
+      return;
+    }
     state.page = page;
-    $("#page-content").innerHTML = renderers[role][page]();
+    $("#page-content").innerHTML = renderer();
     $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
-    $("#page-title").textContent = pageMeta[role][page][0];
-    document.title = `${pageMeta[role][page][0]} | Clinic Management System`;
+    const meta = pageMeta[role]?.[page] || pageMeta[role]?.dashboard || ["Dashboard"];
+    $("#page-title").textContent = meta[0];
+    document.title = `${meta[0]} | Centralized Laboratory Results System`;
     if (updateHash && location.hash !== `#${page}`) history.pushState(null, "", `#${page}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
     closeSidebar();
@@ -657,26 +770,46 @@
   function orderDetails(order) {
     if (!order) return '<div class="empty-state">Order not found.</div>';
     const canUpdateOrder = !["Result Uploaded", "Verified", "Released", "Rejected", "Cancelled"].includes(order.status);
-    const labActions = (currentUser.role === "Laboratory Staff" || currentUser.role === "Admin") && canUpdateOrder
-      ? `<div class="form-actions">${["Pending Sample", "Accepted", "Sample Collected", "Processing", "Rejected", "Cancelled"].map((status) => `<button class="btn btn-secondary" type="button" data-order-status="${h(status)}" data-id="${order.id}">${h(status)}</button>`).join("")}</div>`
+    const transitions = {
+      Pending: ["Accepted", "Pending Sample", "Rejected", "Cancelled"],
+      "Pending Sample": ["Accepted", "Sample Collected", "Rejected", "Cancelled"],
+      Accepted: ["Pending Sample", "Sample Collected", "Rejected", "Cancelled"],
+      "Sample Collected": ["Processing", "In Progress", "Rejected", "Cancelled"],
+      Processing: ["In Progress", "Rejected", "Cancelled"],
+      "In Progress": ["Processing", "Rejected", "Cancelled"],
+    };
+    const labActions = currentUser.role === "Laboratory Staff" && canUpdateOrder
+      ? `<div class="form-actions">${(transitions[order.status] || []).map((status) => `<button class="btn btn-secondary" type="button" data-order-status="${h(status)}" data-id="${order.id}">${h(status)}</button>`).join("")}</div>`
       : "";
-    return `${drawerInfo([["Order No.", h(order.orderNumber)], ["Patient", h(order.patientName)], ["Patient ID", h(order.patientCode)], ["Doctor", h(order.doctorName)], ["Facility", h(order.facilityName)], ["Tests", h(order.tests)], ["Priority", badge(order.priority)], ["Status", badge(order.status)]])}<div class="clinical-note-box"><h4>${icon("note")} Clinical Notes</h4><p>${h(order.clinicalNotes || "No clinical notes entered.")}</p></div>${labActions}`;
+    return `${drawerInfo([["Order No.", h(order.orderNumber)], ["Patient", h(order.patientName)], ["Patient ID", h(order.patientCode)], ["Doctor", h(order.doctorName)], ["Facility", h(order.facilityName)], ["Tests", h(order.tests)], ["Priority", badge(order.priority)], ["Status", badge(order.status)], ["Created", h(shortDateTime(order.createdAt))], ["Updated", h(shortDateTime(order.updatedAt || order.createdAt))]])}<div class="clinical-note-box"><h4>${icon("note")} Clinical Notes</h4><p>${h(order.clinicalNotes || "No clinical notes entered.")}</p></div>${labActions}`;
   }
 
   function resultDetails(result) {
     if (!result) return '<div class="empty-state">Result not found.</div>';
     const resultButtons = [
-      !["Released", "Rejected"].includes(result.status) ? `<button class="btn btn-danger" type="button" data-result-status="Rejected" data-id="${result.id}">Reject</button>` : "",
-      result.status === "Pending Review" ? `<button class="btn btn-success" type="button" data-result-status="Verified" data-id="${result.id}">Verify</button>` : "",
-      result.status === "Verified" ? `<button class="btn btn-blue" type="button" data-result-status="Released" data-id="${result.id}">Release</button>` : "",
+      !["Released", "Rejected"].includes(result.status) ? `<button class="btn btn-secondary" type="button" data-drawer="result-edit" data-id="${result.id}">${icon("edit")} Edit</button>` : "",
+      result.status === "Pending Review" ? `<button class="btn btn-success" type="button" data-result-status="Verified" data-id="${result.id}">${icon("check")} Verify</button>` : "",
+      ["Pending Review", "Verified"].includes(result.status) ? `<button class="btn btn-danger" type="button" data-reject-result="${result.id}">${icon("close")} Reject</button>` : "",
+      result.status === "Verified" ? `<button class="btn btn-blue" type="button" data-release-result="${result.id}">${icon("download")} Release</button>` : "",
     ].join("");
-    const labActions = currentUser.role === "Laboratory Staff" || currentUser.role === "Admin"
+    const labActions = currentUser.role === "Laboratory Staff"
       ? `<div class="form-actions">${resultButtons || '<span class="cell-sub">No review actions available.</span>'}</div>`
       : "";
-    const noteForm = currentUser.role === "Doctor" || currentUser.role === "Admin"
+    const noteForm = currentUser.role === "Doctor"
       ? `<form data-form="clinical-note"><input type="hidden" name="resultId" value="${h(result.id)}"><div class="form-field full"><label>Clinical Note</label><textarea name="note" required>${h(result.clinicalNote || "")}</textarea></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save Clinical Note</button></div></form>`
       : "";
-    return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Order No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Uploaded", h(shortDateTime(result.uploadedAt))], ["Status", badge(result.status)]])}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${noteForm}${labActions}`;
+    const canDownload = result.status === "Released";
+    const detailDownload = canDownload ? `<a class="btn btn-primary btn-sm" href="${h(apiUrl("download_result_details", { id: result.id }))}" target="_blank" rel="noopener">${icon("download")} Download Result Details</a>` : "";
+    const files = (result.files || []).length
+      ? `<div class="attachment-list">${result.files.map((file) => `<a class="attachment-link" href="${h(API_URL.replace(/[^/]+$/, ""))}${h(file.downloadUrl)}" target="_blank" rel="noopener">${icon("file")} <span>Download Uploaded File: ${h(file.originalName)}</span><small>${Math.round((file.sizeBytes || 0) / 1024)} KB</small></a>`).join("")}</div>`
+      : '<p>No files attached.</p>';
+    return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Order No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Created", h(shortDateTime(result.createdAt || result.uploadedAt))], ["Updated", h(shortDateTime(result.updatedAt || result.uploadedAt))], ["Released", h(shortDateTime(result.releasedAt))], ["Status", badge(result.status)]])}${detailDownload ? `<div class="result-download-actions">${detailDownload}</div>` : ""}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${noteForm}${labActions}`;
+  }
+
+  function resultEditForm(result) {
+    if (!result) return '<div class="empty-state">Result not found.</div>';
+    const rows = (result.values?.length ? result.values : [{ parameter: "", value: "", unit: "", referenceRange: "", flag: "" }]).map((value) => `<tr><td><input name="parameter" value="${h(value.parameter)}"></td><td><input name="value" value="${h(value.value)}"></td><td><input name="unit" value="${h(value.unit)}"></td><td><input name="referenceRange" value="${h(value.referenceRange)}"></td><td><input name="flag" value="${h(value.flag)}"></td></tr>`).join("");
+    return `<form data-form="result-edit"><input type="hidden" name="resultId" value="${h(result.id)}"><div class="form-grid">${field("Findings Summary", "findings", result.findings || "", "textarea", "required")}${field("Remarks", "remarks", result.remarks || "", "textarea")}<div class="form-field full"><label>Add Attachments</label><input name="attachments" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple><small>New files will be added to the result record.</small></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3><table class="parameter-input-table"><thead><tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Reference</th><th>Flag</th></tr></thead><tbody>${rows}</tbody></table><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">${icon("check")} Save Result</button></div></form>`;
   }
 
   function patientDetails(patient) {
@@ -705,6 +838,7 @@
       test: () => testForm(recordBy("tests", id)),
       order: () => orderDetails(recordBy("orders", id)),
       result: () => resultDetails(recordBy("results", id)),
+      "result-edit": () => resultEditForm(recordBy("results", id)),
       patient: () => patientDetails(recordBy("patients", id) || (state.data.availablePatients || []).find((p) => String(p.id) === String(id))),
       notification: () => notificationDetails(recordBy("notifications", id)),
       password: () => passwordForm(),
@@ -726,6 +860,16 @@
     document.body.style.overflow = "";
     state.activeDrawer = null;
     state.activeRecordId = null;
+  }
+
+  function closeReleaseModal() {
+    $(".release-modal")?.remove();
+  }
+
+  function openReleaseModal(result) {
+    if (!result) return;
+    closeReleaseModal();
+    document.body.insertAdjacentHTML("beforeend", `<div class="release-modal" role="dialog" aria-modal="true" aria-labelledby="release-title"><div class="release-modal-card"><h2 id="release-title">Confirm Result Release</h2><p>Release ${h(result.resultNumber)} for ${h(result.patientName)} / ${h(result.orderNumber)}? Released results become visible to authorized patient and doctor portals.</p><label class="register-check"><input type="checkbox" data-release-confirm-check><span>I confirm that this result has been reviewed and is ready for release.</span></label><div class="form-actions"><button class="btn btn-secondary" type="button" data-release-cancel>Cancel</button><button class="btn btn-blue" type="button" data-release-confirm="${h(result.id)}" disabled>Confirm Release</button></div></div></div>`);
   }
 
   function openSidebar() {
@@ -782,6 +926,7 @@
         await refreshAfter(result, "Laboratory order created.");
         setPage("orders");
       } else if (kind === "upload-result") {
+        payload.attachments = await readAttachments($('input[name="attachments"]', form)?.files || []);
         payload.values = $$("tbody tr", form).map((row) => ({
           parameter: $('input[name="parameter"]', row)?.value || "",
           value: $('input[name="value"]', row)?.value || "",
@@ -792,6 +937,18 @@
         result = await api("upload_result", payload);
         await refreshAfter(result, "Result uploaded for review.");
         setPage("review");
+      } else if (kind === "result-edit") {
+        payload.attachments = await readAttachments($('input[name="attachments"]', form)?.files || []);
+        payload.values = $$("tbody tr", form).map((row) => ({
+          parameter: $('input[name="parameter"]', row)?.value || "",
+          value: $('input[name="value"]', row)?.value || "",
+          unit: $('input[name="unit"]', row)?.value || "",
+          referenceRange: $('input[name="referenceRange"]', row)?.value || "",
+          flag: $('input[name="flag"]', row)?.value || "",
+        })).filter((item) => item.parameter || item.value);
+        result = await api("update_result_content", payload);
+        await refreshAfter(result, "Result updated.");
+        closeDrawer();
       } else if (kind === "clinical-note") {
         result = await api("add_clinical_note", payload);
         await refreshAfter(result, "Clinical note saved.");
@@ -799,6 +956,16 @@
       } else if (kind === "patient-profile") {
         result = await api("update_patient_profile", payload);
         await refreshAfter(result, "Profile updated.");
+      } else if (kind === "maintenance") {
+        payload.isEnabled = Boolean($('input[name="isEnabled"]', form)?.checked);
+        payload.affectedRoles = $$('input[name="affectedRoles"]:checked', form).map((input) => input.value);
+        payload.affectedPages = $$('input[name="affectedPages"]:checked', form).map((input) => input.value);
+        const wasEnabled = Boolean(state.data?.maintenance?.isEnabled);
+        if (payload.isEnabled && !wasEnabled && !window.confirm("Enabling maintenance mode will prevent patients, doctors, and lab staff from accessing the system. Continue?")) {
+          return;
+        }
+        result = await api("save_maintenance_settings", payload);
+        await refreshAfter(result, payload.isEnabled ? "Maintenance mode enabled." : "Maintenance mode disabled.");
       } else if (kind === "password") {
         await api("change_password", payload);
         toast("Password changed successfully.");
@@ -873,6 +1040,21 @@
       return;
     }
 
+    const deleteUser = event.target.closest("[data-delete-user]");
+    if (deleteUser) {
+      const name = deleteUser.dataset.userName || "this user";
+      if (!window.confirm(`Deactivate ${name}? They will no longer be able to sign in, but existing orders and results will remain intact.`)) {
+        return;
+      }
+      try {
+        const result = await api("delete_user", { id: deleteUser.dataset.deleteUser });
+        await refreshAfter(result, "User deactivated successfully.");
+      } catch (error) {
+        toast(error.message);
+      }
+      return;
+    }
+
     const orderStatus = event.target.closest("[data-order-status]");
     if (orderStatus) {
       try {
@@ -890,6 +1072,44 @@
       try {
         const result = await api("update_result_status", { resultId: resultStatus.dataset.id, status: resultStatus.dataset.resultStatus });
         await refreshAfter(result, "Result status updated.");
+        closeDrawer();
+      } catch (error) {
+        toast(error.message);
+      }
+      return;
+    }
+
+    const rejectResult = event.target.closest("[data-reject-result]");
+    if (rejectResult) {
+      const reason = window.prompt("Enter the reason for rejecting this result:");
+      if (!reason?.trim()) return;
+      try {
+        const result = await api("reject_result", { resultId: rejectResult.dataset.rejectResult, reason: reason.trim() });
+        await refreshAfter(result, "Result rejected.");
+        closeDrawer();
+      } catch (error) {
+        toast(error.message);
+      }
+      return;
+    }
+
+    const releaseTrigger = event.target.closest("[data-release-result]");
+    if (releaseTrigger) {
+      openReleaseModal(recordBy("results", releaseTrigger.dataset.releaseResult));
+      return;
+    }
+
+    if (event.target.closest("[data-release-cancel]")) {
+      closeReleaseModal();
+      return;
+    }
+
+    const releaseConfirm = event.target.closest("[data-release-confirm]");
+    if (releaseConfirm) {
+      try {
+        const result = await api("release_result", { resultId: releaseConfirm.dataset.releaseConfirm });
+        await refreshAfter(result, "Result released successfully.");
+        closeReleaseModal();
         closeDrawer();
       } catch (error) {
         toast(error.message);
@@ -946,6 +1166,11 @@
   }
 
   function handleDashboardChange(event) {
+    if (event.target.matches("[data-release-confirm-check]")) {
+      const button = $("[data-release-confirm]");
+      if (button) button.disabled = !event.target.checked;
+      return;
+    }
     if (!event.target.matches(".toolbar select")) return;
     applyPageFilters();
   }
@@ -1077,7 +1302,8 @@
       const input = $(`#${button.dataset.passwordToggle}`);
       const show = input.type === "password";
       input.type = show ? "text" : "password";
-      button.textContent = show ? "Hide" : "Show";
+      button.setAttribute("aria-pressed", String(show));
+      button.setAttribute("aria-label", show ? "Hide password" : "Show password");
     }));
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -1102,6 +1328,8 @@
           address: $("#patient-address").value,
           username: $("#patient-username").value,
           password: $("#patient-password").value,
+          termsAccepted: $("#patient-terms").checked,
+          privacyAcknowledged: $("#patient-privacy-ack").checked,
         });
         status.textContent = "Your patient account has been created. Opening your secure dashboard...";
         status.classList.add("visible");

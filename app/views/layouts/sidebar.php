@@ -7,9 +7,9 @@ $logoutUrl = $logoutUrl ?? '../auth/logout.php';
 ?>
 <aside class="sidebar <?= e($sidebarClass) ?>" id="sidebar" aria-label="<?= e($roleConfig['ariaLabel'] ?? 'Main navigation') ?>">
   <div class="sidebar-head">
-    <a class="admin-brand" href="<?= e($roleConfig['homeUrl'] ?? 'dashboard.php') ?>" aria-label="Clinic Management System dashboard">
+    <a class="admin-brand" href="<?= e($roleConfig['homeUrl'] ?? 'dashboard.php') ?>" aria-label="Centralized Laboratory Results System dashboard">
       <span class="admin-brand-mark" data-icon="medical"></span>
-      <span><strong>Clinic Management</strong><small><?= e($roleConfig['brandSmall'] ?? 'Workspace') ?></small></span>
+      <span><strong>Centralized Laboratory Results System</strong><small><?= e($roleConfig['brandSmall'] ?? 'Workspace') ?></small></span>
     </a>
     <button class="icon-button close-sidebar" type="button" aria-label="Close navigation" data-close-sidebar data-icon-button="close"></button>
   </div>
@@ -37,4 +37,3 @@ $logoutUrl = $logoutUrl ?? '../auth/logout.php';
   <a class="sidebar-logout" href="<?= e($logoutUrl) ?>" data-logout data-icon-name="logout"><span>Log out</span></a>
 </aside>
 <div class="sidebar-scrim" data-close-sidebar></div>
-

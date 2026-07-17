@@ -5,6 +5,7 @@ $assetBase = $assetBase ?? '../assets';
 $apiUrl = $apiUrl ?? '../../api/index.php';
 $loginUrl = $loginUrl ?? '../auth/login.php#login';
 $logoutUrl = $logoutUrl ?? '../auth/logout.php';
+$maintenanceUrl = $maintenanceUrl ?? '../maintenance.php';
 $initialPage = $initialPage ?? 'dashboard';
 $roleUrls = $roleUrls ?? [
     'Admin' => '../admin/dashboard.php#dashboard',
@@ -37,7 +38,7 @@ $configs = [
         'searchPlaceholder' => 'Search users, orders, results, facilities...',
         'notificationCount' => 7,
         'drawerId' => 'admin-drawer',
-        'drawerEyebrow' => 'Clinic Management',
+        'drawerEyebrow' => 'Centralized Laboratory Results System',
         'bodyClass' => 'admin-app',
         'avatarClass' => 'avatar-teal',
         'infoTitle' => 'Care works better together.',
@@ -47,13 +48,14 @@ $configs = [
             ['page' => 'dashboard', 'file' => 'dashboard', 'icon' => 'dashboard', 'label' => 'Dashboard'],
             ['page' => 'users', 'file' => 'users', 'icon' => 'users', 'label' => 'Users'],
             ['page' => 'facilities', 'file' => 'facilities', 'icon' => 'facility', 'label' => 'Facilities'],
-            ['page' => 'tests', 'file' => 'tests', 'icon' => 'test', 'label' => 'Test Definitions'],
+            ['page' => 'tests', 'file' => 'tests', 'icon' => 'test', 'label' => 'Laboratory Tests'],
             ['page' => 'orders', 'file' => 'orders', 'icon' => 'orders', 'label' => 'Orders'],
             ['page' => 'results', 'file' => 'results', 'icon' => 'results', 'label' => 'Results'],
             ['section' => 'Insights & controls'],
             ['page' => 'reports', 'file' => 'reports', 'icon' => 'chart', 'label' => 'Reports'],
             ['page' => 'audit', 'file' => 'audit', 'icon' => 'audit', 'label' => 'Audit Trail'],
             ['page' => 'notifications', 'file' => 'notifications', 'icon' => 'bell', 'label' => 'Notifications', 'count' => 7],
+            ['page' => 'maintenance', 'file' => 'maintenance', 'icon' => 'maintenance', 'label' => 'Maintenance Mode'],
             ['page' => 'settings', 'file' => 'settings', 'icon' => 'settings', 'label' => 'Settings'],
         ]),
     ],
@@ -105,7 +107,6 @@ $configs = [
             ['page' => 'upload', 'file' => 'upload-result', 'icon' => 'upload', 'label' => 'Results Upload'],
             ['page' => 'review', 'file' => 'verify-result', 'icon' => 'review', 'label' => 'Result Review', 'count' => 9],
             ['page' => 'operations', 'file' => 'operations', 'icon' => 'activity', 'label' => 'Assigned Operations'],
-            ['page' => 'patients', 'file' => 'patients', 'icon' => 'users', 'label' => 'Patients'],
             ['page' => 'facilities', 'file' => 'facilities', 'icon' => 'facility', 'label' => 'Assigned Facilities'],
             ['page' => 'queue', 'file' => 'queue', 'icon' => 'queue', 'label' => 'Test Queue', 'count' => 24],
             ['section' => 'Personal'],
@@ -143,8 +144,8 @@ $configs = [
 ];
 
 $roleConfig = $configs[$requiredRole];
-$pageTitle = $pageTitle ?? ($roleConfig['title'] . ' | Clinic Management System');
-$pageDescription = $pageDescription ?? 'Clinic Management System ' . strtolower($roleConfig['brandSmall']);
+$pageTitle = $pageTitle ?? ($roleConfig['title'] . ' | Centralized Laboratory Results System');
+$pageDescription = $pageDescription ?? 'Centralized Laboratory Results System ' . strtolower($roleConfig['brandSmall']);
 $bodyAttributes = 'data-required-role="' . e($requiredRole) . '" data-initial-page="' . e($initialPage) . '"';
 
 require __DIR__ . '/../layouts/header.php';
@@ -169,4 +170,3 @@ require __DIR__ . '/../layouts/header.php';
       <div class="toast-region" aria-live="polite" aria-atomic="true"></div>
     </div>
 <?php require __DIR__ . '/../layouts/footer.php'; ?>
-

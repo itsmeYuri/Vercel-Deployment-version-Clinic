@@ -9,8 +9,12 @@ function clinic_start_session()
         return;
     }
 
+    ini_set('session.use_strict_mode', '1');
     session_name('CLINIC_SYSTEM_V2');
-    $secureCookie = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    $forwardedProto = strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
+    $secureCookie = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || $forwardedProto === 'https'
+        || filter_var(clinic_env('CLINIC_COOKIE_SECURE', '0'), FILTER_VALIDATE_BOOLEAN);
     session_set_cookie_params([
         'lifetime' => 0,
         'path' => '/',
@@ -19,6 +23,15 @@ function clinic_start_session()
         'samesite' => 'Lax',
     ]);
     session_start();
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+}
+
+function clinic_csrf_token()
+{
+    clinic_start_session();
+    return $_SESSION['csrf_token'];
 }
 
 function clinic_public_user_from_row($row)
@@ -65,7 +78,14 @@ function clinic_current_user()
         return null;
     }
 
-    $user = clinic_fetch_user((int) $_SESSION['user_id']);
+    try {
+        $user = clinic_fetch_user((int) $_SESSION['user_id']);
+    } catch (Throwable $e) {
+        unset($_SESSION['user_id']);
+        $_SESSION['auth_notice'] = 'The database is temporarily unavailable. Please try again after MySQL starts.';
+        return null;
+    }
+
     if (!$user) {
         unset($_SESSION['user_id']);
     }
@@ -117,4 +137,3 @@ function clinic_logout()
 
     session_destroy();
 }
-

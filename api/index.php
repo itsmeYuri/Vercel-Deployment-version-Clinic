@@ -5,9 +5,14 @@ ini_set('display_errors', '0');
 error_reporting(E_ALL);
 
 require_once __DIR__ . '/../app/config/database.php';
+require_once __DIR__ . '/../app/core/maintenance.php';
 
+ini_set('session.use_strict_mode', '1');
 session_name('CLINIC_SYSTEM_V2');
-$secureCookie = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+$forwardedProto = strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
+$secureCookie = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || $forwardedProto === 'https'
+    || filter_var(clinic_env('CLINIC_COOKIE_SECURE', '0'), FILTER_VALIDATE_BOOLEAN);
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
@@ -16,6 +21,9 @@ session_set_cookie_params([
     'samesite' => 'Lax',
 ]);
 session_start();
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -77,7 +85,29 @@ function request_data()
     if (is_array($json)) {
         return $json;
     }
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    if ($raw !== '' && stripos($contentType, 'application/json') !== false && json_last_error() !== JSON_ERROR_NONE) {
+        respond(false, 'Invalid JSON payload. Please refresh and try again.', [], 400, ['json' => json_last_error_msg()]);
+    }
     return $_POST ?: [];
+}
+
+function validate_csrf_request($action)
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST' || in_array($action, ['health', 'session'], true)) {
+        return;
+    }
+    $provided = (string) ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+    $expected = (string) ($_SESSION['csrf_token'] ?? '');
+    if ($provided === '' || $expected === '' || !hash_equals($expected, $provided)) {
+        respond(false, 'Your session security token is invalid or expired. Refresh the page and try again.', [], 419);
+    }
+}
+
+function rotate_csrf_token()
+{
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    return $_SESSION['csrf_token'];
 }
 
 function require_field($data, $key, $label = null)
@@ -96,6 +126,13 @@ function optional_string($data, $key, $default = null)
     }
     $value = trim((string) $data[$key]);
     return $value === '' ? $default : $value;
+}
+
+function validate_max_length($value, $max, $label, $key)
+{
+    if ($value !== null && mb_strlen((string) $value) > $max) {
+        respond(false, $label . ' cannot exceed ' . $max . ' characters.', [], 422, [$key => 'Too long']);
+    }
 }
 
 function one($pdo, $sql, $params = [])
@@ -222,6 +259,8 @@ function current_user($pdo)
 
 function require_auth($pdo, $roles = [])
 {
+    global $action;
+
     $user = current_user($pdo);
     if (!$user) {
         respond(false, 'Please sign in to continue.', [], 401);
@@ -229,7 +268,83 @@ function require_auth($pdo, $roles = [])
     if ($roles && !in_array($user['role'], $roles, true)) {
         respond(false, 'You do not have permission to perform this action.', [], 403);
     }
+    if (api_maintenance_should_block($action ?? '', $user)) {
+        $page = api_maintenance_page_from_action($action ?? '');
+        $decision = clinic_maintenance_decision($pdo, $user['role'], $page);
+        if ($decision['blocked']) {
+            respond(false, $decision['settings']['message'], [
+                'maintenance' => clinic_maintenance_public_settings($decision['settings']),
+            ], 503);
+        }
+    }
     return $user;
+}
+
+function api_maintenance_should_block($action, $user)
+{
+    if (($user['role'] ?? '') === 'Admin') {
+        return false;
+    }
+    return !in_array($action, [
+        'health', 'login', 'logout', 'session',
+        'maintenance_settings', 'save_maintenance_settings',
+    ], true);
+}
+
+function api_maintenance_page_from_action($action)
+{
+    $map = [
+        'app_data' => 'dashboard',
+        'store_read' => 'dashboard',
+        'list_users' => 'users',
+        'save_user' => 'users',
+        'create_user' => 'users',
+        'update_user' => 'users',
+        'delete_user' => 'users',
+        'toggle_user_status' => 'users',
+        'reset_user_password' => 'users',
+        'list_facilities' => 'facilities',
+        'available_facilities' => 'facilities',
+        'lab_facilities' => 'facilities',
+        'save_facility' => 'facilities',
+        'create_facility' => 'facilities',
+        'update_facility' => 'facilities',
+        'list_tests' => 'tests',
+        'available_tests' => 'tests',
+        'save_test' => 'tests',
+        'create_test' => 'tests',
+        'update_test' => 'tests',
+        'list_all_orders' => 'orders',
+        'doctor_orders' => 'orders',
+        'lab_orders' => 'orders',
+        'patient_orders' => 'orders',
+        'create_order' => 'create-order',
+        'update_order_status' => 'orders',
+        'list_all_results' => 'results',
+        'doctor_results' => 'results',
+        'patient_results' => 'results',
+        'upload_result' => 'upload',
+        'update_result_status' => 'review',
+        'review_result' => 'review',
+        'release_result' => 'review',
+        'reject_result' => 'review',
+        'add_clinical_note' => 'results',
+        'doctor_patients' => 'patients',
+        'patient_profile' => 'profile',
+        'update_patient_profile' => 'profile',
+        'change_password' => 'settings',
+        'notifications' => 'notifications',
+        'mark_notification_read' => 'notifications',
+        'mark_all_notifications_read' => 'notifications',
+        'audit_logs' => 'audit',
+        'reports_summary' => 'reports',
+        'admin_dashboard' => 'dashboard',
+        'doctor_dashboard' => 'dashboard',
+        'lab_dashboard' => 'dashboard',
+        'patient_dashboard' => 'dashboard',
+        'lab_queue' => 'queue',
+    ];
+    return $map[$action] ?? 'dashboard';
 }
 
 function audit_log($pdo, $user, $action, $module, $details)
@@ -259,6 +374,26 @@ function notify_user($pdo, $payload)
         $payload['related_order_id'] ?? null,
         $payload['related_result_id'] ?? null,
     ]);
+}
+
+function notify_facility_staff($pdo, $facilityId, $payload)
+{
+    $rows = all_rows(
+        $pdo,
+        'SELECT DISTINCT u.id
+         FROM users u
+         JOIN roles r ON r.id = u.role_id AND r.name = "Laboratory Staff"
+         LEFT JOIN laboratory_staff ls ON ls.user_id = u.id
+         LEFT JOIN staff_facilities sf ON sf.user_id = u.id
+         WHERE u.status = "Active" AND (ls.default_facility_id = ? OR sf.facility_id = ?)',
+        [(int) $facilityId, (int) $facilityId]
+    );
+    foreach ($rows as $row) {
+        $target = $payload;
+        $target['user_id'] = (int) $row['id'];
+        unset($target['role_name']);
+        notify_user($pdo, $target);
+    }
 }
 
 function placeholders($count)
@@ -412,6 +547,9 @@ function can_access_result($pdo, $user, $result)
     if ($user['role'] === 'Patient' && $result['status'] !== 'Released') {
         return false;
     }
+    if ($user['role'] === 'Doctor' && !in_array($result['status'], ['Verified', 'Released'], true)) {
+        return false;
+    }
     return true;
 }
 
@@ -427,7 +565,7 @@ function valid_result_statuses()
 
 function valid_priorities()
 {
-    return ['Normal', 'Routine', 'High', 'Urgent'];
+    return ['Regular', 'Priority'];
 }
 
 function valid_active_statuses()
@@ -438,6 +576,11 @@ function valid_active_statuses()
 function valid_username($username)
 {
     return preg_match('/^[a-zA-Z0-9._-]{3,20}$/', $username) === 1;
+}
+
+function valid_password($password)
+{
+    return preg_match('/^(?=.*[A-Za-z])(?=.*\d).{8,}$/', (string) $password) === 1;
 }
 
 function map_facility($row)
@@ -465,6 +608,12 @@ function fetch_facilities($pdo, $user = null)
         }
         $where = 'WHERE f.id IN (' . placeholders(count($ids)) . ')';
         $params = $ids;
+    } elseif ($user && $user['role'] === 'Doctor') {
+        if (!$user['assignedFacilityId']) {
+            return [];
+        }
+        $where = 'WHERE f.status = "Active" AND f.id = ?';
+        $params[] = (int) $user['assignedFacilityId'];
     } elseif ($user && $user['role'] !== 'Admin') {
         $where = 'WHERE f.status = "Active"';
     }
@@ -552,10 +701,18 @@ function fetch_patients($pdo, $user = null, $mode = 'role')
 {
     $where = ['u.status = "Active"'];
     $params = [];
+    $scopeLo = '';
     if ($user && $mode === 'role') {
         if ($user['role'] === 'Doctor') {
-            $where[] = 'EXISTS (SELECT 1 FROM lab_orders lo WHERE lo.patient_id = p.id AND lo.doctor_id = ?)';
-            $params[] = $user['id'];
+            $doctorId = (int) $user['id'];
+            $facilityId = (int) ($user['assignedFacilityId'] ?? 0);
+            $where[] = '(EXISTS (SELECT 1 FROM lab_orders access_order WHERE access_order.patient_id = p.id AND access_order.doctor_id = ?)'
+                . ($facilityId > 0 ? ' OR p.primary_facility_id = ?' : '') . ')';
+            $params[] = $doctorId;
+            if ($facilityId > 0) {
+                $params[] = $facilityId;
+            }
+            $scopeLo = ' AND lo.doctor_id = ' . $doctorId;
         } elseif ($user['role'] === 'Laboratory Staff') {
             $ids = lab_facility_ids($pdo, $user);
             if (!$ids) {
@@ -563,24 +720,25 @@ function fetch_patients($pdo, $user = null, $mode = 'role')
             }
             $where[] = 'EXISTS (SELECT 1 FROM lab_orders lo WHERE lo.patient_id = p.id AND lo.facility_id IN (' . placeholders(count($ids)) . '))';
             $params = array_merge($params, $ids);
+            $scopeLo = ' AND lo.facility_id IN (' . implode(',', array_map('intval', $ids)) . ')';
         } elseif ($user['role'] === 'Patient') {
             $where[] = 'p.id = ?';
             $params[] = $user['patientId'];
         }
     }
     $sql = 'SELECT p.*, u.name, u.email, u.username, u.avatar, u.contact, u.status, f.name AS facility_name,
-                   (SELECT lo.order_number FROM lab_orders lo WHERE lo.patient_id = p.id ORDER BY lo.created_at DESC LIMIT 1) AS latest_order_number,
-                   (SELECT lo.status FROM lab_orders lo WHERE lo.patient_id = p.id ORDER BY lo.created_at DESC LIMIT 1) AS latest_status,
+                   (SELECT lo.order_number FROM lab_orders lo WHERE lo.patient_id = p.id' . $scopeLo . ' ORDER BY lo.created_at DESC LIMIT 1) AS latest_order_number,
+                   (SELECT lo.status FROM lab_orders lo WHERE lo.patient_id = p.id' . $scopeLo . ' ORDER BY lo.created_at DESC LIMIT 1) AS latest_status,
                    (SELECT GROUP_CONCAT(loi.test_name ORDER BY loi.id SEPARATOR ", ")
                     FROM lab_order_items loi
                     WHERE loi.order_id = (
                         SELECT lo2.id FROM lab_orders lo2
-                        WHERE lo2.patient_id = p.id
+                        WHERE lo2.patient_id = p.id' . str_replace('lo.', 'lo2.', $scopeLo) . '
                         ORDER BY lo2.created_at DESC, lo2.id DESC
                         LIMIT 1
                     )) AS latest_tests,
-                   (SELECT COUNT(*) FROM lab_orders lo WHERE lo.patient_id = p.id) AS order_count,
-                   (SELECT COUNT(*) FROM lab_results lr JOIN lab_orders lo ON lo.id = lr.order_id WHERE lo.patient_id = p.id AND lr.status = "Released") AS result_count
+                   (SELECT COUNT(*) FROM lab_orders lo WHERE lo.patient_id = p.id' . $scopeLo . ') AS order_count,
+                   (SELECT COUNT(*) FROM lab_results lr JOIN lab_orders lo ON lo.id = lr.order_id WHERE lo.patient_id = p.id' . $scopeLo . ' AND lr.status = "Released") AS result_count
             FROM patients p
             JOIN users u ON u.id = p.user_id
             LEFT JOIN facilities f ON f.id = p.primary_facility_id
@@ -643,7 +801,7 @@ function fetch_orders($pdo, $user)
             'clinicalNotes' => $row['clinical_notes'],
             'latestUpdate' => $row['latest_update'],
             'createdAt' => $row['created_at'],
-            'updatedAt' => $row['updated_at'],
+            'updatedAt' => $row['updated_at'] ?: $row['created_at'],
         ];
     }, $rows);
 }
@@ -667,12 +825,33 @@ function fetch_result_values($pdo, $resultIds)
     return $grouped;
 }
 
+function fetch_result_files($pdo, $resultIds)
+{
+    if (!$resultIds) {
+        return [];
+    }
+    $rows = all_rows($pdo, 'SELECT * FROM result_files WHERE result_id IN (' . placeholders(count($resultIds)) . ') ORDER BY id', $resultIds);
+    $grouped = [];
+    foreach ($rows as $row) {
+        $grouped[(int) $row['result_id']][] = [
+            'id' => (int) $row['id'],
+            'originalName' => $row['original_name'],
+            'storedName' => $row['stored_name'],
+            'mimeType' => $row['mime_type'],
+            'sizeBytes' => (int) $row['size_bytes'],
+            'downloadUrl' => 'index.php?action=download_result_file&id=' . (int) $row['id'],
+        ];
+    }
+    return $grouped;
+}
+
 function fetch_results($pdo, $user)
 {
     $where = [];
     $params = [];
     if ($user['role'] === 'Doctor') {
         $where[] = 'lo.doctor_id = ?';
+        $where[] = 'lr.status IN ("Verified", "Released")';
         $params[] = $user['id'];
     } elseif ($user['role'] === 'Laboratory Staff') {
         $ids = lab_facility_ids($pdo, $user);
@@ -707,10 +886,12 @@ function fetch_results($pdo, $user)
             ($where ? ' WHERE ' . implode(' AND ', $where) : '') .
             ' ORDER BY lr.created_at DESC, lr.id DESC';
     $rows = all_rows($pdo, $sql, $params);
-    $values = fetch_result_values($pdo, array_map(function ($row) {
+    $resultIds = array_map(function ($row) {
         return (int) $row['id'];
-    }, $rows));
-    return array_map(function ($row) use ($values) {
+    }, $rows);
+    $values = fetch_result_values($pdo, $resultIds);
+    $files = fetch_result_files($pdo, $resultIds);
+    return array_map(function ($row) use ($values, $files) {
         return [
             'id' => (int) $row['id'],
             'resultNumber' => $row['result_number'],
@@ -730,6 +911,8 @@ function fetch_results($pdo, $user)
             'remarks' => $row['remarks'],
             'rejectedReason' => $row['rejected_reason'],
             'uploadedBy' => $row['uploaded_by_name'],
+            'createdAt' => $row['created_at'],
+            'updatedAt' => $row['updated_at'] ?: $row['created_at'],
             'uploadedAt' => $row['created_at'],
             'verifiedAt' => $row['verified_at'],
             'releasedAt' => $row['released_at'],
@@ -737,6 +920,7 @@ function fetch_results($pdo, $user)
             'clinicalNoteDoctor' => $row['clinical_note_doctor'],
             'clinicalNoteCreatedAt' => $row['clinical_note_created_at'],
             'values' => $values[(int) $row['id']] ?? [],
+            'files' => $files[(int) $row['id']] ?? [],
         ];
     }, $rows);
 }
@@ -766,6 +950,14 @@ function fetch_notifications($pdo, $user)
     }
     $where[0] .= ')';
     $rows = all_rows($pdo, 'SELECT n.* FROM notifications n WHERE ' . implode(' AND ', $where) . ' ORDER BY n.created_at DESC LIMIT 200', $params);
+    if ($user['role'] === 'Laboratory Staff') {
+        $rows = array_values(array_filter($rows, function ($row) use ($pdo, $user) {
+            if (empty($row['related_order_id'])) {
+                return true;
+            }
+            return can_access_order($pdo, $user, order_by_identifier($pdo, (int) $row['related_order_id']));
+        }));
+    }
     return array_map(function ($row) {
         return [
             'id' => (int) $row['id'],
@@ -867,16 +1059,102 @@ function app_data($pdo, $user)
         'users' => $user['role'] === 'Admin' ? fetch_users($pdo) : [],
         'facilities' => fetch_facilities($pdo, $user),
         'tests' => fetch_tests($pdo, $user),
-        'patients' => fetch_patients($pdo, $user, 'role'),
-        'availablePatients' => in_array($user['role'], ['Admin', 'Doctor'], true) ? fetch_patients($pdo, null, 'all') : fetch_patients($pdo, $user, 'role'),
+        'patients' => $user['role'] === 'Admin' ? fetch_patients($pdo, null, 'all') : fetch_patients($pdo, $user, 'role'),
+        'availablePatients' => $user['role'] === 'Admin' ? fetch_patients($pdo, null, 'all') : fetch_patients($pdo, $user, 'role'),
         'orders' => $orders,
         'results' => $results,
         'notifications' => $notifications,
         'audit' => fetch_audit($pdo, $user),
         'dashboard' => dashboard_counts($pdo, $user, $orders, $results, $notifications),
         'reports' => reports_summary($orders, $results),
+        'maintenance' => clinic_maintenance_public_settings(clinic_maintenance_current($pdo)),
     ];
     return $data;
+}
+
+function normalize_datetime_input($value)
+{
+    $value = trim((string) ($value ?? ''));
+    if ($value === '') {
+        return null;
+    }
+    $time = strtotime($value);
+    if ($time === false) {
+        respond(false, 'Enter a valid date and time.', [], 422, ['datetime' => 'Invalid date']);
+    }
+    return date('Y-m-d H:i:s', $time);
+}
+
+function save_maintenance_settings($pdo, $data, $actor)
+{
+    require_auth($pdo, ['Admin']);
+
+    $enabledRaw = $data['isEnabled'] ?? $data['is_enabled'] ?? false;
+    $isEnabled = filter_var($enabledRaw, FILTER_VALIDATE_BOOLEAN);
+    $scope = optional_string($data, 'scope', 'all');
+    if (!in_array($scope, ['all', 'roles', 'pages'], true)) {
+        respond(false, 'Select a valid maintenance scope.', [], 422, ['scope' => 'Invalid scope']);
+    }
+
+    $message = trim((string) ($data['message'] ?? ''));
+    if ($isEnabled && $message === '') {
+        respond(false, 'Maintenance message is required when maintenance mode is enabled.', [], 422, ['message' => 'Required']);
+    }
+    $message = $message !== '' ? $message : CLINIC_MAINTENANCE_DEFAULT_MESSAGE;
+    $reason = optional_string($data, 'reason');
+    $startAt = normalize_datetime_input($data['startAt'] ?? $data['start_at'] ?? null);
+    $endAt = normalize_datetime_input($data['endAt'] ?? $data['end_at'] ?? null);
+
+    if ($startAt && $endAt && strtotime($endAt) < strtotime($startAt)) {
+        respond(false, 'End date and time must be after the start date and time.', [], 422, ['endAt' => 'Invalid range']);
+    }
+
+    $affectedRoles = clinic_maintenance_sanitize_list($data['affectedRoles'] ?? [], ['Doctor', 'Laboratory Staff', 'Patient']);
+    $affectedPages = clinic_maintenance_sanitize_list($data['affectedPages'] ?? [], clinic_maintenance_allowed_pages());
+    if ($isEnabled && $scope === 'roles' && !$affectedRoles) {
+        respond(false, 'Select at least one affected role.', [], 422, ['affectedRoles' => 'Required']);
+    }
+    if ($isEnabled && $scope === 'pages' && !$affectedPages) {
+        respond(false, 'Select at least one affected page.', [], 422, ['affectedPages' => 'Required']);
+    }
+
+    clinic_maintenance_ensure_table($pdo);
+    $pdo->beginTransaction();
+    $stmt = $pdo->prepare(
+        'INSERT INTO maintenance_settings (id, is_enabled, scope, affected_roles, affected_pages, message, reason, start_at, end_at, created_by)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           is_enabled=VALUES(is_enabled),
+           scope=VALUES(scope),
+           affected_roles=VALUES(affected_roles),
+           affected_pages=VALUES(affected_pages),
+           message=VALUES(message),
+           reason=VALUES(reason),
+           start_at=VALUES(start_at),
+           end_at=VALUES(end_at),
+           created_by=VALUES(created_by),
+           updated_at=CURRENT_TIMESTAMP'
+    );
+    $stmt->execute([
+        $isEnabled ? 1 : 0,
+        $scope,
+        json_encode($affectedRoles, JSON_UNESCAPED_SLASHES),
+        json_encode($affectedPages, JSON_UNESCAPED_SLASHES),
+        substr($message, 0, 255),
+        $reason ? substr($reason, 0, 255) : null,
+        $startAt,
+        $endAt,
+        (int) $actor['id'],
+    ]);
+    $pdo->exec('DELETE FROM maintenance_settings WHERE id <> 1');
+    audit_log($pdo, $actor, 'UPDATE', 'Maintenance', ($isEnabled ? 'Enabled' : 'Disabled') . ' maintenance mode for scope ' . $scope);
+    $pdo->commit();
+
+    $settings = clinic_maintenance_current($pdo);
+    respond(true, 'Maintenance settings saved.', [
+        'maintenance' => clinic_maintenance_public_settings($settings),
+        'app' => app_data($pdo, $actor),
+    ]);
 }
 
 function save_user($pdo, $data, $actor)
@@ -891,6 +1169,35 @@ function save_user($pdo, $data, $actor)
     $status = optional_string($data, 'status', 'Active');
     $contact = optional_string($data, 'contact');
     $password = optional_string($data, 'password');
+    if (!in_array($role, ['Admin', 'Doctor', 'Laboratory Staff', 'Patient'], true)) {
+        respond(false, 'Select a valid system role.', [], 422, ['role' => 'Invalid role']);
+    }
+    $existingUser = $id > 0 ? one($pdo, 'SELECT u.id, r.name AS role FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ? LIMIT 1', [$id]) : null;
+    if ($id > 0 && !$existingUser) {
+        respond(false, 'User not found.', [], 404);
+    }
+    if (in_array($role, ['Doctor', 'Laboratory Staff', 'Patient'], true)) {
+        if (!$facilityId || !one($pdo, 'SELECT id FROM facilities WHERE id = ? AND status = "Active" LIMIT 1', [$facilityId])) {
+            respond(false, 'Select an active assigned facility for this role.', [], 422, ['facilityId' => 'Required']);
+        }
+    }
+    if ($existingUser && $existingUser['role'] !== $role) {
+        $hasClinicalRecords = one(
+            $pdo,
+            'SELECT 1
+             FROM users u
+             LEFT JOIN patients p ON p.user_id = u.id
+             LEFT JOIN lab_orders patient_orders ON patient_orders.patient_id = p.id
+             LEFT JOIN lab_orders doctor_orders ON doctor_orders.doctor_id = u.id
+             LEFT JOIN lab_results uploaded_results ON uploaded_results.uploaded_by = u.id
+             WHERE u.id = ? AND (patient_orders.id IS NOT NULL OR doctor_orders.id IS NOT NULL OR uploaded_results.id IS NOT NULL)
+             LIMIT 1',
+            [$id]
+        );
+        if ($hasClinicalRecords) {
+            respond(false, 'The role cannot be changed because this account is linked to clinical records.', [], 409, ['role' => 'Role locked']);
+        }
+    }
 
     if ($id > 0 && (int) $actor['id'] === $id && ($role !== 'Admin' || $status !== 'Active')) {
         respond(false, 'You cannot remove your own active Admin access.', [], 422);
@@ -899,8 +1206,17 @@ function save_user($pdo, $data, $actor)
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         respond(false, 'Enter a valid email address.', [], 422, ['email' => 'Invalid email']);
     }
+    validate_max_length($name, 120, 'Full name', 'name');
+    validate_max_length($email, 160, 'Email', 'email');
+    validate_max_length($contact, 40, 'Contact number', 'contact');
     if (!valid_username($username)) {
         respond(false, 'Use a 3-20 character username with letters, numbers, dots, hyphens, or underscores.', [], 422, ['username' => 'Invalid username']);
+    }
+    if ($id <= 0 && !$password) {
+        respond(false, 'Password is required for new users.', [], 422, ['password' => 'Required']);
+    }
+    if ($password && !valid_password($password)) {
+        respond(false, 'Password must be at least 8 characters and include a letter and number.', [], 422, ['password' => 'Weak password']);
     }
     if (!in_array($status, valid_active_statuses(), true)) {
         respond(false, 'Select a valid user status.', [], 422, ['status' => 'Invalid status']);
@@ -923,7 +1239,7 @@ function save_user($pdo, $data, $actor)
         audit_log($pdo, $actor, 'UPDATE', 'User', 'Updated user ' . $name);
     } else {
         $stmt = $pdo->prepare('INSERT INTO users (role_id, name, email, username, password_hash, avatar, contact, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-        $stmt->execute([$roleId, $name, $email, $username, password_hash($password ?: 'Password123', PASSWORD_DEFAULT), $avatar, $contact, $status]);
+        $stmt->execute([$roleId, $name, $email, $username, password_hash($password, PASSWORD_DEFAULT), $avatar, $contact, $status]);
         $id = (int) $pdo->lastInsertId();
         audit_log($pdo, $actor, 'CREATE', 'User', 'Created user ' . $name);
     }
@@ -951,7 +1267,8 @@ function save_user($pdo, $data, $actor)
         }
     }
     $pdo->commit();
-    respond(true, 'User saved successfully.', ['user' => fetch_user($pdo, $id)]);
+    $freshActor = (int) $actor['id'] === $id ? fetch_user($pdo, $id) : $actor;
+    respond(true, 'User saved successfully.', ['user' => fetch_user($pdo, $id), 'app' => app_data($pdo, $freshActor)]);
 }
 
 function save_facility($pdo, $data, $actor)
@@ -968,6 +1285,19 @@ function save_facility($pdo, $data, $actor)
     if (!in_array($values[4], valid_active_statuses(), true)) {
         respond(false, 'Select a valid facility status.', [], 422, ['status' => 'Invalid status']);
     }
+    validate_max_length($values[0], 160, 'Facility name', 'name');
+    validate_max_length($values[1], 255, 'Address', 'address');
+    validate_max_length($values[2], 40, 'Phone', 'phone');
+    validate_max_length($values[3], 160, 'Email', 'email');
+    if ($values[3] && !filter_var($values[3], FILTER_VALIDATE_EMAIL)) {
+        respond(false, 'Enter a valid facility email address.', [], 422, ['email' => 'Invalid email']);
+    }
+    if ($id > 0 && !one($pdo, 'SELECT id FROM facilities WHERE id = ? LIMIT 1', [$id])) {
+        respond(false, 'Facility not found.', [], 404);
+    }
+    if (one($pdo, 'SELECT id FROM facilities WHERE LOWER(name) = LOWER(?) AND id <> ? LIMIT 1', [$values[0], $id])) {
+        respond(false, 'A facility with that name already exists.', [], 409, ['name' => 'Duplicate facility']);
+    }
     $pdo->beginTransaction();
     if ($id > 0) {
         $stmt = $pdo->prepare('UPDATE facilities SET name=?, address=?, phone=?, email=?, status=? WHERE id=?');
@@ -980,7 +1310,7 @@ function save_facility($pdo, $data, $actor)
         audit_log($pdo, $actor, 'CREATE', 'Facility', 'Created facility ' . $values[0]);
     }
     $pdo->commit();
-    respond(true, 'Facility saved successfully.', ['facilities' => fetch_facilities($pdo, $actor)]);
+    respond(true, 'Facility saved successfully.', ['facilities' => fetch_facilities($pdo, $actor), 'app' => app_data($pdo, $actor)]);
 }
 
 function save_test($pdo, $data, $actor)
@@ -1001,6 +1331,20 @@ function save_test($pdo, $data, $actor)
     if (!in_array($values[8], valid_active_statuses(), true)) {
         respond(false, 'Select a valid test status.', [], 422, ['status' => 'Invalid status']);
     }
+    validate_max_length($values[0], 40, 'Test code', 'code');
+    validate_max_length($values[1], 160, 'Test name', 'name');
+    validate_max_length($values[2], 100, 'Category', 'category');
+    validate_max_length($values[3], 80, 'Sample type', 'sampleType');
+    validate_max_length($values[4], 80, 'Turnaround time', 'turnaroundTime');
+    if ($values[5] < 0) {
+        respond(false, 'Test price cannot be negative.', [], 422, ['price' => 'Invalid price']);
+    }
+    if ($id > 0 && !one($pdo, 'SELECT id FROM test_definitions WHERE id = ? LIMIT 1', [$id])) {
+        respond(false, 'Test definition not found.', [], 404);
+    }
+    if (one($pdo, 'SELECT id FROM test_definitions WHERE code = ? AND id <> ? LIMIT 1', [$values[0], $id])) {
+        respond(false, 'That laboratory test code already exists.', [], 409, ['code' => 'Duplicate code']);
+    }
     $pdo->beginTransaction();
     if ($id > 0) {
         $stmt = $pdo->prepare('UPDATE test_definitions SET code=?, name=?, category=?, sample_type=?, turnaround_time=?, price=?, reference_range=?, instructions=?, status=? WHERE id=?');
@@ -1012,20 +1356,32 @@ function save_test($pdo, $data, $actor)
         audit_log($pdo, $actor, 'CREATE', 'Test Definition', 'Created test ' . $values[0]);
     }
     $pdo->commit();
-    respond(true, 'Test definition saved successfully.', ['tests' => fetch_tests($pdo, $actor)]);
+    respond(true, 'Test definition saved successfully.', ['tests' => fetch_tests($pdo, $actor), 'app' => app_data($pdo, $actor)]);
 }
 
 function create_order($pdo, $data, $actor)
 {
-    require_auth($pdo, ['Admin', 'Doctor']);
+    require_auth($pdo, ['Doctor']);
     $patientId = (int) ($data['patientId'] ?? $data['patient_id'] ?? 0);
-    $patient = one($pdo, 'SELECT p.*, u.name FROM patients p JOIN users u ON u.id = p.user_id WHERE p.id = ? LIMIT 1', [$patientId]);
+    $patient = one(
+        $pdo,
+        'SELECT p.*, u.name FROM patients p JOIN users u ON u.id = p.user_id
+         WHERE p.id = ? AND u.status = "Active"
+           AND (p.primary_facility_id = ? OR EXISTS (
+             SELECT 1 FROM lab_orders previous_order WHERE previous_order.patient_id = p.id AND previous_order.doctor_id = ?
+           ))
+         LIMIT 1',
+        [$patientId, (int) ($actor['assignedFacilityId'] ?? 0), (int) $actor['id']]
+    );
     if (!$patient) {
-        respond(false, 'Select a valid patient.', [], 422, ['patientId' => 'Invalid patient']);
+        respond(false, 'Select a patient connected to your assigned facility or existing orders.', [], 403, ['patientId' => 'Outside doctor scope']);
     }
     $facilityId = find_facility_id($pdo, $data);
-    if (!$facilityId) {
-        respond(false, 'Select a valid facility.', [], 422, ['facilityId' => 'Invalid facility']);
+    if (!$facilityId || (int) $facilityId !== (int) ($actor['assignedFacilityId'] ?? 0)) {
+        respond(false, 'Orders can only be created for your assigned active facility.', [], 403, ['facilityId' => 'Outside doctor scope']);
+    }
+    if (!one($pdo, 'SELECT id FROM facilities WHERE id = ? AND status = "Active" LIMIT 1', [$facilityId])) {
+        respond(false, 'Your assigned facility is not active.', [], 409, ['facilityId' => 'Inactive facility']);
     }
     $doctorId = $actor['role'] === 'Doctor' ? $actor['id'] : (int) ($data['doctorId'] ?? $actor['id']);
     $doctor = one($pdo, 'SELECT u.id, u.name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ? AND r.name = "Doctor" AND u.status = "Active"', [$doctorId]);
@@ -1047,13 +1403,10 @@ function create_order($pdo, $data, $actor)
     }
 
     $orderNumber = generate_unique_code($pdo, 'lab_orders', 'order_number', 'LAB');
-    $priority = optional_string($data, 'priority', 'Normal');
-    $status = optional_string($data, 'status', 'Pending');
+    $priority = optional_string($data, 'priority', 'Regular');
+    $status = 'Pending';
     if (!in_array($priority, valid_priorities(), true)) {
         respond(false, 'Select a valid order priority.', [], 422, ['priority' => 'Invalid priority']);
-    }
-    if (!in_array($status, ['Pending', 'Pending Sample', 'Accepted'], true)) {
-        respond(false, 'Select a valid initial order status.', [], 422, ['status' => 'Invalid status']);
     }
     $notes = optional_string($data, 'clinicalNotes') ?: optional_string($data, 'notes');
 
@@ -1063,10 +1416,9 @@ function create_order($pdo, $data, $actor)
     $orderId = (int) $pdo->lastInsertId();
     $stmt = $pdo->prepare('INSERT INTO lab_order_items (order_id, test_definition_id, test_name, status) VALUES (?, ?, ?, ?)');
     foreach ($tests as $test) {
-        $stmt->execute([$orderId, (int) $test['id'], $test['name'], $status]);
+        $stmt->execute([$orderId, (int) $test['id'], $test['name'], 'Pending']);
     }
-    notify_user($pdo, [
-        'role_name' => 'Laboratory Staff',
+    notify_facility_staff($pdo, $facilityId, [
         'title' => 'New order assigned',
         'message' => $orderNumber . ' for ' . $patient['name'] . ' is ready for laboratory intake.',
         'type_name' => 'orders',
@@ -1086,7 +1438,7 @@ function create_order($pdo, $data, $actor)
 
 function update_order_status($pdo, $data, $actor)
 {
-    require_auth($pdo, ['Admin', 'Laboratory Staff']);
+    require_auth($pdo, ['Laboratory Staff']);
     $orderKey = require_field($data, 'orderId', 'Order');
     $status = require_field($data, 'status', 'Status');
     if (!in_array($status, valid_order_statuses(), true)) {
@@ -1106,9 +1458,20 @@ function update_order_status($pdo, $data, $actor)
     if ($activeResult) {
         respond(false, 'This order already has a result record. Update the result status instead.', [], 409);
     }
+    $transitions = [
+        'Pending' => ['Accepted', 'Pending Sample', 'Rejected', 'Cancelled'],
+        'Pending Sample' => ['Accepted', 'Sample Collected', 'Rejected', 'Cancelled'],
+        'Accepted' => ['Pending Sample', 'Sample Collected', 'Rejected', 'Cancelled'],
+        'Sample Collected' => ['Processing', 'In Progress', 'Rejected', 'Cancelled'],
+        'Processing' => ['In Progress', 'Rejected', 'Cancelled'],
+        'In Progress' => ['Processing', 'Rejected', 'Cancelled'],
+    ];
+    if (!in_array($status, $transitions[$order['status']] ?? [], true)) {
+        respond(false, 'That status change is not valid from ' . $order['status'] . '.', [], 409, ['status' => 'Invalid transition']);
+    }
     $pdo->beginTransaction();
     $stmt = $pdo->prepare('UPDATE lab_orders SET status=?, latest_update=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
-    $stmt->execute([$status, $status . ' - just now', (int) $order['id']]);
+    $stmt->execute([$status, 'Order status changed to ' . $status, (int) $order['id']]);
     $stmt = $pdo->prepare('UPDATE lab_order_items SET status=? WHERE order_id=?');
     $stmt->execute([$status, (int) $order['id']]);
     notify_user($pdo, ['user_id' => (int) $order['doctor_id'], 'title' => 'Order status updated', 'message' => $order['order_number'] . ' is now ' . $status . '.', 'type_name' => 'orders', 'related_order_id' => (int) $order['id']]);
@@ -1118,9 +1481,157 @@ function update_order_status($pdo, $data, $actor)
     respond(true, 'Order status updated.', ['app' => app_data($pdo, $actor)]);
 }
 
+function save_result_attachments($pdo, $resultId, $attachments)
+{
+    if (!is_array($attachments) || !$attachments) {
+        return;
+    }
+    $allowed = [
+        'application/pdf' => 'pdf',
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+    ];
+    $maxBytes = 10 * 1024 * 1024;
+    if (count($attachments) > 5) {
+        respond(false, 'Attach no more than five files per request.', [], 422, ['attachments' => 'Too many files']);
+    }
+    $totalBytes = array_sum(array_map(function ($file) {
+        return is_array($file) ? (int) ($file['size'] ?? 0) : 0;
+    }, $attachments));
+    if ($totalBytes > 25 * 1024 * 1024) {
+        respond(false, 'The combined attachment size cannot exceed 25 MB.', [], 422, ['attachments' => 'Files too large']);
+    }
+    $uploadDir = dirname(__DIR__) . '/public/uploads/results';
+    if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
+        respond(false, 'Could not prepare the result upload folder.', [], 500);
+    }
+    $stmt = $pdo->prepare('INSERT INTO result_files (result_id, original_name, stored_name, mime_type, size_bytes) VALUES (?, ?, ?, ?, ?)');
+    foreach ($attachments as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+        $name = trim((string) ($file['name'] ?? ''));
+        $claimedMime = trim((string) ($file['type'] ?? ''));
+        $size = (int) ($file['size'] ?? 0);
+        $data = (string) ($file['data'] ?? '');
+        if ($name === '' || !isset($allowed[$claimedMime]) || $size <= 0 || $size > $maxBytes || $data === '' || strlen($data) > (int) ceil($maxBytes * 4 / 3) + 8) {
+            respond(false, 'Attachments must be PDF, JPG, PNG, or WEBP files up to 10 MB.', [], 422, ['attachments' => 'Invalid file']);
+        }
+        $bytes = base64_decode($data, true);
+        if ($bytes === false || strlen($bytes) !== $size) {
+            respond(false, 'One attachment could not be read. Please choose the file again.', [], 422, ['attachments' => 'Invalid data']);
+        }
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime = (string) $finfo->buffer($bytes);
+        if (!isset($allowed[$mime])) {
+            respond(false, 'An attachment content type does not match an allowed PDF or image format.', [], 422, ['attachments' => 'Invalid file content']);
+        }
+        $stored = 'result-' . (int) $resultId . '-' . bin2hex(random_bytes(8)) . '.' . $allowed[$mime];
+        if (file_put_contents($uploadDir . '/' . $stored, $bytes) === false) {
+            respond(false, 'Could not save one of the uploaded result files.', [], 500);
+        }
+        $safeName = preg_replace('/[\x00-\x1F\x7F]+/u', '', basename(str_replace('\\', '/', $name)));
+        $stmt->execute([(int) $resultId, substr($safeName ?: 'result-file', 0, 180), $stored, $mime, $size]);
+    }
+}
+
+function download_result_file($pdo, $fileId, $actor)
+{
+    $file = one($pdo, 'SELECT rf.*, lr.order_id, lr.status FROM result_files rf JOIN lab_results lr ON lr.id = rf.result_id WHERE rf.id = ? LIMIT 1', [(int) $fileId]);
+    if (!$file || !can_access_result($pdo, $actor, ['id' => (int) $file['result_id'], 'order_id' => (int) $file['order_id'], 'status' => $file['status']])) {
+        respond(false, 'File not found or not available to your role.', [], 404);
+    }
+    $path = dirname(__DIR__) . '/public/uploads/results/' . basename($file['stored_name']);
+    if (!is_file($path)) {
+        respond(false, 'The uploaded file is missing from storage.', [], 404);
+    }
+    if (ob_get_length()) {
+        ob_clean();
+    }
+    header('Content-Type: ' . $file['mime_type']);
+    header('Content-Length: ' . filesize($path));
+    $downloadName = preg_replace('/[^A-Za-z0-9._-]+/', '-', $file['original_name']) ?: 'result-file';
+    header('Content-Disposition: inline; filename="' . $downloadName . '"');
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Security-Policy: sandbox');
+    readfile($path);
+    exit;
+}
+
+function download_result_details($pdo, $resultId, $actor)
+{
+    $result = result_by_identifier($pdo, $resultId);
+    if (!$result || !can_access_result($pdo, $actor, $result)) {
+        respond(false, 'Result not found or not available to your role.', [], 404);
+    }
+    if ($actor['role'] === 'Patient' && $result['status'] !== 'Released') {
+        respond(false, 'Only released results can be downloaded.', [], 403);
+    }
+
+    $rows = fetch_results($pdo, $actor);
+    $details = null;
+    foreach ($rows as $row) {
+        if ((int) $row['id'] === (int) $result['id']) {
+            $details = $row;
+            break;
+        }
+    }
+    if (!$details) {
+        respond(false, 'Result not found or not available to your role.', [], 404);
+    }
+
+    $lines = [
+        'Centralized Laboratory Results System',
+        'Laboratory Result Details',
+        '',
+        'Result ID: ' . $details['resultNumber'],
+        'Order No.: ' . $details['orderNumber'],
+        'Patient: ' . $details['patientName'] . ' (' . $details['patientCode'] . ')',
+        'Doctor: ' . $details['doctorName'],
+        'Facility: ' . $details['facilityName'],
+        'Test: ' . $details['testName'],
+        'Status: ' . $details['status'],
+        'Created: ' . ($details['createdAt'] ?: '-'),
+        'Updated: ' . ($details['updatedAt'] ?: '-'),
+        'Released: ' . ($details['releasedAt'] ?: '-'),
+        'Uploaded by: ' . ($details['uploadedBy'] ?: '-'),
+        '',
+        'Findings:',
+        $details['findings'] ?: 'No findings recorded.',
+        '',
+        'Remarks:',
+        $details['remarks'] ?: 'No remarks recorded.',
+        '',
+        'Result Values:',
+    ];
+    if ($details['values']) {
+        foreach ($details['values'] as $value) {
+            $lines[] = '- ' . $value['parameter'] . ': ' . $value['value']
+                . ($value['unit'] ? ' ' . $value['unit'] : '')
+                . ($value['referenceRange'] ? ' (Reference: ' . $value['referenceRange'] . ')' : '')
+                . ($value['flag'] ? ' [' . $value['flag'] . ']' : '');
+        }
+    } else {
+        $lines[] = 'No structured values recorded.';
+    }
+    $lines[] = '';
+    $lines[] = 'Clinical Note:';
+    $lines[] = $details['clinicalNote'] ?: 'No clinical note recorded.';
+
+    if (ob_get_length()) {
+        ob_clean();
+    }
+    $filename = preg_replace('/[^A-Za-z0-9_-]+/', '-', $details['resultNumber']) . '-details.txt';
+    header('Content-Type: text/plain; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    echo implode("\r\n", $lines);
+    exit;
+}
+
 function upload_result($pdo, $data, $actor)
 {
-    require_auth($pdo, ['Admin', 'Laboratory Staff']);
+    require_auth($pdo, ['Laboratory Staff']);
     $orderKey = require_field($data, 'orderId', 'Order');
     $order = order_by_identifier($pdo, $orderKey);
     if (!$order || !can_access_order($pdo, $actor, $order)) {
@@ -1128,6 +1639,9 @@ function upload_result($pdo, $data, $actor)
     }
     if (in_array($order['status'], ['Result Uploaded', 'Verified', 'Released', 'Rejected', 'Cancelled'], true)) {
         respond(false, 'This order already has a result workflow or is closed.', [], 409);
+    }
+    if (!in_array($order['status'], ['Processing', 'In Progress'], true)) {
+        respond(false, 'Move the order to Processing or In Progress before uploading a result.', [], 409);
     }
     $existing = one($pdo, 'SELECT result_number, status FROM lab_results WHERE order_id = ? AND status <> "Rejected" ORDER BY id DESC LIMIT 1', [(int) $order['id']]);
     if ($existing) {
@@ -1144,6 +1658,7 @@ function upload_result($pdo, $data, $actor)
     $stmt = $pdo->prepare('INSERT INTO lab_results (result_number, order_id, uploaded_by, status, findings, remarks) VALUES (?, ?, ?, "Pending Review", ?, ?)');
     $stmt->execute([$resultNumber, (int) $order['id'], $actor['id'], $findings, $remarks]);
     $resultId = (int) $pdo->lastInsertId();
+    save_result_attachments($pdo, $resultId, $data['attachments'] ?? []);
     $stmt = $pdo->prepare('INSERT INTO lab_result_values (result_id, parameter_name, value_text, unit, reference_range, flag) VALUES (?, ?, ?, ?, ?, ?)');
     foreach ($values as $value) {
         if (!is_array($value) || trim((string) ($value['parameter'] ?? '')) === '') {
@@ -1162,7 +1677,7 @@ function upload_result($pdo, $data, $actor)
     $stmt->execute(['Result uploaded - pending review', (int) $order['id']]);
     $stmt = $pdo->prepare('UPDATE lab_order_items SET status="Result Uploaded" WHERE order_id=?');
     $stmt->execute([(int) $order['id']]);
-    notify_user($pdo, ['role_name' => 'Laboratory Staff', 'title' => 'Result pending review', 'message' => $resultNumber . ' is waiting for laboratory review.', 'type_name' => 'results', 'related_order_id' => (int) $order['id'], 'related_result_id' => $resultId]);
+    notify_facility_staff($pdo, (int) $order['facility_id'], ['title' => 'Result pending review', 'message' => $resultNumber . ' is waiting for laboratory review.', 'type_name' => 'results', 'related_order_id' => (int) $order['id'], 'related_result_id' => $resultId]);
     notify_user($pdo, ['user_id' => (int) $order['doctor_id'], 'title' => 'Result uploaded', 'message' => $resultNumber . ' is pending laboratory review.', 'type_name' => 'results', 'related_order_id' => (int) $order['id'], 'related_result_id' => $resultId]);
     audit_log($pdo, $actor, 'CREATE', 'Result', 'Uploaded ' . $resultNumber . ' for ' . $order['order_number']);
     $pdo->commit();
@@ -1171,7 +1686,7 @@ function upload_result($pdo, $data, $actor)
 
 function update_result_status($pdo, $data, $actor, $forcedStatus = null)
 {
-    require_auth($pdo, ['Admin', 'Laboratory Staff']);
+    require_auth($pdo, ['Laboratory Staff']);
     $resultKey = require_field($data, 'resultId', 'Result');
     $status = $forcedStatus ?: require_field($data, 'status', 'Status');
     if (!in_array($status, valid_result_statuses(), true)) {
@@ -1182,7 +1697,13 @@ function update_result_status($pdo, $data, $actor, $forcedStatus = null)
         respond(false, 'Result not found or not available to your role.', [], 404);
     }
     if ($status === 'Released' && $result['status'] !== 'Verified') {
-        respond(false, 'Verify the result before releasing it to the patient portal.', [], 409);
+        respond(false, 'A result must be verified before it can be released.', [], 409);
+    }
+    if ($status === 'Verified' && $result['status'] !== 'Pending Review') {
+        respond(false, 'Only pending-review results can be verified.', [], 409);
+    }
+    if ($status === 'Rejected' && !in_array($result['status'], ['Pending Review', 'Verified'], true)) {
+        respond(false, 'Only pending-review or verified results can be rejected.', [], 409);
     }
     if ($result['status'] === 'Released' && $status !== 'Released') {
         respond(false, 'Released results cannot be moved back to another status.', [], 409);
@@ -1208,7 +1729,7 @@ function update_result_status($pdo, $data, $actor, $forcedStatus = null)
 
     if (in_array($status, ['Verified', 'Released', 'Rejected'], true)) {
         $stmt = $pdo->prepare('UPDATE lab_orders SET status=?, latest_update=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
-        $stmt->execute([$status, $status . ' - just now', (int) $order['id']]);
+        $stmt->execute([$status, 'Result status changed to ' . $status, (int) $order['id']]);
         $stmt = $pdo->prepare('UPDATE lab_order_items SET status=? WHERE order_id=?');
         $stmt->execute([$status, (int) $order['id']]);
     }
@@ -1226,9 +1747,41 @@ function update_result_status($pdo, $data, $actor, $forcedStatus = null)
     respond(true, 'Result status updated.', ['app' => app_data($pdo, $actor)]);
 }
 
+function update_result_content($pdo, $data, $actor)
+{
+    require_auth($pdo, ['Laboratory Staff']);
+    $resultKey = require_field($data, 'resultId', 'Result');
+    $result = result_by_identifier($pdo, $resultKey);
+    if (!$result || !can_access_result($pdo, $actor, $result)) {
+        respond(false, 'Result not found or not available to your role.', [], 404);
+    }
+    if (in_array($result['status'], ['Released', 'Rejected'], true)) {
+        respond(false, 'Released or rejected results cannot be edited.', [], 409);
+    }
+    $findings = require_field($data, 'findings', 'Findings');
+    $remarks = optional_string($data, 'remarks');
+    $values = is_array($data['values'] ?? null) ? $data['values'] : [];
+    $pdo->beginTransaction();
+    $stmt = $pdo->prepare('UPDATE lab_results SET findings=?, remarks=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
+    $stmt->execute([$findings, $remarks, (int) $result['id']]);
+    $stmt = $pdo->prepare('DELETE FROM lab_result_values WHERE result_id=?');
+    $stmt->execute([(int) $result['id']]);
+    $stmt = $pdo->prepare('INSERT INTO lab_result_values (result_id, parameter_name, value_text, unit, reference_range, flag) VALUES (?, ?, ?, ?, ?, ?)');
+    foreach ($values as $value) {
+        if (!is_array($value) || trim((string) ($value['parameter'] ?? '')) === '') {
+            continue;
+        }
+        $stmt->execute([(int) $result['id'], trim((string) $value['parameter']), trim((string) ($value['value'] ?? '')), trim((string) ($value['unit'] ?? '')), trim((string) ($value['referenceRange'] ?? '')), trim((string) ($value['flag'] ?? ''))]);
+    }
+    save_result_attachments($pdo, (int) $result['id'], $data['attachments'] ?? []);
+    audit_log($pdo, $actor, 'UPDATE', 'Result', 'Edited ' . $result['result_number']);
+    $pdo->commit();
+    respond(true, 'Result updated.', ['app' => app_data($pdo, $actor)]);
+}
+
 function add_clinical_note($pdo, $data, $actor)
 {
-    require_auth($pdo, ['Admin', 'Doctor']);
+    require_auth($pdo, ['Doctor']);
     $resultKey = require_field($data, 'resultId', 'Result');
     $note = require_field($data, 'note', 'Clinical note');
     $result = result_by_identifier($pdo, $resultKey);
@@ -1236,17 +1789,15 @@ function add_clinical_note($pdo, $data, $actor)
         respond(false, 'Result not found or not available to your role.', [], 404);
     }
     $order = one($pdo, 'SELECT * FROM lab_orders WHERE id = ? LIMIT 1', [(int) $result['order_id']]);
-    $noteDoctorId = (int) $order['doctor_id'];
-    if ($actor['role'] === 'Doctor') {
-        if ((int) $order['doctor_id'] !== (int) $actor['id']) {
-            respond(false, 'You can only add notes to your own results.', [], 403);
-        }
-        $noteDoctorId = (int) $actor['id'];
+    if ((int) $order['doctor_id'] !== (int) $actor['id']) {
+        respond(false, 'You can only add notes to your own results.', [], 403);
     }
     $pdo->beginTransaction();
     $stmt = $pdo->prepare('INSERT INTO clinical_notes (result_id, doctor_id, note) VALUES (?, ?, ?)');
-    $stmt->execute([(int) $result['id'], $noteDoctorId, $note]);
-    notify_user($pdo, ['patient_id' => (int) $order['patient_id'], 'title' => 'Clinical note added', 'message' => $actor['name'] . ' added a note to result ' . $result['result_number'] . '.', 'type_name' => 'note', 'related_order_id' => (int) $order['id'], 'related_result_id' => (int) $result['id']]);
+    $stmt->execute([(int) $result['id'], (int) $actor['id'], $note]);
+    if ($result['status'] === 'Released') {
+        notify_user($pdo, ['patient_id' => (int) $order['patient_id'], 'title' => 'Clinical note added', 'message' => $actor['name'] . ' added a note to result ' . $result['result_number'] . '.', 'type_name' => 'note', 'related_order_id' => (int) $order['id'], 'related_result_id' => (int) $result['id']]);
+    }
     audit_log($pdo, $actor, 'UPDATE', 'Result', 'Added clinical note to ' . $result['result_number']);
     $pdo->commit();
     respond(true, 'Clinical note saved.', ['app' => app_data($pdo, $actor)]);
@@ -1254,8 +1805,8 @@ function add_clinical_note($pdo, $data, $actor)
 
 function update_patient_profile($pdo, $data, $actor)
 {
-    require_auth($pdo, ['Admin', 'Patient']);
-    $patientId = $actor['role'] === 'Patient' ? (int) $actor['patientId'] : (int) ($data['patientId'] ?? 0);
+    require_auth($pdo, ['Patient']);
+    $patientId = (int) $actor['patientId'];
     $patient = one($pdo, 'SELECT * FROM patients WHERE id = ? LIMIT 1', [$patientId]);
     if (!$patient) {
         respond(false, 'Patient profile was not found.', [], 404);
@@ -1265,6 +1816,22 @@ function update_patient_profile($pdo, $data, $actor)
     if ($email && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         respond(false, 'Enter a valid email address.', [], 422);
     }
+    validate_max_length($email, 160, 'Email', 'email');
+    validate_max_length($contact, 40, 'Contact number', 'contact');
+    $dateOfBirth = optional_string($data, 'dateOfBirth', $patient['date_of_birth']);
+    $sex = optional_string($data, 'sex', $patient['sex']);
+    $address = optional_string($data, 'address', $patient['address']);
+    if ($dateOfBirth) {
+        $birthTime = strtotime($dateOfBirth);
+        if ($birthTime === false || $birthTime > time() || $birthTime < strtotime('-120 years')) {
+            respond(false, 'Enter a valid date of birth.', [], 422, ['dateOfBirth' => 'Invalid date']);
+        }
+        $dateOfBirth = date('Y-m-d', $birthTime);
+    }
+    if ($sex && !in_array($sex, ['Female', 'Male', 'Non-binary', 'Prefer not to say'], true)) {
+        respond(false, 'Select a valid sex option.', [], 422, ['sex' => 'Invalid option']);
+    }
+    validate_max_length($address, 255, 'Address', 'address');
     if ($email) {
         $exists = one($pdo, 'SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1', [$email, (int) $patient['user_id']]);
         if ($exists) {
@@ -1281,9 +1848,9 @@ function update_patient_profile($pdo, $data, $actor)
     }
     $stmt = $pdo->prepare('UPDATE patients SET date_of_birth=?, sex=?, address=? WHERE id=?');
     $stmt->execute([
-        optional_string($data, 'dateOfBirth', $patient['date_of_birth']),
-        optional_string($data, 'sex', $patient['sex']),
-        optional_string($data, 'address', $patient['address']),
+        $dateOfBirth,
+        $sex,
+        $address,
         $patientId,
     ]);
     audit_log($pdo, $actor, 'UPDATE', 'Patient', 'Updated patient profile ' . $patient['patient_code']);
@@ -1301,8 +1868,8 @@ function change_password($pdo, $data, $actor)
     if ($new !== $confirm) {
         respond(false, 'New passwords do not match.', [], 422);
     }
-    if (strlen($new) < 8) {
-        respond(false, 'New password must be at least 8 characters.', [], 422);
+    if (!valid_password($new)) {
+        respond(false, 'New password must be at least 8 characters and include a letter and number.', [], 422);
     }
     if (!password_match_type($current, $userRow['password_hash'])) {
         respond(false, 'Current password is incorrect.', [], 401);
@@ -1315,13 +1882,43 @@ function change_password($pdo, $data, $actor)
     respond(true, 'Password changed successfully.');
 }
 
-function notification_filter_sql($user)
+function deactivate_user($pdo, $data, $actor)
+{
+    require_auth($pdo, ['Admin']);
+    $id = (int) require_field($data, 'id', 'User');
+    if ($id === (int) $actor['id']) {
+        respond(false, 'You cannot delete or deactivate your own Admin account.', [], 422);
+    }
+    $target = one($pdo, 'SELECT u.id, u.name, u.status, r.name AS role FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ? LIMIT 1', [$id]);
+    if (!$target) {
+        respond(false, 'User not found.', [], 404);
+    }
+
+    $pdo->beginTransaction();
+    $stmt = $pdo->prepare('UPDATE users SET status="Inactive", updated_at=CURRENT_TIMESTAMP WHERE id=?');
+    $stmt->execute([$id]);
+    audit_log($pdo, $actor, 'DELETE', 'User', 'Deactivated ' . $target['role'] . ' user ' . $target['name']);
+    $pdo->commit();
+
+    respond(true, 'User deactivated successfully.', ['users' => fetch_users($pdo), 'app' => app_data($pdo, $actor)]);
+}
+
+function notification_filter_sql($pdo, $user)
 {
     if ($user['role'] === 'Admin') {
         return ['1 = 1', []];
     }
     $sql = '(user_id = ? OR role_name = ?';
     $params = [$user['id'], $user['role']];
+    if ($user['role'] === 'Laboratory Staff') {
+        $ids = lab_facility_ids($pdo, $user);
+        if ($ids) {
+            $sql .= ' AND (related_order_id IS NULL OR related_order_id IN (SELECT id FROM lab_orders WHERE facility_id IN (' . placeholders(count($ids)) . ')))';
+            $params = array_merge($params, $ids);
+        } else {
+            $sql .= ' AND related_order_id IS NULL';
+        }
+    }
     if ($user['role'] === 'Patient' && $user['patientId']) {
         $sql .= ' OR patient_id = ?';
         $params[] = $user['patientId'];
@@ -1334,6 +1931,7 @@ try {
     $pdo = db();
     $action = $_GET['action'] ?? ($_POST['action'] ?? '');
     $data = request_data();
+    validate_csrf_request($action);
 
     if ($action === 'health') {
         respond(true, 'API is available.', ['database' => DB_NAME]);
@@ -1344,10 +1942,12 @@ try {
         $password = require_field($data, 'password', 'Password');
         $row = one($pdo, 'SELECT u.*, r.name AS role FROM users u JOIN roles r ON r.id = u.role_id WHERE (LOWER(u.email)=? OR LOWER(u.username)=?) AND u.status="Active" LIMIT 1', [$identifier, $identifier]);
         if (!$row) {
+            usleep(250000);
             respond(false, 'Invalid email, username, or password.', [], 401);
         }
         $match = password_match_type($password, $row['password_hash']);
         if (!$match) {
+            usleep(250000);
             respond(false, 'Invalid email, username, or password.', [], 401);
         }
         $user = fetch_user($pdo, (int) $row['id']);
@@ -1360,7 +1960,7 @@ try {
         $pdo->commit();
         session_regenerate_id(true);
         $_SESSION['user_id'] = (int) $row['id'];
-        respond(true, 'Login successful.', ['user' => $user]);
+        respond(true, 'Login successful.', ['user' => $user, 'csrfToken' => rotate_csrf_token()]);
     }
 
     if ($action === 'logout') {
@@ -1383,14 +1983,36 @@ try {
 
     if ($action === 'session') {
         $user = current_user($pdo);
-        respond((bool) $user, $user ? 'Session active.' : 'No active session.', ['user' => $user], $user ? 200 : 401);
+        respond((bool) $user, $user ? 'Session active.' : 'No active session.', ['user' => $user, 'csrfToken' => $_SESSION['csrf_token']], $user ? 200 : 401);
+    }
+
+    if ($action === 'download_result_file') {
+        download_result_file($pdo, (int) ($_GET['id'] ?? 0), require_auth($pdo));
+    }
+
+    if ($action === 'download_result_details') {
+        download_result_details($pdo, (int) ($_GET['id'] ?? 0), require_auth($pdo));
     }
 
     if ($action === 'register_patient') {
+        $settings = clinic_maintenance_current($pdo);
+        if (clinic_maintenance_is_active($settings)) {
+            respond(false, $settings['message'], [
+                'maintenance' => clinic_maintenance_public_settings($settings),
+            ], 503);
+        }
+
         $fullName = require_field($data, 'fullName', 'Full name');
         $email = strtolower(require_field($data, 'email', 'Email'));
         $username = strtolower(require_field($data, 'username', 'Username'));
         $password = require_field($data, 'password', 'Password');
+        $dateOfBirth = require_field($data, 'dateOfBirth', 'Date of birth');
+        $sex = require_field($data, 'sex', 'Sex');
+        $contact = require_field($data, 'contact', 'Contact number');
+        $address = require_field($data, 'address', 'Address');
+        if (empty($data['termsAccepted']) || empty($data['privacyAcknowledged'])) {
+            respond(false, 'Accept the terms and privacy notice to create an account.', [], 422);
+        }
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             respond(false, 'Enter a valid email address.', [], 422);
         }
@@ -1400,23 +2022,47 @@ try {
         if (!preg_match('/^(?=.*[A-Za-z])(?=.*\d).{8,}$/', $password)) {
             respond(false, 'Password must be at least 8 characters and include a letter and number.', [], 422);
         }
+        $birthTime = strtotime($dateOfBirth);
+        if ($birthTime === false || $birthTime > time() || $birthTime < strtotime('-120 years')) {
+            respond(false, 'Enter a valid date of birth.', [], 422, ['dateOfBirth' => 'Invalid date']);
+        }
+        if (!in_array($sex, ['Female', 'Male', 'Non-binary', 'Prefer not to say'], true)) {
+            respond(false, 'Select a valid sex option.', [], 422, ['sex' => 'Invalid option']);
+        }
+        if (!preg_match('/^[+\d][\d\s()\-]{7,17}$/', $contact)) {
+            respond(false, 'Enter a valid contact number.', [], 422, ['contact' => 'Invalid contact']);
+        }
         if (one($pdo, 'SELECT id FROM users WHERE email=? OR username=? LIMIT 1', [$email, $username])) {
             respond(false, 'An account already exists with that email or username.', [], 409);
         }
         $facilityId = find_facility_id($pdo, $data, true);
+        if (!$facilityId) {
+            respond(false, 'Patient registration is unavailable until an active facility is configured.', [], 503);
+        }
         $pdo->beginTransaction();
         $stmt = $pdo->prepare('INSERT INTO users (role_id, name, email, username, password_hash, avatar, contact, status) VALUES (?, ?, ?, ?, ?, ?, ?, "Active")');
-        $stmt->execute([role_id($pdo, 'Patient'), $fullName, $email, $username, password_hash($password, PASSWORD_DEFAULT), initials($fullName), optional_string($data, 'contact')]);
+        $stmt->execute([role_id($pdo, 'Patient'), $fullName, $email, $username, password_hash($password, PASSWORD_DEFAULT), initials($fullName), $contact]);
         $userId = (int) $pdo->lastInsertId();
         $stmt = $pdo->prepare('INSERT INTO patients (user_id, patient_code, date_of_birth, sex, address, primary_facility_id, privacy_acknowledged) VALUES (?, ?, ?, ?, ?, ?, 1)');
-        $stmt->execute([$userId, generate_patient_code($pdo), optional_string($data, 'dateOfBirth') ?: optional_string($data, 'dob'), optional_string($data, 'sex'), optional_string($data, 'address'), $facilityId]);
+        $stmt->execute([$userId, generate_patient_code($pdo), date('Y-m-d', $birthTime), $sex, $address, $facilityId]);
         $user = fetch_user($pdo, $userId);
         notify_user($pdo, ['role_name' => 'Admin', 'title' => 'New patient registered', 'message' => $fullName . ' created a patient portal account.', 'type_name' => 'users']);
         audit_log($pdo, $user, 'CREATE', 'Patient', 'Registered new patient account');
         $pdo->commit();
         session_regenerate_id(true);
         $_SESSION['user_id'] = $userId;
-        respond(true, 'Patient account created successfully.', ['user' => fetch_user($pdo, $userId)]);
+        respond(true, 'Patient account created successfully.', ['user' => fetch_user($pdo, $userId), 'csrfToken' => rotate_csrf_token()]);
+    }
+
+    if ($action === 'maintenance_settings') {
+        require_auth($pdo, ['Admin']);
+        respond(true, 'Maintenance settings loaded.', [
+            'maintenance' => clinic_maintenance_public_settings(clinic_maintenance_current($pdo)),
+        ]);
+    }
+
+    if ($action === 'save_maintenance_settings') {
+        save_maintenance_settings($pdo, $data, require_auth($pdo, ['Admin']));
     }
 
     if (in_array($action, ['app_data', 'store_read'], true)) {
@@ -1433,12 +2079,20 @@ try {
         save_user($pdo, $data, require_auth($pdo, ['Admin']));
     }
 
+    if ($action === 'delete_user') {
+        deactivate_user($pdo, $data, require_auth($pdo, ['Admin']));
+    }
+
     if ($action === 'toggle_user_status') {
         $actor = require_auth($pdo, ['Admin']);
         $id = (int) require_field($data, 'id', 'User');
         $status = optional_string($data, 'status', 'Inactive') === 'Active' ? 'Active' : 'Inactive';
         if ($id === (int) $actor['id'] && $status !== 'Active') {
             respond(false, 'You cannot deactivate your own Admin account.', [], 422);
+        }
+        $target = one($pdo, 'SELECT id FROM users WHERE id = ? LIMIT 1', [$id]);
+        if (!$target) {
+            respond(false, 'User not found.', [], 404);
         }
         $pdo->beginTransaction();
         $stmt = $pdo->prepare('UPDATE users SET status=? WHERE id=?');
@@ -1451,7 +2105,13 @@ try {
     if ($action === 'reset_user_password') {
         $actor = require_auth($pdo, ['Admin']);
         $id = (int) require_field($data, 'id', 'User');
-        $password = optional_string($data, 'password', 'Password123');
+        $password = require_field($data, 'password', 'New password');
+        if (!valid_password($password)) {
+            respond(false, 'Password must be at least 8 characters and include a letter and number.', [], 422, ['password' => 'Weak password']);
+        }
+        if (!one($pdo, 'SELECT id FROM users WHERE id = ? LIMIT 1', [$id])) {
+            respond(false, 'User not found.', [], 404);
+        }
         $pdo->beginTransaction();
         $stmt = $pdo->prepare('UPDATE users SET password_hash=? WHERE id=?');
         $stmt->execute([password_hash($password, PASSWORD_DEFAULT), $id]);
@@ -1490,44 +2150,48 @@ try {
 
     if (in_array($action, ['doctor_patients'], true)) {
         $user = require_auth($pdo, ['Doctor']);
-        respond(true, 'Patients loaded.', ['patients' => fetch_patients($pdo, $user, 'role'), 'availablePatients' => fetch_patients($pdo, null, 'all')]);
+        respond(true, 'Patients loaded.', ['patients' => fetch_patients($pdo, $user, 'role'), 'availablePatients' => fetch_patients($pdo, $user, 'role')]);
     }
 
     if ($action === 'create_order') {
-        create_order($pdo, $data, require_auth($pdo, ['Admin', 'Doctor']));
+        create_order($pdo, $data, require_auth($pdo, ['Doctor']));
     }
 
     if ($action === 'update_order_status') {
-        update_order_status($pdo, $data, require_auth($pdo, ['Admin', 'Laboratory Staff']));
+        update_order_status($pdo, $data, require_auth($pdo, ['Laboratory Staff']));
     }
 
     if ($action === 'upload_result') {
-        upload_result($pdo, $data, require_auth($pdo, ['Admin', 'Laboratory Staff']));
+        upload_result($pdo, $data, require_auth($pdo, ['Laboratory Staff']));
     }
 
     if (in_array($action, ['update_result_status', 'review_result'], true)) {
-        update_result_status($pdo, $data, require_auth($pdo, ['Admin', 'Laboratory Staff']));
+        update_result_status($pdo, $data, require_auth($pdo, ['Laboratory Staff']));
+    }
+
+    if ($action === 'update_result_content') {
+        update_result_content($pdo, $data, require_auth($pdo, ['Laboratory Staff']));
     }
 
     if ($action === 'release_result') {
-        update_result_status($pdo, $data, require_auth($pdo, ['Admin', 'Laboratory Staff']), 'Released');
+        update_result_status($pdo, $data, require_auth($pdo, ['Laboratory Staff']), 'Released');
     }
 
     if ($action === 'reject_result') {
-        update_result_status($pdo, $data, require_auth($pdo, ['Admin', 'Laboratory Staff']), 'Rejected');
+        update_result_status($pdo, $data, require_auth($pdo, ['Laboratory Staff']), 'Rejected');
     }
 
     if ($action === 'add_clinical_note') {
-        add_clinical_note($pdo, $data, require_auth($pdo, ['Admin', 'Doctor']));
+        add_clinical_note($pdo, $data, require_auth($pdo, ['Doctor']));
     }
 
     if ($action === 'patient_profile') {
-        $user = require_auth($pdo, ['Patient', 'Admin']);
+        $user = require_auth($pdo, ['Patient']);
         respond(true, 'Patient profile loaded.', ['patients' => fetch_patients($pdo, $user, 'role')]);
     }
 
     if ($action === 'update_patient_profile') {
-        update_patient_profile($pdo, $data, require_auth($pdo, ['Patient', 'Admin']));
+        update_patient_profile($pdo, $data, require_auth($pdo, ['Patient']));
     }
 
     if ($action === 'change_password') {
@@ -1542,7 +2206,7 @@ try {
     if ($action === 'mark_notification_read') {
         $user = require_auth($pdo);
         $id = (int) require_field($data, 'id', 'Notification');
-        list($filter, $params) = notification_filter_sql($user);
+        list($filter, $params) = notification_filter_sql($pdo, $user);
         $stmt = $pdo->prepare('UPDATE notifications SET is_read=1 WHERE id=? AND ' . $filter);
         $stmt->execute(array_merge([$id], $params));
         respond(true, 'Notification marked as read.', ['notifications' => fetch_notifications($pdo, $user)]);
@@ -1550,7 +2214,7 @@ try {
 
     if ($action === 'mark_all_notifications_read') {
         $user = require_auth($pdo);
-        list($filter, $params) = notification_filter_sql($user);
+        list($filter, $params) = notification_filter_sql($pdo, $user);
         $stmt = $pdo->prepare('UPDATE notifications SET is_read=1 WHERE ' . $filter);
         $stmt->execute($params);
         respond(true, 'All notifications marked as read.', ['notifications' => fetch_notifications($pdo, $user)]);

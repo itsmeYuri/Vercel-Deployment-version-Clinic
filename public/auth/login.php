@@ -1,6 +1,12 @@
 <?php
-$pageTitle = 'Clinic Management System';
-$pageDescription = 'Secure login for the Clinic Management System';
+require_once __DIR__ . '/../../app/core/auth.php';
+
+clinic_start_session();
+$authNotice = $_SESSION['auth_notice'] ?? '';
+unset($_SESSION['auth_notice']);
+
+$pageTitle = 'Centralized Laboratory Results System';
+$pageDescription = 'Secure login for the Centralized Laboratory Results System';
 $assetBase = '../assets';
 $apiUrl = '../../api/index.php';
 $loginUrl = 'login.php#login';
@@ -14,11 +20,11 @@ require __DIR__ . '/../../app/views/layouts/header.php';
 ?>
     <main class="auth-shell">
       <section class="brand-panel" aria-labelledby="brand-title">
-        <a class="brand" href="login.php#login" aria-label="Clinic Management System home">
+        <a class="brand" href="login.php#login" aria-label="Centralized Laboratory Results System home">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 32 32" role="img"><path d="M13 5a3 3 0 0 1 6 0v8h8a3 3 0 0 1 0 6h-8v8a3 3 0 0 1-6 0v-8H5a3 3 0 0 1 0-6h8V5Z" /></svg>
           </span>
-          <span><strong id="brand-title">Clinic Management</strong><small>Healthcare made simpler</small></span>
+          <span><strong id="brand-title">Centralized Laboratory Results System</strong><small>Healthcare made simpler</small></span>
         </a>
 
         <div class="illustration-wrap" aria-hidden="true">
@@ -54,18 +60,18 @@ require __DIR__ . '/../../app/views/layouts/header.php';
       <section class="form-panel">
         <div class="mobile-brand">
           <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M13 5a3 3 0 0 1 6 0v8h8a3 3 0 0 1 0 6h-8v8a3 3 0 0 1-6 0v-8H5a3 3 0 0 1 0-6h8V5Z" /></svg></span>
-          <span><strong>Clinic Management</strong><small>Healthcare made simpler</small></span>
+          <span><strong>Centralized Laboratory Results System</strong><small>Healthcare made simpler</small></span>
         </div>
 
         <div class="form-card" id="login-screen">
           <header class="form-header">
             <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z" /></svg></span>
-            <p class="eyebrow">Clinic Management System</p>
+            <p class="eyebrow">Centralized Laboratory Results System</p>
             <h2>Welcome back</h2>
-            <p>Sign in to securely access your clinic workspace.</p>
+            <p>Sign in to securely access your laboratory results workspace.</p>
           </header>
 
-          <div class="status-message" role="status" aria-live="polite"></div>
+          <div class="status-message<?= $authNotice !== '' ? ' is-visible error' : '' ?>" role="status" aria-live="polite"><?= e($authNotice) ?></div>
 
           <form id="login-form" novalidate>
             <div class="field">
@@ -107,10 +113,10 @@ require __DIR__ . '/../../app/views/layouts/header.php';
             </div>
           </section>
 
-          <p class="form-switch">New to the clinic system? <a href="register.php">Create a patient account</a></p>
+          <p class="form-switch">New to the laboratory results system? <a href="register.php">Create a patient account</a></p>
         </div>
 
-        <footer>(c) <span id="current-year"></span> Clinic Management System - Your privacy matters</footer>
+        <footer>(c) <span id="current-year"></span> Centralized Laboratory Results System - Your privacy matters</footer>
       </section>
     </main>
 <?php require __DIR__ . '/../../app/views/layouts/footer.php'; ?>

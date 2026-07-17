@@ -5,6 +5,7 @@ CREATE DATABASE IF NOT EXISTS clinic_system_v2 CHARACTER SET utf8mb4 COLLATE utf
 USE clinic_system_v2;
 
 DROP TABLE IF EXISTS system_settings;
+DROP TABLE IF EXISTS maintenance_settings;
 DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS notifications;
 DROP TABLE IF EXISTS clinical_notes;
@@ -135,7 +136,7 @@ CREATE TABLE lab_orders (
   patient_id INT NOT NULL,
   doctor_id INT NOT NULL,
   facility_id INT NOT NULL,
-  priority VARCHAR(40) NOT NULL DEFAULT 'Normal',
+  priority VARCHAR(40) NOT NULL DEFAULT 'Regular',
   status VARCHAR(60) NOT NULL DEFAULT 'Pending',
   clinical_notes TEXT NULL,
   latest_update VARCHAR(180) NOT NULL DEFAULT 'Order created',
@@ -254,6 +255,24 @@ CREATE TABLE audit_logs (
   INDEX idx_audit_module (module)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE maintenance_settings (
+  id INT NOT NULL PRIMARY KEY,
+  is_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  scope VARCHAR(40) NOT NULL DEFAULT 'all',
+  affected_roles TEXT NULL,
+  affected_pages TEXT NULL,
+  message VARCHAR(255) NOT NULL DEFAULT 'The system is currently undergoing maintenance. Please try again later.',
+  reason VARCHAR(255) NULL,
+  start_at DATETIME NULL,
+  end_at DATETIME NULL,
+  created_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_maintenance_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_maintenance_enabled (is_enabled),
+  INDEX idx_maintenance_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE system_settings (
   setting_key VARCHAR(80) PRIMARY KEY,
   setting_value TEXT NULL,
@@ -322,14 +341,14 @@ INSERT INTO test_definitions (id, code, name, category, sample_type, turnaround_
 (8, 'ESR', 'Erythrocyte Sedimentation Rate', 'Hematology', 'Whole Blood', '6 hours', 700.00, '0-20 mm/hr', 'Collect EDTA blood.', 'Inactive');
 
 INSERT INTO lab_orders (id, order_number, patient_id, doctor_id, facility_id, priority, status, clinical_notes, latest_update, created_at) VALUES
-(1, 'LAB-2026-0842', 1, 2, 1, 'Urgent', 'Released', 'Persistent fatigue and fever. Rule out infection.', 'Result released - 10:32 AM', '2026-06-25 08:14:00'),
-(2, 'LAB-2026-0841', 3, 2, 2, 'Normal', 'Processing', 'Routine lipid monitoring.', 'Sample processed - 9:46 AM', '2026-06-25 09:01:00'),
-(3, 'LAB-2026-0840', 4, 2, 3, 'High', 'Sample Collected', 'Follow-up thyroid and glucose monitoring.', 'Sample collected - 4:20 PM', '2026-06-24 16:20:00'),
-(4, 'LAB-2026-0839', 5, 2, 1, 'Normal', 'Verified', 'Repeat CBC after respiratory symptoms.', 'Verified - Jun 24', '2026-06-24 10:08:00'),
-(5, 'LAB-2026-0838', 2, 5, 2, 'High', 'Released', 'Inflammatory marker monitoring.', 'Result released - Jun 23', '2026-06-23 13:04:00'),
-(6, 'LAB-2026-0837', 1, 2, 1, 'Routine', 'Pending Sample', 'Urinalysis before follow-up visit.', 'Collection scheduled', '2026-06-23 08:52:00'),
-(7, 'LAB-2026-0836', 4, 6, 3, 'Routine', 'Sample Collected', 'Diabetes monitoring.', 'Sample collected - 8:15 AM', '2026-06-22 08:15:00'),
-(8, 'LAB-2026-0835', 3, 5, 2, 'Normal', 'Result Uploaded', 'Thyroid panel annual review.', 'Awaiting review', '2026-06-22 11:42:00');
+(1, 'LAB-2026-0842', 1, 2, 1, 'Priority', 'Released', 'Persistent fatigue and fever. Rule out infection.', 'Result released - 10:32 AM', '2026-06-25 08:14:00'),
+(2, 'LAB-2026-0841', 3, 2, 2, 'Regular', 'Processing', 'Routine lipid monitoring.', 'Sample processed - 9:46 AM', '2026-06-25 09:01:00'),
+(3, 'LAB-2026-0840', 4, 2, 3, 'Priority', 'Sample Collected', 'Follow-up thyroid and glucose monitoring.', 'Sample collected - 4:20 PM', '2026-06-24 16:20:00'),
+(4, 'LAB-2026-0839', 5, 2, 1, 'Regular', 'Verified', 'Repeat CBC after respiratory symptoms.', 'Verified - Jun 24', '2026-06-24 10:08:00'),
+(5, 'LAB-2026-0838', 2, 5, 2, 'Priority', 'Released', 'Inflammatory marker monitoring.', 'Result released - Jun 23', '2026-06-23 13:04:00'),
+(6, 'LAB-2026-0837', 1, 2, 1, 'Regular', 'Pending Sample', 'Urinalysis before follow-up visit.', 'Collection scheduled', '2026-06-23 08:52:00'),
+(7, 'LAB-2026-0836', 4, 6, 3, 'Regular', 'Sample Collected', 'Diabetes monitoring.', 'Sample collected - 8:15 AM', '2026-06-22 08:15:00'),
+(8, 'LAB-2026-0835', 3, 5, 2, 'Regular', 'Result Uploaded', 'Thyroid panel annual review.', 'Awaiting review', '2026-06-22 11:42:00');
 
 INSERT INTO lab_order_items (order_id, test_definition_id, test_name, status) VALUES
 (1, 1, 'Complete Blood Count', 'Released'),
@@ -350,14 +369,14 @@ INSERT INTO lab_results (id, result_number, order_id, uploaded_by, reviewed_by, 
 (4, 'RES-260618', 8, 8, NULL, 'Pending Review', 'Thyroid panel values entered for review.', 'Pending senior review.', NULL, NULL, '2026-06-22 16:05:00');
 
 INSERT INTO lab_result_values (result_id, test_definition_id, parameter_name, value_text, unit, reference_range, flag) VALUES
-(1, 1, 'WBC', '7.2', 'x10^9/L', '4.5-11.0', 'Normal'),
-(1, 1, 'RBC', '4.62', 'x10^12/L', '4.2-5.4', 'Normal'),
-(1, 1, 'Hemoglobin', '13.8', 'g/dL', '12.0-15.5', 'Normal'),
-(1, 1, 'Platelets', '274', 'x10^9/L', '150-450', 'Normal'),
-(2, 1, 'WBC', '12.4', 'x10^9/L', '4.5-11.0', 'High'),
-(2, 1, 'Hemoglobin', '14.2', 'g/dL', '13.5-17.5', 'Normal'),
-(3, 7, 'CRP', '8.4', 'mg/L', '< 10', 'Normal'),
-(4, 5, 'TSH', '2.7', 'mIU/L', '0.4-4.0', 'Normal');
+(1, 1, 'WBC', '7.2', 'x10^9/L', '4.5-11.0', 'Regular'),
+(1, 1, 'RBC', '4.62', 'x10^12/L', '4.2-5.4', 'Regular'),
+(1, 1, 'Hemoglobin', '13.8', 'g/dL', '12.0-15.5', 'Regular'),
+(1, 1, 'Platelets', '274', 'x10^9/L', '150-450', 'Regular'),
+(2, 1, 'WBC', '12.4', 'x10^9/L', '4.5-11.0', 'Priority'),
+(2, 1, 'Hemoglobin', '14.2', 'g/dL', '13.5-17.5', 'Regular'),
+(3, 7, 'CRP', '8.4', 'mg/L', '< 10', 'Regular'),
+(4, 5, 'TSH', '2.7', 'mIU/L', '0.4-4.0', 'Regular');
 
 INSERT INTO clinical_notes (result_id, doctor_id, note, created_at) VALUES
 (1, 2, 'CBC and metabolic values are within acceptable range. Continue current care plan.', '2026-06-25 11:10:00'),
@@ -382,8 +401,11 @@ INSERT INTO audit_logs (user_id, user_name, role_name, action, module, details, 
 (2, 'Dr. Amelia Carter', 'Doctor', 'UPDATE', 'Result', 'Added clinical note to RES-260621', '127.0.0.1', '2026-06-25 11:10:00'),
 (1, 'Admin User', 'Admin', 'UPDATE', 'Facility', 'Updated Central Medical Center staffing', '127.0.0.1', '2026-06-25 11:30:00');
 
+INSERT INTO maintenance_settings (id, is_enabled, scope, affected_roles, affected_pages, message, reason, start_at, end_at, created_by) VALUES
+(1, 0, 'all', '["Doctor","Laboratory Staff","Patient"]', '[]', 'The system is currently undergoing maintenance. Please try again later.', NULL, NULL, NULL, 1);
+
 INSERT INTO system_settings (setting_key, setting_value) VALUES
-('clinic_name', 'Clinic Management System V2'),
+('clinic_name', 'Centralized Laboratory Results System'),
 ('default_facility_id', '1'),
 ('result_release_policy', 'Only released results are visible to patients.'),
 ('audit_retention_days', '365');
