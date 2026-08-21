@@ -1374,11 +1374,11 @@ function create_order($pdo, $data, $actor)
         [$patientId, (int) ($actor['assignedFacilityId'] ?? 0), (int) $actor['id']]
     );
     if (!$patient) {
-        respond(false, 'Select a patient connected to your assigned facility or existing orders.', [], 403, ['patientId' => 'Outside doctor scope']);
+        respond(false, 'Select a patient connected to your assigned facility or existing laboratory requests.', [], 403, ['patientId' => 'Outside doctor scope']);
     }
     $facilityId = find_facility_id($pdo, $data);
     if (!$facilityId || (int) $facilityId !== (int) ($actor['assignedFacilityId'] ?? 0)) {
-        respond(false, 'Orders can only be created for your assigned active facility.', [], 403, ['facilityId' => 'Outside doctor scope']);
+        respond(false, 'Laboratory requests can only be submitted for your assigned active facility.', [], 403, ['facilityId' => 'Outside doctor scope']);
     }
     if (!one($pdo, 'SELECT id FROM facilities WHERE id = ? AND status = "Active" LIMIT 1', [$facilityId])) {
         respond(false, 'Your assigned facility is not active.', [], 409, ['facilityId' => 'Inactive facility']);
@@ -1406,57 +1406,57 @@ function create_order($pdo, $data, $actor)
     $priority = optional_string($data, 'priority', 'Regular');
     $status = 'Pending';
     if (!in_array($priority, valid_priorities(), true)) {
-        respond(false, 'Select a valid order priority.', [], 422, ['priority' => 'Invalid priority']);
+        respond(false, 'Select a valid laboratory request priority.', [], 422, ['priority' => 'Invalid priority']);
     }
     $notes = optional_string($data, 'clinicalNotes') ?: optional_string($data, 'notes');
 
     $pdo->beginTransaction();
     $stmt = $pdo->prepare('INSERT INTO lab_orders (order_number, patient_id, doctor_id, facility_id, priority, status, clinical_notes, latest_update) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    $stmt->execute([$orderNumber, $patientId, $doctorId, $facilityId, $priority, $status, $notes, 'Order created']);
+    $stmt->execute([$orderNumber, $patientId, $doctorId, $facilityId, $priority, $status, $notes, 'Laboratory request submitted']);
     $orderId = (int) $pdo->lastInsertId();
     $stmt = $pdo->prepare('INSERT INTO lab_order_items (order_id, test_definition_id, test_name, status) VALUES (?, ?, ?, ?)');
     foreach ($tests as $test) {
         $stmt->execute([$orderId, (int) $test['id'], $test['name'], 'Pending']);
     }
     notify_facility_staff($pdo, $facilityId, [
-        'title' => 'New order assigned',
+        'title' => 'New laboratory request received',
         'message' => $orderNumber . ' for ' . $patient['name'] . ' is ready for laboratory intake.',
         'type_name' => 'orders',
         'related_order_id' => $orderId,
     ]);
     notify_user($pdo, [
         'patient_id' => $patientId,
-        'title' => 'Laboratory order created',
-        'message' => $doctor['name'] . ' created ' . $orderNumber . ' for your care.',
+        'title' => 'Laboratory request submitted',
+        'message' => $doctor['name'] . ' submitted laboratory request ' . $orderNumber . ' for your care.',
         'type_name' => 'orders',
         'related_order_id' => $orderId,
     ]);
-    audit_log($pdo, $actor, 'CREATE', 'Order', 'Created ' . $orderNumber . ' for ' . $patient['name']);
+    audit_log($pdo, $actor, 'CREATE', 'Laboratory Request', 'Submitted ' . $orderNumber . ' for ' . $patient['name']);
     $pdo->commit();
-    respond(true, 'Laboratory order created successfully.', ['orderNumber' => $orderNumber, 'orderId' => $orderId, 'app' => app_data($pdo, $actor)]);
+    respond(true, 'Laboratory request submitted successfully.', ['orderNumber' => $orderNumber, 'orderId' => $orderId, 'app' => app_data($pdo, $actor)]);
 }
 
 function update_order_status($pdo, $data, $actor)
 {
     require_auth($pdo, ['Laboratory Staff']);
-    $orderKey = require_field($data, 'orderId', 'Order');
+    $orderKey = require_field($data, 'orderId', 'Laboratory request');
     $status = require_field($data, 'status', 'Status');
     if (!in_array($status, valid_order_statuses(), true)) {
-        respond(false, 'That order status is not allowed from this workflow.', [], 422, ['status' => 'Invalid status']);
+        respond(false, 'That laboratory request status is not allowed from this workflow.', [], 422, ['status' => 'Invalid status']);
     }
     $order = order_by_identifier($pdo, $orderKey);
     if (!$order || !can_access_order($pdo, $actor, $order)) {
-        respond(false, 'Order not found or not available to your role.', [], 404);
+        respond(false, 'Laboratory request not found or not available to your role.', [], 404);
     }
     if (in_array($order['status'], ['Rejected', 'Cancelled'], true)) {
-        respond(false, 'Closed orders cannot be moved back into the active workflow.', [], 409);
+        respond(false, 'Closed laboratory requests cannot be moved back into the active workflow.', [], 409);
     }
     if (in_array($order['status'], ['Result Uploaded', 'Verified', 'Released'], true)) {
-        respond(false, 'This order is controlled by the result review workflow.', [], 409);
+        respond(false, 'This laboratory request is controlled by the result review workflow.', [], 409);
     }
     $activeResult = one($pdo, 'SELECT id FROM lab_results WHERE order_id = ? AND status <> "Rejected" LIMIT 1', [(int) $order['id']]);
     if ($activeResult) {
-        respond(false, 'This order already has a result record. Update the result status instead.', [], 409);
+        respond(false, 'This laboratory request already has a result record. Update the result status instead.', [], 409);
     }
     $transitions = [
         'Pending' => ['Accepted', 'Pending Sample', 'Rejected', 'Cancelled'],
@@ -1471,14 +1471,14 @@ function update_order_status($pdo, $data, $actor)
     }
     $pdo->beginTransaction();
     $stmt = $pdo->prepare('UPDATE lab_orders SET status=?, latest_update=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
-    $stmt->execute([$status, 'Order status changed to ' . $status, (int) $order['id']]);
+    $stmt->execute([$status, 'Laboratory request status changed to ' . $status, (int) $order['id']]);
     $stmt = $pdo->prepare('UPDATE lab_order_items SET status=? WHERE order_id=?');
     $stmt->execute([$status, (int) $order['id']]);
-    notify_user($pdo, ['user_id' => (int) $order['doctor_id'], 'title' => 'Order status updated', 'message' => $order['order_number'] . ' is now ' . $status . '.', 'type_name' => 'orders', 'related_order_id' => (int) $order['id']]);
-    notify_user($pdo, ['patient_id' => (int) $order['patient_id'], 'title' => 'Order status updated', 'message' => 'Your order ' . $order['order_number'] . ' is now ' . $status . '.', 'type_name' => 'orders', 'related_order_id' => (int) $order['id']]);
-    audit_log($pdo, $actor, 'UPDATE', 'Order', 'Set ' . $order['order_number'] . ' to ' . $status);
+    notify_user($pdo, ['user_id' => (int) $order['doctor_id'], 'title' => 'Laboratory request status updated', 'message' => $order['order_number'] . ' is now ' . $status . '.', 'type_name' => 'orders', 'related_order_id' => (int) $order['id']]);
+    notify_user($pdo, ['patient_id' => (int) $order['patient_id'], 'title' => 'Laboratory request status updated', 'message' => 'Your laboratory request ' . $order['order_number'] . ' is now ' . $status . '.', 'type_name' => 'orders', 'related_order_id' => (int) $order['id']]);
+    audit_log($pdo, $actor, 'UPDATE', 'Laboratory Request', 'Set ' . $order['order_number'] . ' to ' . $status);
     $pdo->commit();
-    respond(true, 'Order status updated.', ['app' => app_data($pdo, $actor)]);
+    respond(true, 'Laboratory request status updated.', ['app' => app_data($pdo, $actor)]);
 }
 
 function save_result_attachments($pdo, $resultId, $attachments)
@@ -1500,7 +1500,7 @@ function save_result_attachments($pdo, $resultId, $attachments)
         return is_array($file) ? (int) ($file['size'] ?? 0) : 0;
     }, $attachments));
     if ($totalBytes > 25 * 1024 * 1024) {
-        respond(false, 'The combined attachment size cannot exceed 25 MB.', [], 422, ['attachments' => 'Files too large']);
+        respond(false, 'The total attachment size cannot exceed 25 MB.', [], 422, ['attachments' => 'Files too large']);
     }
     $uploadDir = dirname(__DIR__) . '/public/uploads/results';
     if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
@@ -1586,7 +1586,7 @@ function download_result_details($pdo, $resultId, $actor)
         'Laboratory Result Details',
         '',
         'Result ID: ' . $details['resultNumber'],
-        'Order No.: ' . $details['orderNumber'],
+        'Request No.: ' . $details['orderNumber'],
         'Patient: ' . $details['patientName'] . ' (' . $details['patientCode'] . ')',
         'Doctor: ' . $details['doctorName'],
         'Facility: ' . $details['facilityName'],
@@ -1632,20 +1632,20 @@ function download_result_details($pdo, $resultId, $actor)
 function upload_result($pdo, $data, $actor)
 {
     require_auth($pdo, ['Laboratory Staff']);
-    $orderKey = require_field($data, 'orderId', 'Order');
+    $orderKey = require_field($data, 'orderId', 'Laboratory request');
     $order = order_by_identifier($pdo, $orderKey);
     if (!$order || !can_access_order($pdo, $actor, $order)) {
-        respond(false, 'Order not found or not available to your role.', [], 404);
+        respond(false, 'Laboratory request not found or not available to your role.', [], 404);
     }
     if (in_array($order['status'], ['Result Uploaded', 'Verified', 'Released', 'Rejected', 'Cancelled'], true)) {
-        respond(false, 'This order already has a result workflow or is closed.', [], 409);
+        respond(false, 'This laboratory request already has a result workflow or is closed.', [], 409);
     }
     if (!in_array($order['status'], ['Processing', 'In Progress'], true)) {
-        respond(false, 'Move the order to Processing or In Progress before uploading a result.', [], 409);
+        respond(false, 'Move the laboratory request to Processing or In Progress before uploading a result.', [], 409);
     }
     $existing = one($pdo, 'SELECT result_number, status FROM lab_results WHERE order_id = ? AND status <> "Rejected" ORDER BY id DESC LIMIT 1', [(int) $order['id']]);
     if ($existing) {
-        respond(false, 'A result already exists for this order: ' . $existing['result_number'] . ' (' . $existing['status'] . ').', [], 409);
+        respond(false, 'A result already exists for this laboratory request: ' . $existing['result_number'] . ' (' . $existing['status'] . ').', [], 409);
     }
     $resultNumber = generate_unique_code($pdo, 'lab_results', 'result_number', 'RES');
     $findings = require_field($data, 'findings', 'Findings');
@@ -2140,7 +2140,7 @@ try {
 
     if (in_array($action, ['list_all_orders', 'doctor_orders', 'lab_orders', 'patient_orders'], true)) {
         $user = require_auth($pdo);
-        respond(true, 'Orders loaded.', ['orders' => fetch_orders($pdo, $user)]);
+        respond(true, 'Laboratory requests loaded.', ['orders' => fetch_orders($pdo, $user)]);
     }
 
     if (in_array($action, ['list_all_results', 'doctor_results', 'patient_results'], true)) {

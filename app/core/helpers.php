@@ -12,7 +12,7 @@ function clinic_public_url($path = '')
     if ($publicPos !== false) {
         $base = substr($scriptDir, 0, $publicPos + 7);
     } else {
-        $publicSubdirs = ['admin', 'doctor', 'laboratory', 'patient', 'auth', 'test-results'];
+        $publicSubdirs = ['admin', 'doctor', 'laboratory', 'patient', 'auth'];
         $lastSegment = trim(basename($scriptDir), '/');
         $base = in_array($lastSegment, $publicSubdirs, true) ? dirname($scriptDir) : $scriptDir;
     }

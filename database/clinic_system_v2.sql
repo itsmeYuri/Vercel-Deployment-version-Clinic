@@ -139,7 +139,7 @@ CREATE TABLE lab_orders (
   priority VARCHAR(40) NOT NULL DEFAULT 'Regular',
   status VARCHAR(60) NOT NULL DEFAULT 'Pending',
   clinical_notes TEXT NULL,
-  latest_update VARCHAR(180) NOT NULL DEFAULT 'Order created',
+  latest_update VARCHAR(180) NOT NULL DEFAULT 'Laboratory request submitted',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_orders_patient FOREIGN KEY (patient_id) REFERENCES patients(id),
@@ -281,8 +281,8 @@ CREATE TABLE system_settings (
 
 INSERT INTO roles (id, name, description) VALUES
 (1, 'Admin', 'System administrator with full access.'),
-(2, 'Doctor', 'Clinical user who creates orders and reviews results.'),
-(3, 'Laboratory Staff', 'Laboratory operations user who processes orders and results.'),
+(2, 'Doctor', 'Clinical user who submits laboratory requests and reviews results.'),
+(3, 'Laboratory Staff', 'Laboratory operations user who processes requests and results.'),
 (4, 'Patient', 'Patient portal account with access to personal records.');
 
 INSERT INTO facilities (id, name, address, phone, email, status) VALUES
@@ -384,18 +384,18 @@ INSERT INTO clinical_notes (result_id, doctor_id, note, created_at) VALUES
 (3, 5, 'Inflammatory marker is improving. Continue follow-up as scheduled.', '2026-06-23 15:10:00');
 
 INSERT INTO notifications (user_id, patient_id, role_name, title, message, type_name, related_order_id, related_result_id, is_read, created_at) VALUES
-(NULL, NULL, 'Laboratory Staff', 'New order assigned', 'LAB-2026-0837 is ready for laboratory intake.', 'orders', 6, NULL, 0, '2026-06-25 08:40:00'),
+(NULL, NULL, 'Laboratory Staff', 'New laboratory request received', 'LAB-2026-0837 is ready for laboratory intake.', 'orders', 6, NULL, 0, '2026-06-25 08:40:00'),
 (NULL, 1, NULL, 'New result released', 'Your CBC result is now available to view.', 'results', 1, 1, 0, '2026-06-25 10:35:00'),
 (2, NULL, NULL, 'New result available', 'CBC result for Sarah Johnson is ready for clinical review.', 'results', 1, 1, 0, '2026-06-25 10:34:00'),
-(2, NULL, NULL, 'Order status updated', 'LAB-2026-0839 is now verified.', 'orders', 4, 2, 0, '2026-06-24 16:20:00'),
+(2, NULL, NULL, 'Laboratory request status updated', 'LAB-2026-0839 is now verified.', 'orders', 4, 2, 0, '2026-06-24 16:20:00'),
 (NULL, NULL, 'Laboratory Staff', 'Result pending review', 'RES-260618 is waiting for laboratory review.', 'results', 8, 4, 0, '2026-06-22 16:06:00'),
 (NULL, 2, NULL, 'Result released', 'Your C-Reactive Protein result is available.', 'results', 5, 3, 0, '2026-06-23 14:45:00'),
 (NULL, NULL, 'Admin', 'New patient registered', 'Maria Santos was added to the patient list.', 'users', NULL, NULL, 1, '2026-06-23 08:00:00'),
-(NULL, NULL, 'Admin', 'Facility workload changed', 'Northside Diagnostic has active priority orders.', 'facility', NULL, NULL, 0, '2026-06-25 09:12:00');
+(NULL, NULL, 'Admin', 'Facility workload changed', 'Northside Diagnostic has active priority laboratory requests.', 'facility', NULL, NULL, 0, '2026-06-25 09:12:00');
 
 INSERT INTO audit_logs (user_id, user_name, role_name, action, module, details, ip_address, created_at) VALUES
 (1, 'Admin User', 'Admin', 'LOGIN', 'Authentication', 'Successful login from local demo', '127.0.0.1', '2026-06-25 07:48:00'),
-(2, 'Dr. Amelia Carter', 'Doctor', 'CREATE', 'Order', 'Created LAB-2026-0842 for Sarah Johnson', '127.0.0.1', '2026-06-25 08:14:00'),
+(2, 'Dr. Amelia Carter', 'Doctor', 'CREATE', 'Laboratory Request', 'Submitted LAB-2026-0842 for Sarah Johnson', '127.0.0.1', '2026-06-25 08:14:00'),
 (3, 'Lab Staff User', 'Laboratory Staff', 'CREATE', 'Result', 'Uploaded RES-260621 for LAB-2026-0842', '127.0.0.1', '2026-06-25 09:54:00'),
 (7, 'Marco Villanueva', 'Laboratory Staff', 'RELEASE', 'Result', 'Released RES-260621 to patient portal', '127.0.0.1', '2026-06-25 10:32:00'),
 (2, 'Dr. Amelia Carter', 'Doctor', 'UPDATE', 'Result', 'Added clinical note to RES-260621', '127.0.0.1', '2026-06-25 11:10:00'),

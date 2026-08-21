@@ -6,6 +6,9 @@ test-results/
 .agents/
 node_modules/
 vendor/
+!public/assets/vendor/
+!public/assets/vendor/tesseract/
+!public/assets/vendor/tesseract/**
 *.log
 app/config/local.php
 .tools/

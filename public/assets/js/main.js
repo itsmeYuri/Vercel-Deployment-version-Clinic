@@ -2,7 +2,11 @@
   "use strict";
 
   const API_URL = window.CLINIC_API_URL || "../api/index.php";
+  const ASSET_BASE = window.CLINIC_ASSET_BASE || "../assets";
   const TEXT_SIZE_KEY = "clinicSystemTextSize";
+  let resultScannerWorkerPromise = null;
+  let resultScannerActiveForm = null;
+  let resultCameraStream = null;
   const textSizeOptions = [
     { value: "small", label: "Small" },
     { value: "default", label: "Default" },
@@ -60,6 +64,8 @@
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/>',
     maintenance: '<path d="M14.7 6.3a4 4 0 0 0-5 5l-5.4 5.4a2 2 0 1 0 3 3l5.4-5.4a4 4 0 0 0 5-5l-2.8 2.8-2.8-2.8 2.6-3Z"/>',
     upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+    camera: '<path d="M4 7h3l2-3h6l2 3h3a2 2 0 0 1 2 2v10H2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="4"/>',
+    scan: '<path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M7 12h10M7 15h7"/>',
     review: '<path d="M9 11l2 2 4-4M5 4h14v16H5zM8 17h8"/>',
     activity: '<path d="M3 12h4l2-7 4 14 2-7h6"/>',
     queue: '<path d="M4 6h16M4 12h16M4 18h16M8 6v12"/>',
@@ -77,7 +83,7 @@
       users: ["User Management", "Manage system users, roles, and access permissions."],
       facilities: ["Healthcare Facilities", "Manage clinic locations and assigned care teams."],
       tests: ["Laboratory Tests", "Manage active laboratory tests, pricing, and reference details."],
-      orders: ["Laboratory Orders", "Review laboratory orders across all facilities."],
+      orders: ["Laboratory Requests", "Review laboratory requests across all facilities."],
       results: ["Laboratory Results", "Review result workflow status across the system."],
       reports: ["Reports & Analytics", "Monitor performance, trends, and operational health."],
       audit: ["Audit Trail", "Track system activities, security events, and user actions."],
@@ -86,18 +92,18 @@
       settings: ["Settings", "Manage your account, security, and role permissions."],
     },
     Doctor: {
-      dashboard: ["Doctor Dashboard", "Monitor your patients, laboratory orders, and available results."],
+      dashboard: ["Doctor Dashboard", "Monitor your patients, laboratory requests, and available results."],
       patients: ["Patients", "Search and view patients related to your laboratory work."],
       facilities: ["Active Facilities & Tests", "View available facilities and laboratory tests."],
-      "create-order": ["Create Laboratory Order", "Create a new laboratory order for one of your patients."],
-      orders: ["My Orders", "Track only the laboratory orders created by you."],
+      "create-order": ["New Laboratory Request", "Submit a new laboratory request for one of your patients."],
+      orders: ["My Laboratory Requests", "Track the laboratory requests submitted by you."],
       results: ["Laboratory Results", "View results and add clinical notes."],
-      notifications: ["Notifications", "View personal alerts and order updates."],
+      notifications: ["Notifications", "View personal alerts and laboratory request updates."],
       settings: ["Settings", "Manage your profile, security, notifications, and work preferences."],
     },
     "Laboratory Staff": {
       dashboard: ["Laboratory Staff Dashboard", "Monitor assigned laboratory work and result review tasks."],
-      orders: ["Assigned Orders", "Process laboratory orders assigned to your facility."],
+      orders: ["Laboratory Requests", "Process laboratory requests assigned to your facility."],
       upload: ["Results Upload", "Upload structured findings and result values."],
       review: ["Result Review", "Verify, release, or reject uploaded results."],
       operations: ["Assigned Operations", "Review facility workload and active laboratory tasks."],
@@ -107,10 +113,10 @@
       settings: ["Settings", "Manage your profile, security, and workflow preferences."],
     },
     Patient: {
-      dashboard: ["Patient Dashboard", "View your personal orders, released results, and care updates."],
-      orders: ["My Orders", "View laboratory orders linked to your patient profile."],
+      dashboard: ["Patient Dashboard", "View your laboratory requests, released results, and care updates."],
+      orders: ["My Laboratory Requests", "View laboratory requests linked to your patient profile."],
       results: ["My Results", "View released results and clinical notes."],
-      notifications: ["Notifications", "View personal order, result, and care updates."],
+      notifications: ["Notifications", "View personal laboratory request, result, and care updates."],
       profile: ["Profile", "Review and update your patient profile."],
       settings: ["Settings", "Manage account security, preferences, and privacy."],
     },
@@ -152,7 +158,7 @@
   };
 
   let currentUser = null;
-  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null };
+  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, utilization: null, forecast: { horizon: 7 } };
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -250,6 +256,184 @@
     })));
   }
 
+  function resultValueInputRow(item = {}, disabled = "") {
+    return `<tr><td><input name="parameter" value="${h(item.parameter || "")}" ${disabled}></td><td><input name="value" value="${h(item.value || "")}" ${disabled}></td><td><input name="unit" value="${h(item.unit || "")}" ${disabled}></td><td><input name="referenceRange" value="${h(item.referenceRange || "")}" ${disabled}></td><td><input name="flag" value="${h(item.flag || "")}" ${disabled}></td></tr>`;
+  }
+
+  function scannerAssetUrl(path) {
+    return new URL(`${String(ASSET_BASE).replace(/\/$/, "")}/${path.replace(/^\//, "")}`, document.baseURI).href;
+  }
+
+  function updateScannerStatus(form, message, progress = null, tone = "working") {
+    const status = $("[data-result-scan-status]", form);
+    const progressElement = $("[data-result-scan-progress]", form);
+    if (status) {
+      status.textContent = message;
+      status.dataset.tone = tone;
+    }
+    if (progressElement) {
+      const percent = progress === null ? 0 : Math.max(0, Math.min(100, Math.round(progress * 100)));
+      progressElement.hidden = progress === null;
+      progressElement.value = percent;
+    }
+  }
+
+  async function scannerWorker(form) {
+    if (!window.Tesseract?.createWorker) throw new Error("The local image scanner could not be loaded.");
+    resultScannerActiveForm = form;
+    if (!resultScannerWorkerPromise) {
+      resultScannerWorkerPromise = window.Tesseract.createWorker("eng", 1, {
+        workerPath: scannerAssetUrl("vendor/tesseract/worker.min.js"),
+        corePath: scannerAssetUrl("vendor/tesseract/core"),
+        langPath: scannerAssetUrl("vendor/tesseract/lang"),
+        logger: (event) => {
+          const activeForm = resultScannerActiveForm;
+          if (!activeForm?.isConnected) return;
+          const label = event.status === "recognizing text" ? "Reading laboratory values" : "Preparing image scanner";
+          updateScannerStatus(activeForm, `${label}${Number.isFinite(event.progress) ? ` (${Math.round(event.progress * 100)}%)` : ""}…`, Number.isFinite(event.progress) ? event.progress : 0);
+        },
+      }).catch((error) => {
+        resultScannerWorkerPromise = null;
+        throw error;
+      });
+    }
+    return resultScannerWorkerPromise;
+  }
+
+  async function prepareResultScan(file) {
+    if (!window.createImageBitmap) return file;
+    const bitmap = await createImageBitmap(file);
+    const maxDimension = 2400;
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const image = context.getImageData(0, 0, canvas.width, canvas.height);
+    for (let index = 0; index < image.data.length; index += 4) {
+      const gray = (image.data[index] * 0.299) + (image.data[index + 1] * 0.587) + (image.data[index + 2] * 0.114);
+      const contrasted = Math.max(0, Math.min(255, ((gray - 128) * 1.22) + 128));
+      image.data[index] = contrasted;
+      image.data[index + 1] = contrasted;
+      image.data[index + 2] = contrasted;
+    }
+    context.putImageData(image, 0, 0);
+    return canvas;
+  }
+
+  function populateScannedResultValues(form, values) {
+    const tbody = $(".parameter-input-table tbody", form);
+    if (!tbody) return;
+    const hasEnteredValues = $$('.parameter-input-table input[name="value"]', form).some((input) => input.value.trim());
+    if (hasEnteredValues && !window.confirm("Replace the result values already entered with the values detected from this image?")) return;
+    tbody.innerHTML = values.map((item) => resultValueInputRow(item)).join("");
+  }
+
+  async function scanResultImage(form) {
+    const input = $("[data-result-scan-input]", form);
+    const file = input?.files?.[0];
+    if (!file) {
+      toast("Choose or capture a laboratory result image first.");
+      return;
+    }
+    if (!file.type.startsWith("image/") || file.size > 10 * 1024 * 1024) {
+      updateScannerStatus(form, "Choose a JPG, PNG, or WEBP image up to 10 MB.", null, "error");
+      return;
+    }
+
+    const scanButton = $("[data-scan-result]", form);
+    if (scanButton) scanButton.disabled = true;
+    updateScannerStatus(form, "Preparing image scanner…", 0);
+    try {
+      const worker = await scannerWorker(form);
+      const preparedImage = await prepareResultScan(file);
+      const result = await worker.recognize(preparedImage);
+      const parsed = window.ClinicLabScanner?.parse(result.data?.text || "");
+      const rawOutput = $("[data-result-scan-text]", form);
+      const rawPanel = $("[data-result-scan-output]", form);
+      if (rawOutput) rawOutput.textContent = parsed?.rawText || "No text detected.";
+      if (rawPanel) rawPanel.hidden = false;
+      if (!parsed?.values?.length) {
+        updateScannerStatus(form, "Text was read, but no supported laboratory values were matched. Try a clearer, straight-on image or enter the values manually.", null, "error");
+        return;
+      }
+      populateScannedResultValues(form, parsed.values);
+      updateScannerStatus(form, `${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"} detected and filled. Compare every value with the source image before uploading.`, null, "success");
+      toast(`${parsed.values.length} laboratory values filled from the scanned image.`);
+    } catch (error) {
+      updateScannerStatus(form, error.message || "The image could not be scanned.", null, "error");
+    } finally {
+      if (scanButton) scanButton.disabled = false;
+    }
+  }
+
+  function stopResultCamera(form = $('form[data-form="upload-result"]')) {
+    if (resultCameraStream) {
+      resultCameraStream.getTracks().forEach((track) => track.stop());
+      resultCameraStream = null;
+    }
+    const video = form ? $("[data-result-camera-video]", form) : null;
+    const panel = form ? $("[data-result-camera-panel]", form) : null;
+    if (video) video.srcObject = null;
+    if (panel) panel.hidden = true;
+  }
+
+  function openImagePicker(form, cameraOnly = false) {
+    const input = $("[data-result-scan-input]", form);
+    if (!input) return;
+    if (cameraOnly) input.setAttribute("capture", "environment");
+    else input.removeAttribute("capture");
+    input.click();
+  }
+
+  async function openResultCamera(form) {
+    if (!navigator.mediaDevices?.getUserMedia || !window.isSecureContext) {
+      openImagePicker(form, true);
+      return;
+    }
+    stopResultCamera(form);
+    updateScannerStatus(form, "Requesting camera access…", null, "working");
+    try {
+      resultCameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      const panel = $("[data-result-camera-panel]", form);
+      const video = $("[data-result-camera-video]", form);
+      if (panel) panel.hidden = false;
+      if (video) {
+        video.srcObject = resultCameraStream;
+        await video.play();
+      }
+      updateScannerStatus(form, "Camera ready. Position the complete report inside the frame, then take the photo.", null, "idle");
+    } catch (error) {
+      stopResultCamera(form);
+      updateScannerStatus(form, "Camera access was unavailable. You can still use Choose Image.", null, "error");
+    }
+  }
+
+  async function captureResultCameraImage(form) {
+    const video = $("[data-result-camera-video]", form);
+    const canvas = $("[data-result-camera-canvas]", form);
+    const input = $("[data-result-scan-input]", form);
+    if (!video?.videoWidth || !canvas || !input) {
+      updateScannerStatus(form, "The camera is not ready yet. Try again in a moment.", null, "error");
+      return;
+    }
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!blob) throw new Error("The camera image could not be created.");
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([blob], `laboratory-result-${Date.now()}.jpg`, { type: "image/jpeg", lastModified: Date.now() }));
+    input.files = transfer.files;
+    stopResultCamera(form);
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
   function badge(value) {
     const color = statusColor[value] || "gray";
     return `<span class="badge badge-${color}">${h(value || "-")}</span>`;
@@ -337,6 +521,68 @@
     const max = Math.max(...points, 1);
     const coords = points.map((value, index) => `${index * (420 / Math.max(1, points.length - 1))},${126 - (value / max) * 92}`).join(" ");
     return `<div class="line-chart" style="--chart-points:${points.length}"><svg viewBox="0 0 420 145" preserveAspectRatio="none"><path class="chart-grid-line" d="M0 36H420M0 72H420M0 108H420"/><polygon points="0,145 ${coords} 420,145" fill="#08a394" opacity=".09"/><polyline class="chart-line" points="${coords}"/>${coords.split(" ").map((point) => { const [x, y] = point.split(","); return `<circle class="chart-dot" cx="${x}" cy="${y}" r="3"/>`; }).join("")}</svg><div class="chart-axis">${Object.keys(counts || { Records: 1 }).slice(0, 7).map((key) => `<span>${h(key)}</span>`).join("")}</div></div>`;
+  }
+
+  function utilizationTrendChart(analytics) {
+    const series = [
+      { key: "patients", label: "Patients", color: "#078f88" },
+      { key: "requests", label: "Requests", color: "#347fb7" },
+      { key: "tests", label: "Tests", color: "#795db0" },
+    ];
+    const buckets = analytics.buckets || [];
+    const width = Math.max(700, buckets.length * 30);
+    const max = Math.max(1, ...buckets.flatMap((bucket) => series.map((item) => bucket[item.key])));
+    const x = (index) => buckets.length < 2 ? width / 2 : 34 + (index * (width - 68) / (buckets.length - 1));
+    const y = (value) => 196 - (Number(value || 0) / max) * 156;
+    const paths = series.map((item) => {
+      const points = buckets.map((bucket, index) => `${x(index)},${y(bucket[item.key])}`).join(" ");
+      const dots = buckets.map((bucket, index) => `<circle cx="${x(index)}" cy="${y(bucket[item.key])}" r="3" tabindex="0" style="--series-color:${item.color}"><title>${h(bucket.label)}: ${h(bucket[item.key])} ${h(item.label.toLowerCase())}</title></circle>`).join("");
+      return `<polyline points="${points}" style="--series-color:${item.color}"/>${dots}`;
+    }).join("");
+    const labels = buckets.map((bucket, index) => `<span style="left:${x(index)}px">${h(bucket.label)}</span>`).join("");
+    return `<div class="utilization-legend">${series.map((item) => `<span><i style="--series-color:${item.color}"></i>${h(item.label)}</span>`).join("")}</div><div class="utilization-chart-scroll"><div class="utilization-chart" style="width:${width}px"><svg viewBox="0 0 ${width} 215" role="img" aria-label="Laboratory utilization trend"><path class="utilization-grid" d="M34 40H${width - 34}M34 92H${width - 34}M34 144H${width - 34}M34 196H${width - 34}"/>${paths}</svg><div class="utilization-axis" aria-hidden="true">${labels}</div></div></div>`;
+  }
+
+  function utilizationAnalyticsSection() {
+    const service = window.LabUtilizationAnalytics;
+    if (!service) return "";
+    if (!state.utilization) {
+      const latest = service.latestOrderDate(state.data.orders);
+      const anchor = service.dateKey(latest);
+      state.utilization = { period: "month", anchor, from: anchor, to: anchor };
+    }
+    const selection = state.utilization;
+    const analytics = service.build(state.data.orders, selection);
+    const rangeLabel = analytics.start === analytics.end ? shortDate(service.parseDate(analytics.start)) : `${shortDate(service.parseDate(analytics.start))} – ${shortDate(service.parseDate(analytics.end))}`;
+    const periods = [["day", "Day"], ["week", "Week"], ["month", "Month"], ["year", "Year"], ["custom", "Custom"]];
+    const controls = periods.map(([value, label]) => `<button type="button" class="utilization-period${selection.period === value ? " active" : ""}" data-utilization-period="${value}" aria-pressed="${selection.period === value}">${label}</button>`).join("");
+    const dateControls = selection.period === "custom"
+      ? `<label>From<input class="control" type="date" value="${h(selection.from)}" data-utilization-from></label><label>To<input class="control" type="date" value="${h(selection.to)}" data-utilization-to></label>`
+      : `<label>${selection.period === "day" ? "Date" : "Period containing"}<input class="control" type="date" value="${h(selection.anchor)}" data-utilization-anchor></label>`;
+    const totals = analytics.totals;
+    const busiest = analytics.buckets.reduce((best, bucket) => bucket.requests > (best?.requests || 0) ? bucket : best, null);
+    return `<section class="card utilization-card"><div class="card-head"><div><h3 class="card-title">Laboratory Utilization</h3><p class="card-subtitle">Unique patients and laboratory activity for ${h(rangeLabel)}. A patient is counted once in the selected period.</p></div>${icon("trend")}</div><div class="utilization-toolbar"><div class="utilization-periods" role="group" aria-label="Analytics period">${controls}</div><div class="utilization-dates">${dateControls}</div></div><div class="stats-grid utilization-stats">${stat("Patients Served", totals.patients, "users", "-", "teal")}${stat("Laboratory Requests", totals.requests, "orders", "-", "blue")}${stat("Tests Requested", totals.tests, "test", "-", "purple")}${stat("Average Requests / Day", totals.averageRequestsPerDay.toFixed(1), "activity", "-", "orange")}</div><div class="card-body utilization-chart-body">${utilizationTrendChart(analytics)}<p class="utilization-note">Counts use each request's creation date.${busiest?.requests ? ` Busiest displayed interval: ${h(busiest.label)} with ${h(busiest.requests)} request${busiest.requests === 1 ? "" : "s"}.` : " No laboratory activity was recorded for this period."} Hover or focus on a point to see its value.</p></div></section>`;
+  }
+
+  function forecastTrendChart(analysis) {
+    const buckets = analysis.forecast.map((day) => ({
+      ...day,
+      patients: Number(day.patients.toFixed(1)),
+      requests: Number(day.requests.toFixed(1)),
+      tests: Number(day.tests.toFixed(1)),
+    }));
+    return utilizationTrendChart({ buckets }).replace("Laboratory utilization trend", "Forecast laboratory demand trend");
+  }
+
+  function forecastingAnalysisSection() {
+    const service = window.LabForecastingAnalysis;
+    if (!service) return "";
+    const analysis = service.build(state.data.orders, state.forecast);
+    const horizons = [[7, "7 Days"], [30, "30 Days"], [90, "90 Days"]];
+    const controls = horizons.map(([value, label]) => `<button type="button" class="utilization-period${analysis.horizon === value ? " active" : ""}" data-forecast-horizon="${value}" aria-pressed="${analysis.horizon === value}">${label}</button>`).join("");
+    const confidenceClass = analysis.confidence.toLowerCase();
+    const peakDate = analysis.peak ? shortDate(service.parseDate(analysis.peak.date)) : "No predicted activity";
+    return `<section class="card utilization-card forecast-card"><div class="card-head"><div><div class="forecast-title-line"><h3 class="card-title">Laboratory Demand Forecast</h3><span class="forecast-confidence ${confidenceClass}">${h(analysis.confidence)} confidence</span></div><p class="card-subtitle">Projected demand after ${h(shortDate(service.parseDate(analysis.asOf)))} based on recent laboratory-request patterns.</p></div>${icon("activity")}</div><div class="utilization-toolbar forecast-toolbar"><div class="utilization-periods" role="group" aria-label="Forecast horizon">${controls}</div><span class="forecast-training">Training window: ${h(shortDate(service.parseDate(analysis.trainingStart)))} – ${h(shortDate(service.parseDate(analysis.asOf)))}</span></div><div class="stats-grid utilization-stats">${stat("Predicted Patient Visits", analysis.totals.patients, "users", "-", "teal")}${stat("Predicted Requests", analysis.totals.requests, "orders", "-", "blue")}${stat("Predicted Tests", analysis.totals.tests, "test", "-", "purple")}${stat("Expected Request Range", `${analysis.interval.requestsLow}–${analysis.interval.requestsHigh}`, "trend", "-", "orange")}</div><div class="card-body utilization-chart-body">${forecastTrendChart(analysis)}<div class="forecast-insights"><span><strong>Expected trend:</strong> ${h(analysis.trend)}</span><span><strong>Peak day:</strong> ${h(peakDate)}${analysis.peak ? ` (${h(analysis.peak.requests.toFixed(1))} requests)` : ""}</span><span><strong>Historical requests used:</strong> ${h(analysis.historicalRequests)}</span></div><p class="utilization-note forecast-disclaimer">Planning estimate only. Patient visits are the sum of expected daily unique patients, not guaranteed distinct people across the whole forecast. The model uses up to 90 days of history, gives newer records more weight, learns weekday patterns, and applies a limited recent trend. Holidays, outbreaks, missing records, or operational changes can make actual demand different.</p></div></section>`;
   }
 
   function donutCard(title, counts, totalLabel = "Total") {
@@ -453,14 +699,14 @@
         stat("Lab Staff", d.totalLabStaff || 0, "test", "-", "purple"),
         stat("Facilities", d.totalFacilities || 0, "facility", "-", "teal"),
         stat("Tests", d.totalTests || 0, "test", "-", "orange"),
-        stat("Open Orders", d.pendingOrders || 0, "orders", "-", "blue"),
+        stat("Open Requests", d.pendingOrders || 0, "orders", "-", "blue"),
         stat("Released Results", d.releasedResults || 0, "results", "-", "green"),
       ].join("");
     }
-    const patientLabel = currentUser.role === "Patient" ? "My Orders" : currentUser.role === "Laboratory Staff" ? "Assigned Orders" : "My Orders";
+    const patientLabel = currentUser.role === "Patient" ? "My Requests" : currentUser.role === "Laboratory Staff" ? "Assigned Requests" : "My Requests";
     return [
       stat(patientLabel, d.totalOrders || 0, "orders", "-", "teal"),
-      stat("Open Orders", d.openOrders || 0, "clock", "-", "orange"),
+      stat("Open Requests", d.openOrders || 0, "clock", "-", "orange"),
       stat("Released Results", d.releasedResults || 0, "results", "-", "green"),
       stat("Unread Notifications", d.unreadNotifications || 0, "bell", "-", "blue"),
     ].join("");
@@ -485,9 +731,9 @@
   function renderFacilities() {
     const rows = state.data.facilities.map((facility) => [`<span class="cell-strong">${h(facility.name)}</span>`, `<span class="cell-wrap">${h(facility.address)}</span>`, h(facility.phone), h(facility.activeOrders), h(facility.activeTests), badge(facility.status), `<button class="btn btn-secondary btn-sm" data-drawer="facility" data-id="${facility.id}">Edit</button>`]);
     return `${heading(...pageMeta.Admin.facilities, `<button class="btn btn-primary" data-drawer="facility">${icon("plus")} Add Facility</button>`)}
-      <div class="stats-grid">${stat("Facilities", state.data.facilities.length, "facility")}${stat("Active", state.data.facilities.filter((f) => f.status === "Active").length, "check", "-", "green")}${stat("Open Orders", state.data.facilities.reduce((sum, f) => sum + Number(f.activeOrders || 0), 0), "orders", "-", "blue")}${stat("Active Tests", state.data.tests.filter((t) => t.status === "Active").length, "test", "-", "purple")}</div>
+      <div class="stats-grid">${stat("Facilities", state.data.facilities.length, "facility")}${stat("Active", state.data.facilities.filter((f) => f.status === "Active").length, "check", "-", "green")}${stat("Open Requests", state.data.facilities.reduce((sum, f) => sum + Number(f.activeOrders || 0), 0), "orders", "-", "blue")}${stat("Active Tests", state.data.tests.filter((t) => t.status === "Active").length, "test", "-", "purple")}</div>
       ${filters("Search facilities", [["All statuses", ["Active", "Inactive"]]])}
-      ${table(["Facility", "Address", "Phone", "Open Orders", "Active Tests", "Status", "Action"], rows)}`;
+      ${table(["Facility", "Address", "Phone", "Open Requests", "Active Tests", "Status", "Action"], rows)}`;
   }
 
   function renderTests() {
@@ -501,11 +747,11 @@
   function renderOrders(titleRole = currentUser.role, pageKey = "orders") {
     const rows = state.data.orders.map((order) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(order.orderNumber)}</span>`, person(order.patientName, order.patientCode, order.patientAvatar, "teal"), h(order.doctorName), h(order.facilityName), `<span class="cell-wrap">${h(order.tests)}</span>`, badge(order.priority), badge(order.status), `<time datetime="${h(order.createdAt)}">${shortDateTime(order.createdAt)}</time>`, `<time datetime="${h(order.updatedAt || order.createdAt)}">${shortDateTime(order.updatedAt || order.createdAt)}</time>`, `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
     const meta = pageMeta[titleRole]?.[pageKey] || pageMeta[titleRole]?.orders || pageMeta.Admin.orders;
-    const action = titleRole === "Doctor" ? `<button class="btn btn-primary" data-go-page="create-order">${icon("plus")} Create Order</button>` : "";
+    const action = titleRole === "Doctor" ? `<button class="btn btn-primary" data-go-page="create-order">${icon("plus")} New Laboratory Request</button>` : "";
     return `${heading(...meta, action)}
-      <div class="stats-grid">${stat("Orders", state.data.orders.length, "orders")}${stat("Open", state.data.orders.filter((o) => !["Released", "Rejected", "Cancelled"].includes(o.status)).length, "clock", "-", "orange")}${stat("Released", state.data.orders.filter((o) => o.status === "Released").length, "check", "-", "green")}${stat("Priority", state.data.orders.filter((o) => o.priority === "Priority").length, "alert", "-", "red")}</div>
-      ${filters("Search orders", [["All statuses", Object.keys(state.data.reports.ordersByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)]])}
-      ${table(["Order No.", "Patient", "Doctor", "Facility", "Tests", "Priority", "Status", "Created", "Updated", "Action"], rows)}`;
+      <div class="stats-grid">${stat("Requests", state.data.orders.length, "orders")}${stat("Open", state.data.orders.filter((o) => !["Released", "Rejected", "Cancelled"].includes(o.status)).length, "clock", "-", "orange")}${stat("Released", state.data.orders.filter((o) => o.status === "Released").length, "check", "-", "green")}${stat("Priority", state.data.orders.filter((o) => o.priority === "Priority").length, "alert", "-", "red")}</div>
+      ${filters("Search laboratory requests", [["All statuses", Object.keys(state.data.reports.ordersByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)]])}
+      ${table(["Request No.", "Patient", "Requesting Clinician", "Facility", "Tests", "Priority", "Status", "Created", "Updated", "Action"], rows)}`;
   }
 
   function renderResults(titleRole = currentUser.role) {
@@ -514,16 +760,18 @@
     return `${heading(...meta)}
       <div class="stats-grid">${stat("Results", state.data.results.length, "results")}${stat("Pending Review", state.data.results.filter((r) => r.status === "Pending Review").length, "clock", "-", "orange")}${stat("Verified", state.data.results.filter((r) => r.status === "Verified").length, "check", "-", "green")}${stat("Released", state.data.results.filter((r) => r.status === "Released").length, "download", "-", "blue")}</div>
       ${filters("Search results", [["All statuses", Object.keys(state.data.reports.resultsByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)]])}
-      ${table(["Result ID", "Order No.", "Patient", "Test", "Facility", "Status", "Created", "Updated/Released", "Clinical Note", "Action"], rows)}`;
+      ${table(["Result ID", "Request No.", "Patient", "Test", "Facility", "Status", "Created", "Updated/Released", "Clinical Note", "Action"], rows)}`;
   }
 
   function renderReports() {
     const facilityRows = Object.entries(state.data.reports.ordersByFacility || {}).map(([facility, count]) => [h(facility), h(count), `${Math.round((count / Math.max(1, state.data.orders.length)) * 100)}%`]);
     const testRows = Object.entries(state.data.reports.topTests || {}).map(([test, count]) => [h(test), h(count), badge(count > 1 ? "Active" : "Pending")]);
     return `${heading(...pageMeta.Admin.reports, `<button class="btn btn-secondary" data-download>${icon("download")} Export</button>`)}
+      ${utilizationAnalyticsSection()}
+      ${forecastingAnalysisSection()}
       <div class="stats-grid stats-eight">${dashboardStats()}</div>
-      <div class="charts-pair">${donutCard("Orders by Status", state.data.reports.ordersByStatus, "Orders")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div>
-      <div class="dashboard-grid">${table(["Facility", "Orders", "Share"], facilityRows, "Orders per facility")}${table(["Requested Test", "Count", "Status"], testRows, "Most requested tests")}</div>`;
+      <div class="charts-pair">${donutCard("Requests by Status", state.data.reports.ordersByStatus, "Requests")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div>
+      <div class="dashboard-grid">${table(["Facility", "Requests", "Share"], facilityRows, "Requests per facility")}${table(["Requested Test", "Count", "Status"], testRows, "Most requested tests")}</div>`;
   }
 
   function renderAudit() {
@@ -536,7 +784,7 @@
   function renderNotifications(role = currentUser.role) {
     const meta = pageMeta[role].notifications;
     return `${heading(...meta, `<button class="btn btn-secondary" data-mark-read>${icon("check")} Mark all as read</button>`)}
-      <div class="stats-grid">${stat("Notifications", state.data.notifications.length, "bell")}${stat("Unread", state.data.notifications.filter((n) => !n.isRead).length, "alert", "-", "orange")}${stat("Result Alerts", state.data.notifications.filter((n) => n.type === "results").length, "results", "-", "green")}${stat("Order Updates", state.data.notifications.filter((n) => n.type === "orders").length, "orders", "-", "blue")}</div>
+      <div class="stats-grid">${stat("Notifications", state.data.notifications.length, "bell")}${stat("Unread", state.data.notifications.filter((n) => !n.isRead).length, "alert", "-", "orange")}${stat("Result Alerts", state.data.notifications.filter((n) => n.type === "results").length, "results", "-", "green")}${stat("Request Updates", state.data.notifications.filter((n) => n.type === "orders").length, "orders", "-", "blue")}</div>
       ${filters("Search notifications", [["All types", [...new Set(state.data.notifications.map((n) => n.type))]]], `<button class="btn btn-secondary" data-mark-read>Mark all as read</button>`)}
       <div class="notification-sections"><section><h3 class="notification-section-title">All Updates</h3><div class="card">${notificationArticles(state.data.notifications)}</div></section></div>`;
   }
@@ -580,7 +828,7 @@
                 ${["Doctor", "Laboratory Staff", "Patient"].map((role) => `<label class="register-check"><input type="checkbox" name="affectedRoles" value="${h(role)}" ${(settings.affectedRoles || []).includes(role) ? "checked" : ""}><span>${h(role)}</span></label>`).join("")}
               </fieldset>
               <fieldset class="form-field full maintenance-options"><legend>Affected Modules</legend>
-                ${["dashboard", "orders", "results", "notifications", "settings", "patients", "facilities", "create-order", "upload", "review", "queue", "profile", "registration"].map((page) => `<label class="register-check"><input type="checkbox" name="affectedPages" value="${h(page)}" ${(settings.affectedPages || []).includes(page) ? "checked" : ""}><span>${h(page.replace("-", " "))}</span></label>`).join("")}
+                ${["dashboard", "orders", "results", "notifications", "settings", "patients", "facilities", "create-order", "upload", "review", "queue", "profile", "registration"].map((page) => `<label class="register-check"><input type="checkbox" name="affectedPages" value="${h(page)}" ${(settings.affectedPages || []).includes(page) ? "checked" : ""}><span>${h({ orders: "laboratory requests", "create-order": "new laboratory request" }[page] || page.replace("-", " "))}</span></label>`).join("")}
               </fieldset>
               ${field("Maintenance Message", "message", settings.message || "", "textarea", "rows=\"4\" required maxlength=\"255\"")}
               ${field("Reason", "reason", settings.reason || "", "text", "maxlength=\"255\" placeholder=\"Optional internal or public reason\"")}
@@ -596,17 +844,17 @@
   function renderDoctorDashboard() {
     const patientRows = state.data.patients.slice(0, 5).map((patient) => [h(patient.patientCode), person(patient.name, patient.email, patient.avatar), h(patient.sex || "-"), h(patient.primaryFacility || "-"), badge(patient.latestStatus || "Pending"), `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
     const resultRows = state.data.results.slice(0, 5).map((result) => [h(result.resultNumber), h(result.patientName), h(result.testName), badge(result.status), h(result.facilityName), `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">Review</button>`]);
-    return `${heading(...pageMeta.Doctor.dashboard, `<button class="btn btn-secondary" data-go-page="results">${icon("results")} Results</button><button class="btn btn-primary" data-go-page="create-order">${icon("plus")} Create Order</button>`)}
+    return `${heading(...pageMeta.Doctor.dashboard, `<button class="btn btn-secondary" data-go-page="results">${icon("results")} Results</button><button class="btn btn-primary" data-go-page="create-order">${icon("plus")} New Laboratory Request</button>`)}
       <div class="stats-grid">${dashboardStats()}</div>
-      <div class="doctor-dashboard-grid"><section class="card"><div class="card-head"><div><h3 class="card-title">My Orders Overview</h3><p class="card-subtitle">Current status distribution</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByStatus)}</div></section>${donutCard("My Orders by Status", state.data.reports.ordersByStatus, "Orders")}</div>
-      <div class="dashboard-grid">${table(["Patient ID", "Patient", "Sex", "Facility", "Latest Status", "Action"], patientRows, "Patients linked to your orders")}${table(["Result ID", "Patient", "Test", "Status", "Facility", "Action"], resultRows, "Recent results")}</div>`;
+      <div class="doctor-dashboard-grid"><section class="card"><div class="card-head"><div><h3 class="card-title">My Laboratory Requests</h3><p class="card-subtitle">Current status distribution</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByStatus)}</div></section>${donutCard("My Request Status", state.data.reports.ordersByStatus, "Requests")}</div>
+      <div class="dashboard-grid">${table(["Patient ID", "Patient", "Sex", "Facility", "Latest Status", "Action"], patientRows, "Patients linked to your laboratory requests")}${table(["Result ID", "Patient", "Test", "Status", "Facility", "Action"], resultRows, "Recent results")}</div>`;
   }
 
   function renderPatients(role = currentUser.role) {
     const meta = pageMeta[role].patients;
     const rows = state.data.patients.map((patient) => [h(patient.patientCode), person(patient.name, patient.email, patient.avatar), h(patient.dateOfBirth || "-"), h(patient.sex || "-"), h(patient.primaryFacility || "-"), h(patient.latestTests || "-"), badge(patient.latestStatus || "Pending"), `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
     return `${heading(...meta)}
-      <div class="stats-grid">${stat("Patients", state.data.patients.length, "users")}${stat("With Orders", state.data.patients.filter((p) => p.orderCount > 0).length, "orders", "-", "blue")}${stat("Released Results", state.data.patients.reduce((sum, p) => sum + Number(p.resultCount || 0), 0), "results", "-", "green")}${stat("Facilities", new Set(state.data.patients.map((p) => p.primaryFacility).filter(Boolean)).size, "facility", "-", "purple")}</div>
+      <div class="stats-grid">${stat("Patients", state.data.patients.length, "users")}${stat("With Requests", state.data.patients.filter((p) => p.orderCount > 0).length, "orders", "-", "blue")}${stat("Released Results", state.data.patients.reduce((sum, p) => sum + Number(p.resultCount || 0), 0), "results", "-", "green")}${stat("Facilities", new Set(state.data.patients.map((p) => p.primaryFacility).filter(Boolean)).size, "facility", "-", "purple")}</div>
       ${filters("Search patients", [["All facilities", state.data.facilities.map((f) => f.name)]])}
       ${table(["Patient ID", "Patient", "DOB", "Sex", "Facility", "Latest Tests", "Latest Status", "Action"], rows)}`;
   }
@@ -616,7 +864,7 @@
     const testRows = state.data.tests.map((test) => [h(test.code), h(test.name), h(test.category), h(test.sampleType), h(test.turnaroundTime), money(test.price), badge(test.status)]);
     return `${heading(...pageMeta.Doctor.facilities)}
       <div class="stats-grid">${stat("Facilities", state.data.facilities.length, "facility")}${stat("Active Tests", state.data.tests.length, "test", "-", "green")}${stat("Categories", new Set(state.data.tests.map((t) => t.category)).size, "chart", "-", "blue")}${stat("Fastest TAT", state.data.tests[0]?.turnaroundTime || "-", "clock", "-", "orange")}</div>
-      <div class="dashboard-grid">${table(["Facility", "Address", "Phone", "Status", "Open Orders"], facilityRows)}${table(["Code", "Test", "Category", "Sample", "Turnaround", "Price", "Status"], testRows)}</div>`;
+      <div class="dashboard-grid">${table(["Facility", "Address", "Phone", "Status", "Open Requests"], facilityRows)}${table(["Code", "Test", "Category", "Sample", "Turnaround", "Price", "Status"], testRows)}</div>`;
   }
 
   function renderCreateOrder() {
@@ -631,12 +879,12 @@
     const testsMarkup = activeTests.length
       ? activeTests.map((test) => `<label class="test-choice-card"><input type="checkbox" name="testIds" value="${test.id}" ${String(test.id) === String(defaultTestId) ? "checked" : ""} ${disabled}><span><strong>${h(test.code)} - ${h(test.name)}</strong><small>${h(test.category)} / ${h(test.sampleType)} / ${h(test.turnaroundTime)}</small></span></label>`).join("")
       : '<div class="empty-state">No active laboratory tests are available.</div>';
-    const formHint = cannotSubmit ? '<div class="form-hint">Add at least one active patient, facility, doctor, and test before submitting an order.</div>' : "";
+    const formHint = cannotSubmit ? '<div class="form-hint">Add at least one active patient, facility, doctor, and test before submitting a laboratory request.</div>' : "";
     const meta = pageMeta[currentUser.role]["create-order"] || pageMeta.Doctor["create-order"];
     return `${heading(...meta)}
       <div class="create-order-layout"><section class="card"><div class="card-head"><div><h3 class="card-title">Available Patients</h3><p class="card-subtitle">Choose from database patient records.</p></div></div><div class="recent-patient-list">${state.data.availablePatients.slice(0, 6).map((patient, index) => `<button class="recent-patient ${index === 0 ? "selected" : ""}" type="button" data-patient-pick="${patient.id}">${avatar(patient.avatar)}<div><strong>${h(patient.name)}</strong><span>${h(patient.patientCode)} - ${h(patient.sex || "No sex recorded")}</span></div></button>`).join("")}</div></section>
-      <form class="card order-compose-card" data-form="create-order"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Laboratory Order Details</h3><p class="card-subtitle">New orders are submitted as Pending for laboratory intake.</p></div>${badge("Pending")}</div>${formHint}<div class="form-grid"><div class="form-field full"><label>Patient</label>${patientSelect}</div><div class="form-field full"><label>Facility</label>${facilitySelect}</div><div class="form-field full"><label>Ordered Tests</label><div class="test-choice-grid">${testsMarkup}</div></div><div class="form-field"><label>Priority</label>${select("priority", ["Regular", "Priority"], "Regular", disabled)}</div><div class="form-field"><label>Status</label><div class="readonly-pill">${badge("Pending")} Laboratory staff updates this after intake.</div></div><div class="form-field full"><label>Clinical Notes</label><textarea name="clinicalNotes" ${disabled} placeholder="Clinical context or special instructions"></textarea></div></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("plus-file")} Submit Order</button></div></form>
-      <aside class="card order-summary"><p class="eyebrow">Order Summary</p><h3 class="card-title">Database workflow</h3><div class="clinical-note-box"><h4>${icon("shield")} Notifications included</h4><p>Submitting creates an order, notifies laboratory staff and the patient, and writes an audit record.</p></div></aside></div>`;
+      <form class="card order-compose-card" data-form="create-order"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Laboratory Request Details</h3><p class="card-subtitle">New requests are submitted as Pending for laboratory intake.</p></div>${badge("Pending")}</div>${formHint}<div class="form-grid"><div class="form-field full"><label>Patient</label>${patientSelect}</div><div class="form-field full"><label>Facility</label>${facilitySelect}</div><div class="form-field full"><label>Requested Tests</label><div class="test-choice-grid">${testsMarkup}</div></div><div class="form-field"><label>Priority</label>${select("priority", ["Regular", "Priority"], "Regular", disabled)}</div><div class="form-field"><label>Status</label><div class="readonly-pill">${badge("Pending")} Laboratory staff updates this after intake.</div></div><div class="form-field full"><label>Clinical Indication / Notes</label><textarea name="clinicalNotes" ${disabled} placeholder="Clinical indication, provisional diagnosis, or special instructions"></textarea></div></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("plus-file")} Submit Laboratory Request</button></div></form>
+      <aside class="card order-summary"><p class="eyebrow">Request Summary</p><h3 class="card-title">Clinical workflow</h3><div class="clinical-note-box"><h4>${icon("shield")} Notifications included</h4><p>Submitting creates a laboratory request, notifies laboratory staff and the patient, and writes an audit record.</p></div></aside></div>`;
   }
 
   function renderDoctorSettings() {
@@ -648,7 +896,7 @@
     const resultRows = state.data.results.slice(0, 5).map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), badge(result.status), `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">Review</button>`]);
     return `${heading(...pageMeta["Laboratory Staff"].dashboard)}
       <div class="stats-grid">${dashboardStats()}</div>
-      <div class="lab-dashboard-grid"><section>${table(["Order No.", "Patient", "Tests", "Priority", "Status", "Action"], orderRows, "Assigned orders")}</section><div class="lab-side-stack">${donutCard("Assigned Order Status", state.data.reports.ordersByStatus, "Orders")}${table(["Result", "Order", "Patient", "Test", "Status", "Action"], resultRows, "Recent result records")}</div></div>`;
+      <div class="lab-dashboard-grid"><section>${table(["Request No.", "Patient", "Tests", "Priority", "Status", "Action"], orderRows, "Assigned laboratory requests")}</section><div class="lab-side-stack">${donutCard("Assigned Request Status", state.data.reports.ordersByStatus, "Requests")}${table(["Result", "Request", "Patient", "Test", "Status", "Action"], resultRows, "Recent result records")}</div></div>`;
   }
 
   function renderLabUpload() {
@@ -658,9 +906,10 @@
     const orderOptions = eligible.map((order) => ({ value: order.id, label: `${order.orderNumber} - ${order.patientName} - ${order.tests}` }));
     const queueRows = eligible.map((order) => [h(order.orderNumber), h(order.patientName), h(order.tests), badge(order.priority), badge(order.status), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
     const disabled = eligible.length ? "" : "disabled";
-    const orderSelect = eligible.length ? select("orderId", orderOptions, orderOptions[0]?.value || "", "required") : '<select name="orderId" required disabled><option>No eligible orders</option></select>';
+    const orderSelect = eligible.length ? select("orderId", orderOptions, orderOptions[0]?.value || "", "required") : '<select name="orderId" required disabled><option>No eligible laboratory requests</option></select>';
+    const defaultValueRows = ["WBC", "Hemoglobin", "Platelets", "CRP"].map((parameter) => resultValueInputRow({ parameter }, disabled)).join("");
     return `${heading(...pageMeta["Laboratory Staff"].upload)}
-      <div class="upload-layout"><form class="card upload-panel" data-form="upload-result"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Structured Result Entry</h3><p class="card-subtitle">Saved as a pending-review result.</p></div>${icon("upload")}</div><div class="form-grid"><div class="form-field full"><label>Order</label>${orderSelect}</div><div class="form-field full"><label>Findings Summary</label><textarea name="findings" required ${disabled} placeholder="Enter laboratory findings"></textarea></div><div class="form-field full"><label>Remarks</label><textarea name="remarks" ${disabled} placeholder="Specimen notes, QC notes, or review comments"></textarea></div><div class="form-field full"><label>Result Attachments</label><input name="attachments" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple ${disabled}><small>Attach PDF reports or result images up to 10 MB each.</small></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3><table class="parameter-input-table"><thead><tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Reference</th><th>Flag</th></tr></thead><tbody>${["WBC", "Hemoglobin", "Platelets", "CRP"].map((name) => `<tr><td><input name="parameter" value="${name}" ${disabled}></td><td><input name="value" ${disabled}></td><td><input name="unit" ${disabled}></td><td><input name="referenceRange" ${disabled}></td><td><input name="flag" ${disabled}></td></tr>`).join("")}</tbody></table><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("upload")} Upload Result</button></div></form><section>${table(["Order No.", "Patient", "Tests", "Priority", "Status", "Action"], queueRows, "Orders available for result upload")}</section></div>`;
+      <div class="upload-layout"><form class="card upload-panel" data-form="upload-result"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Structured Result Entry</h3><p class="card-subtitle">Saved as a pending-review result.</p></div>${icon("upload")}</div><div class="form-grid"><div class="form-field full"><label>Laboratory Request</label>${orderSelect}</div><section class="result-scanner full" aria-labelledby="result-scanner-title"><div class="result-scanner-copy"><span class="result-scanner-icon">${icon("scan")}</span><div><h3 id="result-scanner-title">Scan Laboratory Result</h3><p>Take a new photo or choose an existing result image. The scanner fills recognized values for staff review; it never submits them automatically.</p></div></div><div class="result-scanner-controls"><button class="btn btn-secondary" type="button" data-open-result-camera ${disabled}>${icon("camera")} Take Photo</button><button class="btn btn-secondary" type="button" data-choose-result-image ${disabled}>${icon("file")} Choose Image</button><button class="btn btn-primary" type="button" data-scan-result ${disabled}>${icon("scan")} Scan and Fill Values</button><input class="result-scan-file-input" type="file" accept="image/jpeg,image/png,image/webp" data-result-scan-input ${disabled}></div><div class="result-camera-panel" data-result-camera-panel hidden><video data-result-camera-video autoplay playsinline muted></video><canvas data-result-camera-canvas hidden></canvas><div class="result-camera-actions"><button class="btn btn-primary" type="button" data-capture-result-photo>${icon("camera")} Capture Photo</button><button class="btn btn-secondary" type="button" data-close-result-camera>Cancel Camera</button></div></div><img class="result-scan-preview" alt="Selected laboratory result preview" data-result-scan-preview hidden><progress class="result-scan-progress" max="100" value="0" data-result-scan-progress hidden></progress><p class="result-scan-status" role="status" aria-live="polite" data-result-scan-status>Select a sharp, straight-on image with readable parameter names and values.</p><details class="result-scan-output" data-result-scan-output hidden><summary>Review text detected in image</summary><pre data-result-scan-text></pre></details><div class="result-scan-warning">${icon("alert")} OCR can misread decimal points, units, or flags. Laboratory Staff must compare every populated field with the source report before uploading.</div></section><div class="form-field full"><label>Findings Summary</label><textarea name="findings" required ${disabled} placeholder="Enter laboratory findings"></textarea></div><div class="form-field full"><label>Remarks</label><textarea name="remarks" ${disabled} placeholder="Specimen notes, QC notes, or review comments"></textarea></div><div class="form-field full"><label>Additional Result Attachments</label><input name="attachments" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple ${disabled}><small>The scanned image is included automatically. You can attach additional PDF reports or result images up to 10 MB each.</small></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3><table class="parameter-input-table"><thead><tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Reference</th><th>Flag</th></tr></thead><tbody>${defaultValueRows}</tbody></table><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("upload")} Upload Result</button></div></form><section>${table(["Request No.", "Patient", "Tests", "Priority", "Status", "Action"], queueRows, "Requests available for result upload")}</section></div>`;
   }
 
   function renderLabReview() {
@@ -668,7 +917,7 @@
     return `${heading(...pageMeta["Laboratory Staff"].review)}
       <div class="stats-grid">${stat("Results", state.data.results.length, "results")}${stat("Pending Review", state.data.results.filter((r) => r.status === "Pending Review").length, "clock", "-", "orange")}${stat("Verified", state.data.results.filter((r) => r.status === "Verified").length, "check", "-", "green")}${stat("Released", state.data.results.filter((r) => r.status === "Released").length, "download", "-", "blue")}</div>
       ${filters("Search review queue", [["All statuses", Object.keys(state.data.reports.resultsByStatus || {})]])}
-      ${table(["Result ID", "Order No.", "Patient", "Test", "Facility", "Status", "Uploaded", "Action"], rows)}`;
+      ${table(["Result ID", "Request No.", "Patient", "Test", "Facility", "Status", "Uploaded", "Action"], rows)}`;
   }
 
   function renderLabOperations() {
@@ -677,7 +926,7 @@
   }
 
   function renderLabFacilities() {
-    const cards = state.data.facilities.map((facility) => `<article class="card facility-card"><div class="facility-card-cover"><span class="facility-mini-icon">${icon("facility")}</span></div><div class="facility-card-body"><h3>${h(facility.name)}</h3><p class="facility-address">${h(facility.address)}</p><div class="facility-contact"><span>${icon("phone")} ${h(facility.phone)}</span><span>${icon("mail")} ${h(facility.email || "-")}</span></div><div class="facility-metrics"><div class="facility-metric"><strong>${h(facility.activeOrders)}</strong><span>Open orders</span></div><div class="facility-metric"><strong>${h(facility.activeTests)}</strong><span>Active tests</span></div></div>${badge(facility.status)}</div></article>`).join("");
+    const cards = state.data.facilities.map((facility) => `<article class="card facility-card"><div class="facility-card-cover"><span class="facility-mini-icon">${icon("facility")}</span></div><div class="facility-card-body"><h3>${h(facility.name)}</h3><p class="facility-address">${h(facility.address)}</p><div class="facility-contact"><span>${icon("phone")} ${h(facility.phone)}</span><span>${icon("mail")} ${h(facility.email || "-")}</span></div><div class="facility-metrics"><div class="facility-metric"><strong>${h(facility.activeOrders)}</strong><span>Open requests</span></div><div class="facility-metric"><strong>${h(facility.activeTests)}</strong><span>Active tests</span></div></div>${badge(facility.status)}</div></article>`).join("");
     return `${heading(...pageMeta["Laboratory Staff"].facilities)}<div class="facilities-card-grid">${cards || '<section class="card"><div class="empty-state">No assigned facilities.</div></section>'}</div>`;
   }
 
@@ -691,7 +940,7 @@
     return `${heading(...pageMeta.Patient.dashboard)}
       <div class="privacy-banner">${icon("shield")} You are viewing only records linked to patient ID ${h(currentUser.patientProfileId)}.</div>
       <div class="stats-grid">${dashboardStats()}</div>
-      <div class="patient-dashboard-grid"><section>${table(["Order No.", "Tests", "Facility", "Status", "Date", "Action"], orderRows, "Your recent laboratory orders")}</section><div class="patient-side-stack">${donutCard("My Order Status", state.data.reports.ordersByStatus, "Orders")}<section>${table(["Result ID", "Order No.", "Test", "Status", "Released", "Action"], resultRows, "Released results only")}</section></div></div>`;
+      <div class="patient-dashboard-grid"><section>${table(["Request No.", "Tests", "Facility", "Status", "Date", "Action"], orderRows, "Your recent laboratory requests")}</section><div class="patient-side-stack">${donutCard("My Request Status", state.data.reports.ordersByStatus, "Requests")}<section>${table(["Result ID", "Request No.", "Test", "Status", "Released", "Action"], resultRows, "Released results only")}</section></div></div>`;
   }
 
   function renderPatientProfile() {
@@ -721,6 +970,7 @@
   }
 
   function setPage(requested = "dashboard", updateHash = true) {
+    stopResultCamera();
     const role = currentUser.role;
     const roleRenderers = renderers[role] || {};
     const page = roleRenderers[requested] ? requested : "dashboard";
@@ -750,7 +1000,7 @@
   }
 
   function drawerTitle(type) {
-    return ({ user: "User Details", facility: "Facility Details", test: "Test Definition", order: "Order Details", result: "Result Details", patient: "Patient Details", notification: "Notification Details", password: "Change Password" })[type] || "Details";
+    return ({ user: "User Details", facility: "Facility Details", test: "Test Definition", order: "Laboratory Request Details", result: "Result Details", patient: "Patient Details", notification: "Notification Details", password: "Change Password" })[type] || "Details";
   }
 
   function userForm(user = {}) {
@@ -768,7 +1018,7 @@
   }
 
   function orderDetails(order) {
-    if (!order) return '<div class="empty-state">Order not found.</div>';
+    if (!order) return '<div class="empty-state">Laboratory request not found.</div>';
     const canUpdateOrder = !["Result Uploaded", "Verified", "Released", "Rejected", "Cancelled"].includes(order.status);
     const transitions = {
       Pending: ["Accepted", "Pending Sample", "Rejected", "Cancelled"],
@@ -781,7 +1031,7 @@
     const labActions = currentUser.role === "Laboratory Staff" && canUpdateOrder
       ? `<div class="form-actions">${(transitions[order.status] || []).map((status) => `<button class="btn btn-secondary" type="button" data-order-status="${h(status)}" data-id="${order.id}">${h(status)}</button>`).join("")}</div>`
       : "";
-    return `${drawerInfo([["Order No.", h(order.orderNumber)], ["Patient", h(order.patientName)], ["Patient ID", h(order.patientCode)], ["Doctor", h(order.doctorName)], ["Facility", h(order.facilityName)], ["Tests", h(order.tests)], ["Priority", badge(order.priority)], ["Status", badge(order.status)], ["Created", h(shortDateTime(order.createdAt))], ["Updated", h(shortDateTime(order.updatedAt || order.createdAt))]])}<div class="clinical-note-box"><h4>${icon("note")} Clinical Notes</h4><p>${h(order.clinicalNotes || "No clinical notes entered.")}</p></div>${labActions}`;
+    return `${drawerInfo([["Request No.", h(order.orderNumber)], ["Patient", h(order.patientName)], ["Patient ID", h(order.patientCode)], ["Requesting Clinician", h(order.doctorName)], ["Facility", h(order.facilityName)], ["Tests", h(order.tests)], ["Priority", badge(order.priority)], ["Status", badge(order.status)], ["Created", h(shortDateTime(order.createdAt))], ["Updated", h(shortDateTime(order.updatedAt || order.createdAt))]])}<div class="clinical-note-box"><h4>${icon("note")} Clinical Indication / Notes</h4><p>${h(order.clinicalNotes || "No clinical indication entered.")}</p></div>${labActions}`;
   }
 
   function resultDetails(result) {
@@ -803,7 +1053,7 @@
     const files = (result.files || []).length
       ? `<div class="attachment-list">${result.files.map((file) => `<a class="attachment-link" href="${h(API_URL.replace(/[^/]+$/, ""))}${h(file.downloadUrl)}" target="_blank" rel="noopener">${icon("file")} <span>Download Uploaded File: ${h(file.originalName)}</span><small>${Math.round((file.sizeBytes || 0) / 1024)} KB</small></a>`).join("")}</div>`
       : '<p>No files attached.</p>';
-    return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Order No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Created", h(shortDateTime(result.createdAt || result.uploadedAt))], ["Updated", h(shortDateTime(result.updatedAt || result.uploadedAt))], ["Released", h(shortDateTime(result.releasedAt))], ["Status", badge(result.status)]])}${detailDownload ? `<div class="result-download-actions">${detailDownload}</div>` : ""}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${noteForm}${labActions}`;
+    return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Request No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Created", h(shortDateTime(result.createdAt || result.uploadedAt))], ["Updated", h(shortDateTime(result.updatedAt || result.uploadedAt))], ["Released", h(shortDateTime(result.releasedAt))], ["Status", badge(result.status)]])}${detailDownload ? `<div class="result-download-actions">${detailDownload}</div>` : ""}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${noteForm}${labActions}`;
   }
 
   function resultEditForm(result) {
@@ -923,10 +1173,14 @@
       } else if (kind === "create-order") {
         payload.testIds = $$('input[name="testIds"]:checked', form).map((input) => input.value);
         result = await api("create_order", payload);
-        await refreshAfter(result, "Laboratory order created.");
+        await refreshAfter(result, "Laboratory request submitted.");
         setPage("orders");
       } else if (kind === "upload-result") {
-        payload.attachments = await readAttachments($('input[name="attachments"]', form)?.files || []);
+        const attachmentFiles = [
+          ...($('input[name="attachments"]', form)?.files || []),
+          ...($("[data-result-scan-input]", form)?.files || []),
+        ];
+        payload.attachments = await readAttachments(attachmentFiles.filter((file, index, files) => files.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.lastModified === file.lastModified) === index));
         payload.values = $$("tbody tr", form).map((row) => ({
           parameter: $('input[name="parameter"]', row)?.value || "",
           value: $('input[name="value"]', row)?.value || "",
@@ -997,6 +1251,62 @@
     if (event.target.closest("[data-close-sidebar]")) { closeSidebar(); return; }
     if (event.target.closest("[data-download]")) { downloadRecords(); return; }
 
+    const utilizationPeriod = event.target.closest("[data-utilization-period]");
+    if (utilizationPeriod) {
+      state.utilization.period = utilizationPeriod.dataset.utilizationPeriod;
+      if (state.utilization.period === "custom" && state.utilization.from === state.utilization.to) {
+        const anchor = window.LabUtilizationAnalytics.parseDate(state.utilization.anchor);
+        state.utilization.from = window.LabUtilizationAnalytics.dateKey(new Date(anchor.getFullYear(), anchor.getMonth(), 1));
+        state.utilization.to = window.LabUtilizationAnalytics.dateKey(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0));
+      }
+      setPage("reports", false);
+      return;
+    }
+
+    const forecastHorizon = event.target.closest("[data-forecast-horizon]");
+    if (forecastHorizon) {
+      state.forecast.horizon = Number(forecastHorizon.dataset.forecastHorizon);
+      setPage("reports", false);
+      return;
+    }
+
+    const chooseResultImage = event.target.closest("[data-choose-result-image]");
+    if (chooseResultImage) {
+      openImagePicker(chooseResultImage.closest('form[data-form="upload-result"]'));
+      return;
+    }
+
+    const openCamera = event.target.closest("[data-open-result-camera]");
+    if (openCamera) {
+      await openResultCamera(openCamera.closest('form[data-form="upload-result"]'));
+      return;
+    }
+
+    const capturePhoto = event.target.closest("[data-capture-result-photo]");
+    if (capturePhoto) {
+      const form = capturePhoto.closest('form[data-form="upload-result"]');
+      try {
+        await captureResultCameraImage(form);
+      } catch (error) {
+        updateScannerStatus(form, error.message || "The photo could not be captured.", null, "error");
+      }
+      return;
+    }
+
+    const closeCamera = event.target.closest("[data-close-result-camera]");
+    if (closeCamera) {
+      const form = closeCamera.closest('form[data-form="upload-result"]');
+      stopResultCamera(form);
+      updateScannerStatus(form, "Camera closed. Choose another source when ready.", null, "idle");
+      return;
+    }
+
+    const scanTrigger = event.target.closest("[data-scan-result]");
+    if (scanTrigger) {
+      await scanResultImage(scanTrigger.closest('form[data-form="upload-result"]'));
+      return;
+    }
+
     const textSizeButton = event.target.closest("[data-text-size-option]");
     if (textSizeButton) {
       applyTextSize(textSizeButton.dataset.textSizeOption);
@@ -1043,7 +1353,7 @@
     const deleteUser = event.target.closest("[data-delete-user]");
     if (deleteUser) {
       const name = deleteUser.dataset.userName || "this user";
-      if (!window.confirm(`Deactivate ${name}? They will no longer be able to sign in, but existing orders and results will remain intact.`)) {
+      if (!window.confirm(`Deactivate ${name}? They will no longer be able to sign in, but existing laboratory requests and results will remain intact.`)) {
         return;
       }
       try {
@@ -1059,7 +1369,7 @@
     if (orderStatus) {
       try {
         const result = await api("update_order_status", { orderId: orderStatus.dataset.id, status: orderStatus.dataset.orderStatus });
-        await refreshAfter(result, "Order status updated.");
+        await refreshAfter(result, "Laboratory request status updated.");
         closeDrawer();
       } catch (error) {
         toast(error.message);
@@ -1165,7 +1475,33 @@
     applyPageFilters();
   }
 
-  function handleDashboardChange(event) {
+  async function handleDashboardChange(event) {
+    if (event.target.matches("[data-utilization-anchor], [data-utilization-from], [data-utilization-to]")) {
+      if (event.target.matches("[data-utilization-anchor]")) state.utilization.anchor = event.target.value;
+      if (event.target.matches("[data-utilization-from]")) state.utilization.from = event.target.value;
+      if (event.target.matches("[data-utilization-to]")) state.utilization.to = event.target.value;
+      setPage("reports", false);
+      return;
+    }
+    if (event.target.matches("[data-result-scan-input]")) {
+      const form = event.target.closest('form[data-form="upload-result"]');
+      const file = event.target.files?.[0];
+      const preview = $("[data-result-scan-preview]", form);
+      if (preview?.dataset.objectUrl) URL.revokeObjectURL(preview.dataset.objectUrl);
+      if (!file) {
+        if (preview) preview.hidden = true;
+        updateScannerStatus(form, "Select a sharp, straight-on image with readable parameter names and values.", null, "idle");
+        return;
+      }
+      const objectUrl = URL.createObjectURL(file);
+      if (preview) {
+        preview.src = objectUrl;
+        preview.dataset.objectUrl = objectUrl;
+        preview.hidden = false;
+      }
+      await scanResultImage(form);
+      return;
+    }
     if (event.target.matches("[data-release-confirm-check]")) {
       const button = $("[data-release-confirm]");
       if (button) button.disabled = !event.target.checked;

@@ -17,9 +17,9 @@ $notificationCount = $roleConfig['notificationCount'] ?? 0;
       <kbd>Ctrl K</kbd>
     </label>
 
-    <button class="icon-button notification-button" type="button" aria-label="View <?= e($notificationCount) ?> unread notifications" data-go-page="notifications" data-icon-button="bell">
+    <a class="icon-button notification-button" href="notifications.php" aria-label="View <?= e($notificationCount) ?> unread notifications" data-go-page="notifications" data-icon-button="bell">
       <span class="notification-count"><?= e($notificationCount) ?></span>
-    </button>
+    </a>
 
     <div class="profile-menu-wrap">
       <button class="profile-button" type="button" aria-expanded="false" data-profile-toggle>
@@ -35,4 +35,3 @@ $notificationCount = $roleConfig['notificationCount'] ?? 0;
     </div>
   </div>
 </header>
-

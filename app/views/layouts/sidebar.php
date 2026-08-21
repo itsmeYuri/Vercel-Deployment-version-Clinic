@@ -28,12 +28,6 @@ $logoutUrl = $logoutUrl ?? '../auth/logout.php';
     <?php endforeach; ?>
   </nav>
 
-  <div class="<?= e($roleConfig['infoClass'] ?? 'sidebar-clinic') ?>">
-    <?= $roleConfig['illustration'] ?? '' ?>
-    <strong><?= e($roleConfig['infoTitle'] ?? 'Care works better together.') ?></strong>
-    <span><?= e($roleConfig['infoText'] ?? 'Secure clinic operations, all in one place.') ?></span>
-  </div>
-
   <a class="sidebar-logout" href="<?= e($logoutUrl) ?>" data-logout data-icon-name="logout"><span>Log out</span></a>
 </aside>
 <div class="sidebar-scrim" data-close-sidebar></div>
