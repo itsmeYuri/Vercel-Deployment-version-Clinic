@@ -6,24 +6,10 @@ error_reporting(E_ALL);
 
 require_once __DIR__ . '/../app/config/database.php';
 require_once __DIR__ . '/../app/core/maintenance.php';
+require_once __DIR__ . '/../app/core/session.php';
+require_once __DIR__ . '/../app/core/storage.php';
 
-ini_set('session.use_strict_mode', '1');
-session_name('CLINIC_SYSTEM_V2');
-$forwardedProto = strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
-$secureCookie = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-    || $forwardedProto === 'https'
-    || filter_var(clinic_env('CLINIC_COOKIE_SECURE', '0'), FILTER_VALIDATE_BOOLEAN);
-session_set_cookie_params([
-    'lifetime' => 0,
-    'path' => '/',
-    'secure' => $secureCookie,
-    'httponly' => true,
-    'samesite' => 'Lax',
-]);
-session_start();
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-}
+clinic_start_session();
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -323,6 +309,7 @@ function api_maintenance_page_from_action($action)
         'list_all_results' => 'results',
         'doctor_results' => 'results',
         'patient_results' => 'results',
+        'prepare_result_uploads' => 'upload',
         'upload_result' => 'upload',
         'update_result_status' => 'review',
         'review_result' => 'review',
@@ -726,10 +713,11 @@ function fetch_patients($pdo, $user = null, $mode = 'role')
             $params[] = $user['patientId'];
         }
     }
+    $latestTestsAggregate = db_group_concat('loi.test_name', 'loi.id', ', ');
     $sql = 'SELECT p.*, u.name, u.email, u.username, u.avatar, u.contact, u.status, f.name AS facility_name,
                    (SELECT lo.order_number FROM lab_orders lo WHERE lo.patient_id = p.id' . $scopeLo . ' ORDER BY lo.created_at DESC LIMIT 1) AS latest_order_number,
                    (SELECT lo.status FROM lab_orders lo WHERE lo.patient_id = p.id' . $scopeLo . ' ORDER BY lo.created_at DESC LIMIT 1) AS latest_status,
-                   (SELECT GROUP_CONCAT(loi.test_name ORDER BY loi.id SEPARATOR ", ")
+                   (SELECT ' . $latestTestsAggregate . '
                     FROM lab_order_items loi
                     WHERE loi.order_id = (
                         SELECT lo2.id FROM lab_orders lo2
@@ -765,6 +753,8 @@ function fetch_orders($pdo, $user)
         $where[] = 'lo.patient_id = ?';
         $params[] = $user['patientId'];
     }
+    $testsAggregate = db_group_concat('test_name', 'id', ', ');
+    $testIdsAggregate = db_group_concat('test_definition_id', 'id', ',');
     $sql = 'SELECT lo.*, p.patient_code, p.user_id AS patient_user_id, pu.name AS patient_name, pu.avatar AS patient_avatar,
                    du.name AS doctor_name, f.name AS facility_name,
                    oi.tests, oi.test_ids
@@ -774,8 +764,8 @@ function fetch_orders($pdo, $user)
             JOIN users du ON du.id = lo.doctor_id
             JOIN facilities f ON f.id = lo.facility_id
             LEFT JOIN (
-              SELECT order_id, GROUP_CONCAT(test_name ORDER BY id SEPARATOR ", ") AS tests,
-                     GROUP_CONCAT(test_definition_id ORDER BY id SEPARATOR ",") AS test_ids
+              SELECT order_id, ' . $testsAggregate . ' AS tests,
+                     ' . $testIdsAggregate . ' AS test_ids
               FROM lab_order_items GROUP BY order_id
             ) oi ON oi.order_id = lo.id' .
             ($where ? ' WHERE ' . implode(' AND ', $where) : '') .
@@ -865,6 +855,7 @@ function fetch_results($pdo, $user)
         $where[] = 'lr.status = "Released"';
         $params[] = $user['patientId'];
     }
+    $testsAggregate = db_group_concat('test_name', 'id', ', ');
     $sql = 'SELECT lr.*, lo.order_number, lo.patient_id, lo.doctor_id, lo.facility_id,
                    p.patient_code, p.user_id AS patient_user_id, pu.name AS patient_name,
                    du.name AS doctor_name, f.name AS facility_name, uu.name AS uploaded_by_name,
@@ -878,7 +869,7 @@ function fetch_results($pdo, $user)
             JOIN users uu ON uu.id = lr.uploaded_by
             JOIN facilities f ON f.id = lo.facility_id
             LEFT JOIN (
-              SELECT order_id, GROUP_CONCAT(test_name ORDER BY id SEPARATOR ", ") AS tests
+              SELECT order_id, ' . $testsAggregate . ' AS tests
               FROM lab_order_items GROUP BY order_id
             ) oi ON oi.order_id = lo.id
             LEFT JOIN clinical_notes cn ON cn.id = (SELECT MAX(id) FROM clinical_notes WHERE result_id = lr.id)
@@ -1068,6 +1059,7 @@ function app_data($pdo, $user)
         'dashboard' => dashboard_counts($pdo, $user, $orders, $results, $notifications),
         'reports' => reports_summary($orders, $results),
         'maintenance' => clinic_maintenance_public_settings(clinic_maintenance_current($pdo)),
+        'storage' => ['driver' => clinic_storage_driver(), 'maxFileBytes' => 10 * 1024 * 1024, 'maxFiles' => 5],
     ];
     return $data;
 }
@@ -1120,21 +1112,22 @@ function save_maintenance_settings($pdo, $data, $actor)
 
     clinic_maintenance_ensure_table($pdo);
     $pdo->beginTransaction();
-    $stmt = $pdo->prepare(
-        'INSERT INTO maintenance_settings (id, is_enabled, scope, affected_roles, affected_pages, message, reason, start_at, end_at, created_by)
-         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           is_enabled=VALUES(is_enabled),
-           scope=VALUES(scope),
-           affected_roles=VALUES(affected_roles),
-           affected_pages=VALUES(affected_pages),
-           message=VALUES(message),
-           reason=VALUES(reason),
-           start_at=VALUES(start_at),
-           end_at=VALUES(end_at),
-           created_by=VALUES(created_by),
-           updated_at=CURRENT_TIMESTAMP'
-    );
+    $upsertSql = db_is_postgres()
+        ? 'INSERT INTO maintenance_settings (id, is_enabled, scope, affected_roles, affected_pages, message, reason, start_at, end_at, created_by)
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (id) DO UPDATE SET
+             is_enabled=EXCLUDED.is_enabled, scope=EXCLUDED.scope, affected_roles=EXCLUDED.affected_roles,
+             affected_pages=EXCLUDED.affected_pages, message=EXCLUDED.message, reason=EXCLUDED.reason,
+             start_at=EXCLUDED.start_at, end_at=EXCLUDED.end_at, created_by=EXCLUDED.created_by,
+             updated_at=CURRENT_TIMESTAMP'
+        : 'INSERT INTO maintenance_settings (id, is_enabled, scope, affected_roles, affected_pages, message, reason, start_at, end_at, created_by)
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             is_enabled=VALUES(is_enabled), scope=VALUES(scope), affected_roles=VALUES(affected_roles),
+             affected_pages=VALUES(affected_pages), message=VALUES(message), reason=VALUES(reason),
+             start_at=VALUES(start_at), end_at=VALUES(end_at), created_by=VALUES(created_by),
+             updated_at=CURRENT_TIMESTAMP';
+    $stmt = $pdo->prepare($upsertSql);
     $stmt->execute([
         $isEnabled ? 1 : 0,
         $scope,
@@ -1238,17 +1231,21 @@ function save_user($pdo, $data, $actor)
         }
         audit_log($pdo, $actor, 'UPDATE', 'User', 'Updated user ' . $name);
     } else {
-        $stmt = $pdo->prepare('INSERT INTO users (role_id, name, email, username, password_hash, avatar, contact, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-        $stmt->execute([$roleId, $name, $email, $username, password_hash($password, PASSWORD_DEFAULT), $avatar, $contact, $status]);
-        $id = (int) $pdo->lastInsertId();
+        $id = db_insert_id($pdo, 'INSERT INTO users (role_id, name, email, username, password_hash, avatar, contact, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [$roleId, $name, $email, $username, password_hash($password, PASSWORD_DEFAULT), $avatar, $contact, $status]);
         audit_log($pdo, $actor, 'CREATE', 'User', 'Created user ' . $name);
     }
 
     if ($role === 'Doctor') {
-        $stmt = $pdo->prepare('INSERT INTO doctors (user_id, specialty, assigned_facility_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE specialty=VALUES(specialty), assigned_facility_id=VALUES(assigned_facility_id)');
+        $doctorUpsert = db_is_postgres()
+            ? 'INSERT INTO doctors (user_id, specialty, assigned_facility_id) VALUES (?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET specialty=EXCLUDED.specialty, assigned_facility_id=EXCLUDED.assigned_facility_id'
+            : 'INSERT INTO doctors (user_id, specialty, assigned_facility_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE specialty=VALUES(specialty), assigned_facility_id=VALUES(assigned_facility_id)';
+        $stmt = $pdo->prepare($doctorUpsert);
         $stmt->execute([$id, optional_string($data, 'specialty', 'General Medicine'), $facilityId]);
     } elseif ($role === 'Laboratory Staff') {
-        $stmt = $pdo->prepare('INSERT INTO laboratory_staff (user_id, employee_no, default_facility_id, department) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE default_facility_id=VALUES(default_facility_id), department=VALUES(department)');
+        $staffUpsert = db_is_postgres()
+            ? 'INSERT INTO laboratory_staff (user_id, employee_no, default_facility_id, department) VALUES (?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET default_facility_id=EXCLUDED.default_facility_id, department=EXCLUDED.department'
+            : 'INSERT INTO laboratory_staff (user_id, employee_no, default_facility_id, department) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE default_facility_id=VALUES(default_facility_id), department=VALUES(department)';
+        $stmt = $pdo->prepare($staffUpsert);
         $stmt->execute([$id, 'LAB-' . str_pad((string) $id, 3, '0', STR_PAD_LEFT), $facilityId, optional_string($data, 'department', 'General Laboratory')]);
         $stmt = $pdo->prepare('DELETE FROM staff_facilities WHERE user_id = ?');
         $stmt->execute([$id]);
@@ -1304,9 +1301,7 @@ function save_facility($pdo, $data, $actor)
         $stmt->execute(array_merge($values, [$id]));
         audit_log($pdo, $actor, 'UPDATE', 'Facility', 'Updated facility ' . $values[0]);
     } else {
-        $stmt = $pdo->prepare('INSERT INTO facilities (name, address, phone, email, status) VALUES (?, ?, ?, ?, ?)');
-        $stmt->execute($values);
-        $id = (int) $pdo->lastInsertId();
+        $id = db_insert_id($pdo, 'INSERT INTO facilities (name, address, phone, email, status) VALUES (?, ?, ?, ?, ?)', $values);
         audit_log($pdo, $actor, 'CREATE', 'Facility', 'Created facility ' . $values[0]);
     }
     $pdo->commit();
@@ -1411,9 +1406,7 @@ function create_order($pdo, $data, $actor)
     $notes = optional_string($data, 'clinicalNotes') ?: optional_string($data, 'notes');
 
     $pdo->beginTransaction();
-    $stmt = $pdo->prepare('INSERT INTO lab_orders (order_number, patient_id, doctor_id, facility_id, priority, status, clinical_notes, latest_update) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    $stmt->execute([$orderNumber, $patientId, $doctorId, $facilityId, $priority, $status, $notes, 'Laboratory request submitted']);
-    $orderId = (int) $pdo->lastInsertId();
+    $orderId = db_insert_id($pdo, 'INSERT INTO lab_orders (order_number, patient_id, doctor_id, facility_id, priority, status, clinical_notes, latest_update) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [$orderNumber, $patientId, $doctorId, $facilityId, $priority, $status, $notes, 'Laboratory request submitted']);
     $stmt = $pdo->prepare('INSERT INTO lab_order_items (order_id, test_definition_id, test_name, status) VALUES (?, ?, ?, ?)');
     foreach ($tests as $test) {
         $stmt->execute([$orderId, (int) $test['id'], $test['name'], 'Pending']);
@@ -1503,7 +1496,7 @@ function save_result_attachments($pdo, $resultId, $attachments)
         respond(false, 'The total attachment size cannot exceed 25 MB.', [], 422, ['attachments' => 'Files too large']);
     }
     $uploadDir = dirname(__DIR__) . '/public/uploads/results';
-    if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
+    if (!clinic_storage_is_supabase() && !is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
         respond(false, 'Could not prepare the result upload folder.', [], 500);
     }
     $stmt = $pdo->prepare('INSERT INTO result_files (result_id, original_name, stored_name, mime_type, size_bytes) VALUES (?, ?, ?, ?, ?)');
@@ -1514,6 +1507,14 @@ function save_result_attachments($pdo, $resultId, $attachments)
         $name = trim((string) ($file['name'] ?? ''));
         $claimedMime = trim((string) ($file['type'] ?? ''));
         $size = (int) ($file['size'] ?? 0);
+        if (clinic_storage_is_supabase()) {
+            if (!isset($allowed[$claimedMime]) || $size <= 0 || $size > $maxBytes || !clinic_storage_verify_metadata($file)) {
+                respond(false, 'One Supabase attachment reference is invalid or expired.', [], 422, ['attachments' => 'Invalid storage reference']);
+            }
+            $safeName = preg_replace('/[\x00-\x1F\x7F]+/u', '', basename(str_replace('\\', '/', $name)));
+            $stmt->execute([(int) $resultId, substr($safeName ?: 'result-file', 0, 180), $file['storagePath'], $claimedMime, $size]);
+            continue;
+        }
         $data = (string) ($file['data'] ?? '');
         if ($name === '' || !isset($allowed[$claimedMime]) || $size <= 0 || $size > $maxBytes || $data === '' || strlen($data) > (int) ceil($maxBytes * 4 / 3) + 8) {
             respond(false, 'Attachments must be PDF, JPG, PNG, or WEBP files up to 10 MB.', [], 422, ['attachments' => 'Invalid file']);
@@ -1541,6 +1542,10 @@ function download_result_file($pdo, $fileId, $actor)
     $file = one($pdo, 'SELECT rf.*, lr.order_id, lr.status FROM result_files rf JOIN lab_results lr ON lr.id = rf.result_id WHERE rf.id = ? LIMIT 1', [(int) $fileId]);
     if (!$file || !can_access_result($pdo, $actor, ['id' => (int) $file['result_id'], 'order_id' => (int) $file['order_id'], 'status' => $file['status']])) {
         respond(false, 'File not found or not available to your role.', [], 404);
+    }
+    if (clinic_storage_is_supabase()) {
+        header('Location: ' . clinic_storage_signed_download_url($file['stored_name'], $file['original_name']), true, 302);
+        exit;
     }
     $path = dirname(__DIR__) . '/public/uploads/results/' . basename($file['stored_name']);
     if (!is_file($path)) {
@@ -1655,9 +1660,7 @@ function upload_result($pdo, $data, $actor)
         $values = [];
     }
     $pdo->beginTransaction();
-    $stmt = $pdo->prepare('INSERT INTO lab_results (result_number, order_id, uploaded_by, status, findings, remarks) VALUES (?, ?, ?, "Pending Review", ?, ?)');
-    $stmt->execute([$resultNumber, (int) $order['id'], $actor['id'], $findings, $remarks]);
-    $resultId = (int) $pdo->lastInsertId();
+    $resultId = db_insert_id($pdo, 'INSERT INTO lab_results (result_number, order_id, uploaded_by, status, findings, remarks) VALUES (?, ?, ?, "Pending Review", ?, ?)', [$resultNumber, (int) $order['id'], $actor['id'], $findings, $remarks]);
     save_result_attachments($pdo, $resultId, $data['attachments'] ?? []);
     $stmt = $pdo->prepare('INSERT INTO lab_result_values (result_id, parameter_name, value_text, unit, reference_range, flag) VALUES (?, ?, ?, ?, ?, ?)');
     foreach ($values as $value) {
@@ -1930,11 +1933,33 @@ function notification_filter_sql($pdo, $user)
 try {
     $pdo = db();
     $action = $_GET['action'] ?? ($_POST['action'] ?? '');
+    if ($action === '') {
+        $compatibilityActions = [
+            '/api/admin/audit-logs.php' => 'audit_logs',
+            '/api/admin/reports.php' => 'reports_summary',
+            '/api/admin/users.php' => 'list_users',
+            '/api/auth/login.php' => 'login',
+            '/api/auth/logout.php' => 'logout',
+            '/api/auth/register.php' => 'register_patient',
+            '/api/doctor/notes.php' => 'add_clinical_note',
+            '/api/doctor/patients.php' => 'doctor_patients',
+            '/api/doctor/results.php' => 'doctor_results',
+            '/api/laboratory/orders.php' => 'lab_orders',
+            '/api/laboratory/results.php' => 'list_all_results',
+            '/api/laboratory/upload-result.php' => 'upload_result',
+            '/api/laboratory/verify-result.php' => 'review_result',
+            '/api/patient/notifications.php' => 'notifications',
+            '/api/patient/profile.php' => 'patient_profile',
+            '/api/patient/results.php' => 'patient_results',
+        ];
+        $requestPath = (string) parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+        $action = $compatibilityActions[$requestPath] ?? '';
+    }
     $data = request_data();
     validate_csrf_request($action);
 
     if ($action === 'health') {
-        respond(true, 'API is available.', ['database' => DB_NAME]);
+        respond(true, 'API is available.', ['database' => DB_DRIVER]);
     }
 
     if ($action === 'login') {
@@ -1958,7 +1983,7 @@ try {
         }
         audit_log($pdo, $user, 'LOGIN', 'Authentication', 'Successful login');
         $pdo->commit();
-        session_regenerate_id(true);
+        clinic_regenerate_session();
         $_SESSION['user_id'] = (int) $row['id'];
         respond(true, 'Login successful.', ['user' => $user, 'csrfToken' => rotate_csrf_token()]);
     }
@@ -1972,12 +1997,7 @@ try {
                 // Logout should clear the session even if audit logging is temporarily unavailable.
             }
         }
-        $_SESSION = [];
-        if (ini_get('session.use_cookies')) {
-            $params = session_get_cookie_params();
-            setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
-        }
-        session_destroy();
+        clinic_destroy_session();
         respond(true, 'Logged out successfully.');
     }
 
@@ -2040,16 +2060,14 @@ try {
             respond(false, 'Patient registration is unavailable until an active facility is configured.', [], 503);
         }
         $pdo->beginTransaction();
-        $stmt = $pdo->prepare('INSERT INTO users (role_id, name, email, username, password_hash, avatar, contact, status) VALUES (?, ?, ?, ?, ?, ?, ?, "Active")');
-        $stmt->execute([role_id($pdo, 'Patient'), $fullName, $email, $username, password_hash($password, PASSWORD_DEFAULT), initials($fullName), $contact]);
-        $userId = (int) $pdo->lastInsertId();
+        $userId = db_insert_id($pdo, 'INSERT INTO users (role_id, name, email, username, password_hash, avatar, contact, status) VALUES (?, ?, ?, ?, ?, ?, ?, "Active")', [role_id($pdo, 'Patient'), $fullName, $email, $username, password_hash($password, PASSWORD_DEFAULT), initials($fullName), $contact]);
         $stmt = $pdo->prepare('INSERT INTO patients (user_id, patient_code, date_of_birth, sex, address, primary_facility_id, privacy_acknowledged) VALUES (?, ?, ?, ?, ?, ?, 1)');
         $stmt->execute([$userId, generate_patient_code($pdo), date('Y-m-d', $birthTime), $sex, $address, $facilityId]);
         $user = fetch_user($pdo, $userId);
         notify_user($pdo, ['role_name' => 'Admin', 'title' => 'New patient registered', 'message' => $fullName . ' created a patient portal account.', 'type_name' => 'users']);
         audit_log($pdo, $user, 'CREATE', 'Patient', 'Registered new patient account');
         $pdo->commit();
-        session_regenerate_id(true);
+        clinic_regenerate_session();
         $_SESSION['user_id'] = $userId;
         respond(true, 'Patient account created successfully.', ['user' => fetch_user($pdo, $userId), 'csrfToken' => rotate_csrf_token()]);
     }
@@ -2161,6 +2179,16 @@ try {
         update_order_status($pdo, $data, require_auth($pdo, ['Laboratory Staff']));
     }
 
+    if ($action === 'prepare_result_uploads') {
+        $actor = require_auth($pdo, ['Laboratory Staff']);
+        try {
+            $uploads = clinic_storage_prepare_uploads($data['files'] ?? [], $actor);
+        } catch (InvalidArgumentException $e) {
+            respond(false, $e->getMessage(), [], 422, ['attachments' => $e->getMessage()]);
+        }
+        respond(true, 'Signed upload URLs created.', ['uploads' => $uploads]);
+    }
+
     if ($action === 'upload_result') {
         upload_result($pdo, $data, require_auth($pdo, ['Laboratory Staff']));
     }
@@ -2242,7 +2270,7 @@ try {
     if (isset($pdo) && $pdo->inTransaction()) {
         $pdo->rollBack();
     }
-    respond(false, 'Database error. Please check the MySQL setup and imported schema.', [], 500, error_details($e));
+    respond(false, 'Database error. Please check the configured database and imported schema.', [], 500, error_details($e));
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo->inTransaction()) {
         $pdo->rollBack();

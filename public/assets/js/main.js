@@ -241,14 +241,48 @@
     return json.data || {};
   }
 
-  function readAttachments(files) {
+  async function readAttachments(files) {
     const allowed = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
     const maxBytes = 10 * 1024 * 1024;
-    return Promise.all([...files].map((file) => new Promise((resolve, reject) => {
+    const selectedFiles = [...files];
+    if (!selectedFiles.length) return [];
+    if (selectedFiles.length > 5 || selectedFiles.reduce((sum, file) => sum + file.size, 0) > 25 * 1024 * 1024) {
+      throw new Error("Attach no more than five files with a combined size up to 25 MB.");
+    }
+    selectedFiles.forEach((file) => {
       if (!allowed.includes(file.type) || file.size > maxBytes) {
-        reject(new Error("Attachments must be PDF, JPG, PNG, or WEBP files up to 10 MB."));
-        return;
+        throw new Error("Attachments must be PDF, JPG, PNG, or WEBP files up to 10 MB.");
       }
+    });
+
+    if (state.data?.storage?.driver === "supabase") {
+      const prepared = await api("prepare_result_uploads", {
+        files: selectedFiles.map((file) => ({ name: file.name, type: file.type, size: file.size })),
+      });
+      const uploads = prepared.uploads || [];
+      if (uploads.length !== selectedFiles.length) throw new Error("The secure upload could not be prepared.");
+      for (let index = 0; index < uploads.length; index += 1) {
+        const formData = new FormData();
+        formData.append("cacheControl", "3600");
+        formData.append("", selectedFiles[index]);
+        const response = await fetch(uploads[index].uploadUrl, {
+          method: "PUT",
+          headers: { "x-upsert": "false" },
+          body: formData,
+        });
+        if (!response.ok) {
+          let message = `Could not upload ${selectedFiles[index].name}.`;
+          try {
+            const error = await response.json();
+            message = error.message || error.error || message;
+          } catch { /* Supabase may return an empty error response. */ }
+          throw new Error(message);
+        }
+      }
+      return uploads.map(({ uploadUrl, ...metadata }) => metadata);
+    }
+
+    return Promise.all(selectedFiles.map((file) => new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve({ name: file.name, type: file.type, size: file.size, data: String(reader.result).split(",")[1] || "" });
       reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));

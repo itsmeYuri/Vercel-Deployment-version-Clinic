@@ -1,0 +1,15 @@
+.git
+.agents
+.codex
+.env
+.env.local
+app/config/local.php
+node_modules
+tests
+test-results
+.runlogs
+.mysql-data
+.test-mysql-data
+.test-screenshots
+public/uploads/results/*
+database/clinic_system_v2.sql

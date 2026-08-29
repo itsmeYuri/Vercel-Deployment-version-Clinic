@@ -2,31 +2,7 @@
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/helpers.php';
-
-function clinic_start_session()
-{
-    if (session_status() === PHP_SESSION_ACTIVE) {
-        return;
-    }
-
-    ini_set('session.use_strict_mode', '1');
-    session_name('CLINIC_SYSTEM_V2');
-    $forwardedProto = strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
-    $secureCookie = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || $forwardedProto === 'https'
-        || filter_var(clinic_env('CLINIC_COOKIE_SECURE', '0'), FILTER_VALIDATE_BOOLEAN);
-    session_set_cookie_params([
-        'lifetime' => 0,
-        'path' => '/',
-        'secure' => $secureCookie,
-        'httponly' => true,
-        'samesite' => 'Lax',
-    ]);
-    session_start();
-    if (empty($_SESSION['csrf_token'])) {
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-    }
-}
+require_once __DIR__ . '/session.php';
 
 function clinic_csrf_token()
 {
@@ -82,7 +58,7 @@ function clinic_current_user()
         $user = clinic_fetch_user((int) $_SESSION['user_id']);
     } catch (Throwable $e) {
         unset($_SESSION['user_id']);
-        $_SESSION['auth_notice'] = 'The database is temporarily unavailable. Please try again after MySQL starts.';
+        $_SESSION['auth_notice'] = 'The database is temporarily unavailable. Please try again shortly.';
         return null;
     }
 
@@ -128,12 +104,5 @@ function clinic_require_role($role)
 function clinic_logout()
 {
     clinic_start_session();
-    $_SESSION = [];
-
-    if (ini_get('session.use_cookies')) {
-        $params = session_get_cookie_params();
-        setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'] ?? '', $params['secure'], $params['httponly']);
-    }
-
-    session_destroy();
+    clinic_destroy_session();
 }

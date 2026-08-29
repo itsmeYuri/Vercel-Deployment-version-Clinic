@@ -1,6 +1,6 @@
 # Clinic System V2
 
-Clinic System V2 is a PHP and MySQL/MariaDB application for laboratory orders, results, notifications, and role-based clinic workflows.
+Clinic System V2 is a PHP clinic application for laboratory orders, results, notifications, and role-based workflows. It supports its original local MySQL/MariaDB setup and a production Supabase PostgreSQL/Vercel setup without changing the user interface.
 
 ## Requirements
 
@@ -45,6 +45,17 @@ index.php     Project-root web entry point
 ## Documentation
 
 - [Doctor and Laboratory Staff roles](docs/DOCTOR_AND_LABORATORY_STAFF.md)
+- [Vercel and Supabase deployment](docs/VERCEL_SUPABASE_DEPLOYMENT.md)
+
+## Deploy to Vercel with Supabase
+
+1. Create a Supabase project and run `database/supabase_schema.sql` in its SQL Editor.
+2. Migrate existing table data in the order listed in the deployment guide.
+3. Import this repository into Vercel.
+4. Add every variable shown in `.env.example` to the Vercel project settings.
+5. Deploy. `vercel.json` uses the PHP community runtime and preserves the current public page URLs.
+
+The Supabase service-role key is used only in server-side PHP to create short-lived private Storage URLs. Never expose it in browser code or commit it to the repository.
 
 ## Laboratory Result Image Scanner
 

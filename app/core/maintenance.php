@@ -56,24 +56,45 @@ function clinic_maintenance_ensure_table($pdo)
         return;
     }
 
-    $pdo->exec(
-        "CREATE TABLE IF NOT EXISTS maintenance_settings (
-          id INT NOT NULL PRIMARY KEY,
-          is_enabled TINYINT(1) NOT NULL DEFAULT 0,
-          scope VARCHAR(40) NOT NULL DEFAULT 'all',
-          affected_roles TEXT NULL,
-          affected_pages TEXT NULL,
-          message VARCHAR(255) NOT NULL DEFAULT 'The system is currently undergoing maintenance. Please try again later.',
-          reason VARCHAR(255) NULL,
-          start_at DATETIME NULL,
-          end_at DATETIME NULL,
-          created_by INT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          INDEX idx_maintenance_enabled (is_enabled),
-          INDEX idx_maintenance_updated (updated_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
-    );
+    if (db_is_postgres()) {
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS maintenance_settings (
+              id INTEGER NOT NULL PRIMARY KEY,
+              is_enabled SMALLINT NOT NULL DEFAULT 0 CHECK (is_enabled IN (0, 1)),
+              scope VARCHAR(40) NOT NULL DEFAULT 'all',
+              affected_roles TEXT NULL,
+              affected_pages TEXT NULL,
+              message VARCHAR(255) NOT NULL DEFAULT 'The system is currently undergoing maintenance. Please try again later.',
+              reason VARCHAR(255) NULL,
+              start_at TIMESTAMP NULL,
+              end_at TIMESTAMP NULL,
+              created_by INTEGER NULL,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )"
+        );
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_maintenance_enabled ON maintenance_settings (is_enabled)');
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_maintenance_updated ON maintenance_settings (updated_at)');
+    } else {
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS maintenance_settings (
+              id INT NOT NULL PRIMARY KEY,
+              is_enabled TINYINT(1) NOT NULL DEFAULT 0,
+              scope VARCHAR(40) NOT NULL DEFAULT 'all',
+              affected_roles TEXT NULL,
+              affected_pages TEXT NULL,
+              message VARCHAR(255) NOT NULL DEFAULT 'The system is currently undergoing maintenance. Please try again later.',
+              reason VARCHAR(255) NULL,
+              start_at DATETIME NULL,
+              end_at DATETIME NULL,
+              created_by INT NULL,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_maintenance_enabled (is_enabled),
+              INDEX idx_maintenance_updated (updated_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+        );
+    }
     $checked = true;
 }
 
