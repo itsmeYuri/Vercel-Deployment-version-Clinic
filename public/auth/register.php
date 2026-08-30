@@ -1,7 +1,6 @@
 <?php
 $pageTitle = 'Create Patient Account | Centralized Laboratory Results System';
 $pageDescription = 'Create a secure Centralized Laboratory Results System patient account';
-$assetBase = '../assets';
 $apiUrl = '../../api/index.php';
 $loginUrl = 'login.php#login';
 $bodyClass = 'patient-registration-page';
@@ -12,7 +11,9 @@ $roleUrls = [
     'Patient' => '../patient/dashboard.php#dashboard',
 ];
 require_once __DIR__ . '/../../app/config/database.php';
+require_once __DIR__ . '/../../app/core/helpers.php';
 require_once __DIR__ . '/../../app/core/maintenance.php';
+$assetBase = clinic_asset_base('../assets');
 try {
     clinic_maintenance_redirect_if_blocked(db(), 'Patient', 'registration');
 } catch (Throwable $ignored) {

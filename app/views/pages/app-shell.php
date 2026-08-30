@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/../../middleware/require-role.php';
 
-$assetBase = $assetBase ?? '../assets';
+$assetBase = $assetBase ?? clinic_asset_base('../assets');
 $apiUrl = $apiUrl ?? '../../api/index.php';
 $loginUrl = $loginUrl ?? '../auth/login.php#login';
 $logoutUrl = $logoutUrl ?? '../auth/logout.php';

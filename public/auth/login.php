@@ -7,7 +7,7 @@ unset($_SESSION['auth_notice']);
 
 $pageTitle = 'Centralized Laboratory Results System';
 $pageDescription = 'Secure login for the Centralized Laboratory Results System';
-$assetBase = '../assets';
+$assetBase = clinic_asset_base('../assets');
 $apiUrl = '../../api/index.php';
 $loginUrl = 'login.php#login';
 $roleUrls = [
@@ -30,7 +30,7 @@ require __DIR__ . '/../../app/views/layouts/header.php';
         <div class="illustration-wrap" aria-hidden="true">
           <span class="orbit orbit-one"></span>
           <span class="orbit orbit-two"></span>
-          <img class="hero-logo-illustration" src="../assets/img/gen-and-rics-logo.png" alt="" />
+          <img class="hero-logo-illustration" src="<?= e($assetBase) ?>/img/gen-and-rics-logo.png" alt="" />
           <svg class="health-illustration" viewBox="0 0 600 470" role="img">
             <ellipse cx="304" cy="429" rx="219" ry="22" fill="#79cfc8" opacity=".19" />
             <circle cx="299" cy="215" r="174" fill="#d9f4f1" opacity=".82" />

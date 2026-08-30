@@ -5,6 +5,17 @@ function e($value)
     return htmlspecialchars((string) ($value ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
+function clinic_asset_base($localBase = 'assets')
+{
+    $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
+    $isVercel = getenv('VERCEL') !== false
+        || getenv('VERCEL_ENV') !== false
+        || !empty($_SERVER['HTTP_X_VERCEL_ID'])
+        || str_ends_with(preg_replace('/:\d+$/', '', $host), '.vercel.app');
+
+    return $isVercel ? '/assets' : rtrim((string) $localBase, '/');
+}
+
 function clinic_public_url($path = '')
 {
     $scriptDir = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? ''));

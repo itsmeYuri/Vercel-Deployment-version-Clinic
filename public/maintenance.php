@@ -4,7 +4,7 @@ require_once __DIR__ . '/../app/core/helpers.php';
 require_once __DIR__ . '/../app/core/maintenance.php';
 require_once __DIR__ . '/../app/core/auth.php';
 
-$assetBase = 'assets';
+$assetBase = clinic_asset_base('assets');
 $pageTitle = 'System Under Maintenance | Centralized Laboratory Results System';
 $pageDescription = 'The laboratory results system is temporarily under maintenance.';
 $bodyClass = 'maintenance-public-page';
