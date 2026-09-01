@@ -3911,3 +3911,113 @@ body::after {
     animation: none !important;
   }
 }
+
+/* ==================== Sidebar Behavior & Overflow Safety ==================== */
+
+.sidebar,
+.admin-main,
+.topbar {
+  transition: width .22s ease, margin-left .22s ease, left .22s ease, transform .22s ease;
+}
+
+.sidebar-nav {
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.nav-item:hover,
+.sidebar-logout:hover {
+  transform: none;
+}
+
+.sidebar-collapse {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+}
+
+.sidebar-collapse svg {
+  width: 17px;
+  transition: transform .22s ease;
+}
+
+.cell-email,
+.table-person > div,
+.table-person .cell-sub,
+.info-display strong,
+.drawer-info strong,
+.facility-contact span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.data-table td[data-label="Email"] {
+  width: min(24vw, 270px);
+  max-width: 270px;
+  white-space: normal;
+}
+
+@media (min-width: 821px) {
+  body.sidebar-collapsed {
+    --sidebar-width: 86px;
+  }
+
+  body.sidebar-collapsed .sidebar {
+    padding-inline: 10px;
+  }
+
+  body.sidebar-collapsed .sidebar-head {
+    flex-direction: column;
+    gap: 12px;
+    padding-inline: 0;
+  }
+
+  body.sidebar-collapsed .admin-brand {
+    justify-content: center;
+  }
+
+  body.sidebar-collapsed .admin-brand > span:last-child,
+  body.sidebar-collapsed .nav-label,
+  body.sidebar-collapsed .nav-item > span,
+  body.sidebar-collapsed .nav-count {
+    display: none;
+  }
+
+  body.sidebar-collapsed .sidebar-nav {
+    width: 100%;
+    margin-top: 14px;
+  }
+
+  body.sidebar-collapsed .nav-item {
+    width: 100%;
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0;
+  }
+
+  body.sidebar-collapsed .nav-item svg {
+    width: 20px;
+  }
+
+  body.sidebar-collapsed .sidebar-collapse svg {
+    transform: rotate(180deg);
+  }
+}
+
+@media (max-width: 820px) {
+  .sidebar-collapse {
+    display: none;
+  }
+}

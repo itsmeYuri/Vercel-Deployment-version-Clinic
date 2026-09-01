@@ -994,18 +994,18 @@ function count_by($items, $key)
     return $counts;
 }
 
-function dashboard_counts($pdo, $user, $orders, $results, $notifications)
+function dashboard_counts($pdo, $user, $orders, $results, $notifications, $users = [], $facilities = [], $tests = [])
 {
     if ($user['role'] === 'Admin') {
         return [
-            'totalUsers' => (int) one($pdo, 'SELECT COUNT(*) c FROM users')['c'],
-            'totalPatients' => (int) one($pdo, 'SELECT COUNT(*) c FROM patients')['c'],
-            'totalDoctors' => (int) one($pdo, 'SELECT COUNT(*) c FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = "Doctor"')['c'],
-            'totalLabStaff' => (int) one($pdo, 'SELECT COUNT(*) c FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = "Laboratory Staff"')['c'],
-            'totalFacilities' => (int) one($pdo, 'SELECT COUNT(*) c FROM facilities WHERE status = "Active"')['c'],
-            'totalTests' => (int) one($pdo, 'SELECT COUNT(*) c FROM test_definitions WHERE status = "Active"')['c'],
-            'pendingOrders' => (int) one($pdo, 'SELECT COUNT(*) c FROM lab_orders WHERE status NOT IN ("Released","Rejected","Cancelled")')['c'],
-            'releasedResults' => (int) one($pdo, 'SELECT COUNT(*) c FROM lab_results WHERE status = "Released"')['c'],
+            'totalUsers' => count($users),
+            'totalPatients' => count(array_filter($users, function ($item) { return $item['role'] === 'Patient'; })),
+            'totalDoctors' => count(array_filter($users, function ($item) { return $item['role'] === 'Doctor'; })),
+            'totalLabStaff' => count(array_filter($users, function ($item) { return $item['role'] === 'Laboratory Staff'; })),
+            'totalFacilities' => count(array_filter($facilities, function ($item) { return $item['status'] === 'Active'; })),
+            'totalTests' => count(array_filter($tests, function ($item) { return $item['status'] === 'Active'; })),
+            'pendingOrders' => count(array_filter($orders, function ($item) { return !in_array($item['status'], ['Released', 'Rejected', 'Cancelled'], true); })),
+            'releasedResults' => count(array_filter($results, function ($item) { return $item['status'] === 'Released'; })),
             'unreadNotifications' => count(array_filter($notifications, function ($n) { return !$n['isRead']; })),
         ];
     }
@@ -1045,18 +1045,22 @@ function app_data($pdo, $user)
     $orders = fetch_orders($pdo, $user);
     $results = fetch_results($pdo, $user);
     $notifications = fetch_notifications($pdo, $user);
+    $users = $user['role'] === 'Admin' ? fetch_users($pdo) : [];
+    $facilities = fetch_facilities($pdo, $user);
+    $tests = fetch_tests($pdo, $user);
+    $patients = $user['role'] === 'Admin' ? fetch_patients($pdo, null, 'all') : fetch_patients($pdo, $user, 'role');
     $data = [
         'currentUser' => $user,
-        'users' => $user['role'] === 'Admin' ? fetch_users($pdo) : [],
-        'facilities' => fetch_facilities($pdo, $user),
-        'tests' => fetch_tests($pdo, $user),
-        'patients' => $user['role'] === 'Admin' ? fetch_patients($pdo, null, 'all') : fetch_patients($pdo, $user, 'role'),
-        'availablePatients' => $user['role'] === 'Admin' ? fetch_patients($pdo, null, 'all') : fetch_patients($pdo, $user, 'role'),
+        'users' => $users,
+        'facilities' => $facilities,
+        'tests' => $tests,
+        'patients' => $patients,
+        'availablePatients' => $patients,
         'orders' => $orders,
         'results' => $results,
         'notifications' => $notifications,
         'audit' => fetch_audit($pdo, $user),
-        'dashboard' => dashboard_counts($pdo, $user, $orders, $results, $notifications),
+        'dashboard' => dashboard_counts($pdo, $user, $orders, $results, $notifications, $users, $facilities, $tests),
         'reports' => reports_summary($orders, $results),
         'maintenance' => clinic_maintenance_public_settings(clinic_maintenance_current($pdo)),
         'storage' => ['driver' => clinic_storage_driver(), 'maxFileBytes' => 10 * 1024 * 1024, 'maxFiles' => 5],

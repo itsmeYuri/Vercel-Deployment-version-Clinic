@@ -122,7 +122,6 @@ function clinic_maintenance_normalize_settings($row)
 function clinic_maintenance_current($pdo)
 {
     try {
-        clinic_maintenance_ensure_table($pdo);
         $stmt = $pdo->query('SELECT * FROM maintenance_settings WHERE id = 1 LIMIT 1');
         return clinic_maintenance_normalize_settings($stmt->fetch());
     } catch (Throwable $e) {

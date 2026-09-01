@@ -4,6 +4,7 @@
   const API_URL = window.CLINIC_API_URL || "../api/index.php";
   const ASSET_BASE = window.CLINIC_ASSET_BASE || "../assets";
   const TEXT_SIZE_KEY = "clinicSystemTextSize";
+  const SIDEBAR_COLLAPSED_KEY = "clinicSystemSidebarCollapsed";
   let resultScannerWorkerPromise = null;
   let resultScannerActiveForm = null;
   let resultCameraStream = null;
@@ -82,7 +83,8 @@
       audit: ["Audit Trail", "Track system activities, security events, and user actions."],
       notifications: ["Notifications", "Review alerts, updates, and action items across the clinic."],
       maintenance: ["Maintenance Mode", "Control temporary access restrictions by role or module."],
-      settings: ["Settings", "Manage your account, security, and role permissions."],
+      profile: ["My Profile", "Review your administrator account information."],
+      settings: ["Settings", "Manage security, accessibility, and role permissions."],
     },
     Doctor: {
       dashboard: ["Doctor Dashboard", "Monitor your patients, laboratory requests, and available results."],
@@ -92,7 +94,8 @@
       orders: ["My Laboratory Requests", "Track the laboratory requests submitted by you."],
       results: ["Laboratory Results", "View results and add clinical notes."],
       notifications: ["Notifications", "View personal alerts and laboratory request updates."],
-      settings: ["Settings", "Manage your profile, security, notifications, and work preferences."],
+      profile: ["My Profile", "Review your clinician identity and facility assignment."],
+      settings: ["Settings", "Manage security, accessibility, and work preferences."],
     },
     "Laboratory Staff": {
       dashboard: ["Laboratory Staff Dashboard", "Monitor assigned laboratory work and result review tasks."],
@@ -103,7 +106,8 @@
       facilities: ["Assigned Facilities", "View your laboratory facility assignments."],
       queue: ["Test Queue", "Track active tests by priority, status, and date."],
       notifications: ["Notifications", "Review laboratory alerts and workflow updates."],
-      settings: ["Settings", "Manage your profile, security, and workflow preferences."],
+      profile: ["My Profile", "Review your laboratory staff identity and assignment."],
+      settings: ["Settings", "Manage security, accessibility, and workflow preferences."],
     },
     Patient: {
       dashboard: ["Patient Dashboard", "View your laboratory requests, released results, and care updates."],
@@ -281,6 +285,23 @@
       reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
       reader.readAsDataURL(file);
     })));
+  }
+
+  function applySidebarPreference(collapsed = safeStorage.get(SIDEBAR_COLLAPSED_KEY) === "1") {
+    if (!document.body?.dataset.requiredRole) return;
+    document.body.classList.toggle("sidebar-collapsed", collapsed);
+    const button = $("[data-toggle-sidebar]");
+    if (button) {
+      button.setAttribute("aria-expanded", String(!collapsed));
+      button.setAttribute("aria-label", collapsed ? "Expand navigation" : "Collapse navigation");
+      button.title = collapsed ? "Expand navigation" : "Collapse navigation";
+    }
+  }
+
+  function toggleSidebarCollapsed() {
+    const collapsed = !document.body.classList.contains("sidebar-collapsed");
+    safeStorage.set(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+    applySidebarPreference(collapsed);
   }
 
   function resultValueInputRow(item = {}, disabled = "") {
@@ -748,7 +769,7 @@
   }
 
   function renderUsers() {
-    const rows = state.data.users.map((user) => [person(user.name, `@${user.username}`, user.avatar), h(user.email), badge(user.role), h(user.assignedFacility || "Unassigned"), badge(user.status), `<div class="row-actions"><button class="row-action" data-drawer="user" data-id="${user.id}" aria-label="Edit user">${icon("edit")}</button><button class="row-action" data-toggle-user="${user.id}" data-status="${user.status === "Active" ? "Inactive" : "Active"}" aria-label="${user.status === "Active" ? "Deactivate user" : "Activate user"}">${icon(user.status === "Active" ? "lock" : "check")}</button><button class="row-action row-action-danger" data-delete-user="${user.id}" data-user-name="${h(user.name)}" aria-label="Delete user">${icon("trash")}</button></div>`]);
+    const rows = state.data.users.map((user) => [person(user.name, `@${user.username}`, user.avatar), `<span class="cell-email" title="${h(user.email)}">${h(user.email)}</span>`, badge(user.role), h(user.assignedFacility || "Unassigned"), badge(user.status), `<div class="row-actions"><button class="row-action" data-drawer="user" data-id="${user.id}" aria-label="Edit user">${icon("edit")}</button><button class="row-action" data-toggle-user="${user.id}" data-status="${user.status === "Active" ? "Inactive" : "Active"}" aria-label="${user.status === "Active" ? "Deactivate user" : "Activate user"}">${icon(user.status === "Active" ? "lock" : "check")}</button><button class="row-action row-action-danger" data-delete-user="${user.id}" data-user-name="${h(user.name)}" aria-label="Delete user">${icon("trash")}</button></div>`]);
     return `${heading(...pageMeta.Admin.users, `<button class="btn btn-primary" data-drawer="user">${icon("plus")} Add User</button>`)}
       <div class="stats-grid">${stat("Total Users", state.data.users.length, "users")}${stat("Active Users", state.data.users.filter((u) => u.status === "Active").length, "check", "-", "green")}${stat("Doctors", state.data.users.filter((u) => u.role === "Doctor").length, "doctor", "-", "blue")}${stat("Patients", state.data.users.filter((u) => u.role === "Patient").length, "user", "-", "orange")}</div>
       ${filters("Search users", [["All roles", ["Admin", "Doctor", "Laboratory Staff", "Patient"]], ["All statuses", ["Active", "Inactive"]]])}
@@ -816,9 +837,18 @@
       <div class="notification-sections"><section><h3 class="notification-section-title">All Updates</h3><div class="card">${notificationArticles(state.data.notifications)}</div></section></div>`;
   }
 
+  function renderRoleProfile(role, color = "teal") {
+    return `${heading(...pageMeta[role].profile)}
+      <div class="settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Account Information</h3><p>${h(currentUser.assignedFacility || "System-wide account")}</p></div>${avatar(currentUser.avatar, color)}</div><div class="info-display-grid"><div class="info-display"><span>Name</span><strong>${h(currentUser.name)}</strong></div><div class="info-display"><span>Email</span><strong>${h(currentUser.email)}</strong></div><div class="info-display"><span>Username</span><strong>${h(currentUser.username || "-")}</strong></div><div class="info-display"><span>Contact</span><strong>${h(currentUser.contact || "-")}</strong></div><div class="info-display"><span>Role</span><strong>${h(currentUser.role)}</strong></div><div class="info-display"><span>Assigned Facility</span><strong>${h(currentUser.assignedFacility || "Not assigned")}</strong></div></div></section></div>`;
+  }
+
+  function renderAdminProfile() {
+    return renderRoleProfile("Admin");
+  }
+
   function renderAdminSettings() {
     return `${heading(...pageMeta.Admin.settings)}
-      <div class="settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Profile</h3><p>Signed in as ${h(currentUser.name)}.</p></div>${avatar(currentUser.avatar)}</div><div class="info-display-grid"><div class="info-display"><span>Email</span><strong>${h(currentUser.email)}</strong></div><div class="info-display"><span>Role</span><strong>${h(currentUser.role)}</strong></div></div></section><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Change your password using the secure API.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}<section class="card settings-card"><div class="settings-card-head"><div><h3>Role Permissions</h3><p>Server-side access is enforced by every API action.</p></div>${icon("lock")}</div>${["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => `<div class="setting-row"><div><strong>${h(role)}</strong><p>${role === "Admin" ? "Full system access" : "Role-scoped records and workflow actions"}</p></div>${toggle(true, "", "disabled aria-label=\"Server enforced\"")}</div>`).join("")}</section></div>`;
+      <div class="settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Change your password using the secure API.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}<section class="card settings-card"><div class="settings-card-head"><div><h3>Role Permissions</h3><p>Server-side access is enforced by every API action.</p></div>${icon("lock")}</div>${["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => `<div class="setting-row"><div><strong>${h(role)}</strong><p>${role === "Admin" ? "Full system access" : "Role-scoped records and workflow actions"}</p></div>${toggle(true, "", "disabled aria-label=\"Server enforced\"")}</div>`).join("")}</section></div>`;
   }
 
   function renderAdminMaintenance() {
@@ -914,8 +944,12 @@
       <aside class="card order-summary"><p class="eyebrow">Request Summary</p><h3 class="card-title">Clinical workflow</h3><div class="clinical-note-box"><h4>${icon("shield")} Notifications included</h4><p>Submitting creates a laboratory request, notifies laboratory staff and the patient, and writes an audit record.</p></div></aside></div>`;
   }
 
+  function renderDoctorProfile() {
+    return renderRoleProfile("Doctor");
+  }
+
   function renderDoctorSettings() {
-    return `${heading(...pageMeta.Doctor.settings)}<div class="doctor-settings"><div class="doctor-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Profile Settings</h3><p>${h(currentUser.assignedFacility || "No assigned facility")}</p></div>${avatar(currentUser.avatar)}</div><div class="info-display-grid"><div class="info-display"><span>Name</span><strong>${h(currentUser.name)}</strong></div><div class="info-display"><span>Email</span><strong>${h(currentUser.email)}</strong></div><div class="info-display"><span>Contact</span><strong>${h(currentUser.contact || "-")}</strong></div></div></section><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update your account password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}</div></div>`;
+    return `${heading(...pageMeta.Doctor.settings)}<div class="doctor-settings"><div class="doctor-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update your account password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}</div></div>`;
   }
 
   function renderLabDashboard() {
@@ -957,8 +991,12 @@
     return `${heading(...pageMeta["Laboratory Staff"].facilities)}<div class="facilities-card-grid">${cards || '<section class="card"><div class="empty-state">No assigned facilities.</div></section>'}</div>`;
   }
 
+  function renderLabProfile() {
+    return renderRoleProfile("Laboratory Staff", "purple");
+  }
+
   function renderLabSettings() {
-    return `${heading(...pageMeta["Laboratory Staff"].settings)}<div class="lab-settings-layout"><div class="lab-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Profile</h3><p>${h(currentUser.assignedFacility || "No assigned facility")}</p></div>${avatar(currentUser.avatar, "purple")}</div><div class="info-display-grid"><div class="info-display"><span>Name</span><strong>${h(currentUser.name)}</strong></div><div class="info-display"><span>Email</span><strong>${h(currentUser.email)}</strong></div><div class="info-display"><span>Contact</span><strong>${h(currentUser.contact || "-")}</strong></div></div></section><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Change your password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}</div></div>`;
+    return `${heading(...pageMeta["Laboratory Staff"].settings)}<div class="lab-settings-layout"><div class="lab-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Change your password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}</div></div>`;
   }
 
   function renderPatientDashboard() {
@@ -983,9 +1021,9 @@
   }
 
   const renderers = {
-    Admin: { dashboard: renderAdminDashboard, users: renderUsers, facilities: renderFacilities, tests: renderTests, orders: () => renderOrders("Admin"), results: () => renderResults("Admin"), reports: renderReports, audit: renderAudit, notifications: () => renderNotifications("Admin"), maintenance: renderAdminMaintenance, settings: renderAdminSettings },
-    Doctor: { dashboard: renderDoctorDashboard, patients: () => renderPatients("Doctor"), facilities: renderFacilitiesAndTests, "create-order": renderCreateOrder, orders: () => renderOrders("Doctor"), results: () => renderResults("Doctor"), notifications: () => renderNotifications("Doctor"), settings: renderDoctorSettings },
-    "Laboratory Staff": { dashboard: renderLabDashboard, orders: () => renderOrders("Laboratory Staff"), upload: renderLabUpload, review: renderLabReview, operations: renderLabOperations, facilities: renderLabFacilities, queue: () => renderOrders("Laboratory Staff", "queue"), notifications: () => renderNotifications("Laboratory Staff"), settings: renderLabSettings },
+    Admin: { dashboard: renderAdminDashboard, users: renderUsers, facilities: renderFacilities, tests: renderTests, orders: () => renderOrders("Admin"), results: () => renderResults("Admin"), reports: renderReports, audit: renderAudit, notifications: () => renderNotifications("Admin"), maintenance: renderAdminMaintenance, profile: renderAdminProfile, settings: renderAdminSettings },
+    Doctor: { dashboard: renderDoctorDashboard, patients: () => renderPatients("Doctor"), facilities: renderFacilitiesAndTests, "create-order": renderCreateOrder, orders: () => renderOrders("Doctor"), results: () => renderResults("Doctor"), notifications: () => renderNotifications("Doctor"), profile: renderDoctorProfile, settings: renderDoctorSettings },
+    "Laboratory Staff": { dashboard: renderLabDashboard, orders: () => renderOrders("Laboratory Staff"), upload: renderLabUpload, review: renderLabReview, operations: renderLabOperations, facilities: renderLabFacilities, queue: () => renderOrders("Laboratory Staff", "queue"), notifications: () => renderNotifications("Laboratory Staff"), profile: renderLabProfile, settings: renderLabSettings },
     Patient: { dashboard: renderPatientDashboard, orders: () => renderOrders("Patient"), results: () => renderResults("Patient"), notifications: () => renderNotifications("Patient"), profile: renderPatientProfile, settings: renderPatientSettings },
   };
 
@@ -1020,6 +1058,9 @@
     const meta = pageMeta[role]?.[page] || pageMeta[role]?.dashboard || ["Dashboard"];
     $("#page-title").textContent = meta[0];
     document.title = `${meta[0]} | Centralized Laboratory Results System`;
+    const profileDropdown = $(".profile-dropdown");
+    if (profileDropdown) profileDropdown.hidden = true;
+    $("[data-profile-toggle]")?.setAttribute("aria-expanded", "false");
     if (updateHash && location.hash !== `#${page}`) history.pushState(null, "", `#${page}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
     closeSidebar();
@@ -1274,6 +1315,7 @@
       return;
     }
     if (event.target.closest("[data-close-drawer]")) { closeDrawer(); return; }
+    if (event.target.closest("[data-toggle-sidebar]")) { toggleSidebarCollapsed(); return; }
     if (event.target.closest("[data-open-sidebar]")) { openSidebar(); return; }
     if (event.target.closest("[data-close-sidebar]")) { closeSidebar(); return; }
     if (event.target.closest("[data-download]")) { downloadRecords(); return; }
@@ -1704,13 +1746,11 @@
     if (!requiredRole) return;
     $("#page-content").innerHTML = loading();
     try {
-      const session = await api("session");
-      currentUser = session.user;
+      await loadAppData();
       if (!currentUser || currentUser.role !== requiredRole) {
         location.replace(currentUser ? destinations[currentUser.role] : LOGIN_URL);
         return;
       }
-      await loadAppData();
       hydrateStaticIcons();
       hydrateProfile();
       setPage(location.hash.slice(1) || document.body.dataset.initialPage || "dashboard", false);
@@ -1743,6 +1783,7 @@
 
   window.ClinicAuth = { destinations, api, logout };
   applyTextSize();
+  applySidebarPreference();
   hydrateStaticIcons();
   initLoginPage();
   initPatientRegistrationPage();

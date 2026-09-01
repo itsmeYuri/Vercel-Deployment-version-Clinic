@@ -11,6 +11,7 @@ $logoutUrl = $logoutUrl ?? '../auth/logout.php';
       <span class="admin-brand-mark" data-icon="medical"></span>
       <span><strong>Centralized Laboratory Results System</strong><small><?= e($roleConfig['brandSmall'] ?? 'Workspace') ?></small></span>
     </a>
+    <button class="icon-button sidebar-collapse" type="button" aria-label="Collapse navigation" aria-expanded="true" data-toggle-sidebar data-icon-button="chevron"></button>
     <button class="icon-button close-sidebar" type="button" aria-label="Close navigation" data-close-sidebar data-icon-button="close"></button>
   </div>
 
@@ -21,13 +22,11 @@ $logoutUrl = $logoutUrl ?? '../auth/logout.php';
         <p class="nav-label nav-label-spaced"><?= e($item['section']) ?></p>
         <?php continue; ?>
       <?php endif; ?>
-      <a href="<?= e($item['href']) ?>" class="nav-item <?= $index === 0 ? 'active' : '' ?>" data-page="<?= e($item['page']) ?>" data-icon-name="<?= e($item['icon']) ?>">
+      <a href="<?= e($item['href']) ?>" class="nav-item <?= $index === 0 ? 'active' : '' ?>" data-page="<?= e($item['page']) ?>" data-icon-name="<?= e($item['icon']) ?>" title="<?= e($item['label']) ?>">
         <span><?= e($item['label']) ?></span>
         <?php if (!empty($item['count'])): ?><b class="nav-count"><?= e($item['count']) ?></b><?php endif; ?>
       </a>
     <?php endforeach; ?>
   </nav>
-
-  <a class="sidebar-logout" href="<?= e($logoutUrl) ?>" data-logout data-icon-name="logout"><span>Log out</span></a>
 </aside>
 <div class="sidebar-scrim" data-close-sidebar></div>

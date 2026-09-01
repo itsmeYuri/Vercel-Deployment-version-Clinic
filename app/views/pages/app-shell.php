@@ -41,6 +41,7 @@ $configs = [
         'drawerEyebrow' => 'Centralized Laboratory Results System',
         'bodyClass' => 'admin-app',
         'avatarClass' => 'avatar-teal',
+        'profilePage' => 'profile',
         'infoTitle' => 'Care works better together.',
         'infoText' => 'Secure clinic operations, all in one place.',
         'illustration' => $simpleClinicSvg,
@@ -55,7 +56,6 @@ $configs = [
             ['page' => 'reports', 'file' => 'reports', 'icon' => 'chart', 'label' => 'Reports'],
             ['page' => 'audit', 'file' => 'audit', 'icon' => 'audit', 'label' => 'Audit Trail'],
             ['page' => 'maintenance', 'file' => 'maintenance', 'icon' => 'maintenance', 'label' => 'Maintenance Mode'],
-            ['page' => 'settings', 'file' => 'settings', 'icon' => 'settings', 'label' => 'Settings'],
         ]),
     ],
     'Doctor' => [
@@ -70,6 +70,7 @@ $configs = [
         'drawerEyebrow' => 'Doctor Workspace',
         'bodyClass' => 'admin-app doctor-app',
         'avatarClass' => 'avatar-teal',
+        'profilePage' => 'profile',
         'infoTitle' => 'Care guided by clarity.',
         'infoText' => 'Patients, laboratory requests, and results in one place.',
         'illustration' => $simpleClinicSvg,
@@ -80,8 +81,6 @@ $configs = [
             ['page' => 'create-order', 'file' => 'create-order', 'icon' => 'plus-file', 'label' => 'New Laboratory Request'],
             ['page' => 'orders', 'file' => 'orders', 'icon' => 'orders', 'label' => 'My Laboratory Requests', 'count' => 12],
             ['page' => 'results', 'file' => 'results', 'icon' => 'results', 'label' => 'Results', 'count' => 7],
-            ['section' => 'Personal'],
-            ['page' => 'settings', 'file' => 'settings', 'icon' => 'settings', 'label' => 'Settings'],
         ]),
     ],
     'Laboratory Staff' => [
@@ -96,6 +95,7 @@ $configs = [
         'drawerEyebrow' => 'Laboratory Workspace',
         'bodyClass' => 'admin-app lab-app',
         'avatarClass' => 'avatar-purple',
+        'profilePage' => 'profile',
         'infoTitle' => 'Precision in every result.',
         'infoText' => 'Your assigned laboratory work, organized.',
         'illustration' => $simpleClinicSvg,
@@ -107,8 +107,6 @@ $configs = [
             ['page' => 'operations', 'file' => 'operations', 'icon' => 'activity', 'label' => 'Assigned Operations'],
             ['page' => 'facilities', 'file' => 'facilities', 'icon' => 'facility', 'label' => 'Assigned Facilities'],
             ['page' => 'queue', 'file' => 'queue', 'icon' => 'queue', 'label' => 'Test Queue', 'count' => 24],
-            ['section' => 'Personal'],
-            ['page' => 'settings', 'file' => 'settings', 'icon' => 'settings', 'label' => 'Settings'],
         ]),
     ],
     'Patient' => [
@@ -134,7 +132,6 @@ $configs = [
             ['page' => 'results', 'file' => 'results', 'icon' => 'results', 'label' => 'My Results', 'count' => 4],
             ['section' => 'My account'],
             ['page' => 'profile', 'file' => 'profile', 'icon' => 'user', 'label' => 'Profile'],
-            ['page' => 'settings', 'file' => 'settings', 'icon' => 'settings', 'label' => 'Settings'],
         ]),
     ],
 ];
