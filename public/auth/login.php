@@ -49,11 +49,6 @@ require __DIR__ . '/../../app/views/layouts/header.php';
         <div class="brand-copy">
           <p class="eyebrow">Connected care, every day</p>
           <h1>One place for better patient care.</h1>
-          <p>Securely manage appointments, health records, and your care team from one simple workspace.</p>
-          <div class="trust-row">
-            <span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.8 10 2 2 4.7-4.7" /><circle cx="10" cy="10" r="8" /></svg>Secure access</span>
-            <span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.8 10 2 2 4.7-4.7" /><circle cx="10" cy="10" r="8" /></svg>Patient focused</span>
-          </div>
         </div>
       </section>
 
@@ -101,17 +96,6 @@ require __DIR__ . '/../../app/views/layouts/header.php';
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M14 7l5 5-5 5" /></svg>
             </button>
           </form>
-
-          <section class="demo-login" aria-labelledby="demo-login-title">
-            <div class="demo-login-head"><span></span><h3 id="demo-login-title">Demo Login Accounts</h3><span></span></div>
-            <p>Select a role to automatically fill the demo credentials.</p>
-            <div class="demo-login-grid">
-              <button type="button" data-demo-account="Admin"><span class="demo-role-icon">A</span><span><strong>Admin Demo</strong><small>System administration</small></span></button>
-              <button type="button" data-demo-account="Doctor"><span class="demo-role-icon">D</span><span><strong>Doctor Demo</strong><small>Clinical workspace</small></span></button>
-              <button type="button" data-demo-account="Laboratory Staff"><span class="demo-role-icon">L</span><span><strong>Laboratory Staff Demo</strong><small>Laboratory operations</small></span></button>
-              <button type="button" data-demo-account="Patient"><span class="demo-role-icon">P</span><span><strong>Patient Demo</strong><small>Personal health portal</small></span></button>
-            </div>
-          </section>
 
           <p class="form-switch">New to the laboratory results system? <a href="register.php">Create a patient account</a></p>
         </div>

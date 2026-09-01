@@ -21,13 +21,6 @@
   };
   const LOGIN_URL = window.CLINIC_LOGIN_URL || "auth/login.php#login";
 
-  const demoAccounts = [
-    { role: "Admin", identifier: "admin", password: "admin123", label: "Admin Demo" },
-    { role: "Doctor", identifier: "doctor", password: "doctor123", label: "Doctor Demo" },
-    { role: "Laboratory Staff", identifier: "lab", password: "lab123", label: "Laboratory Staff Demo" },
-    { role: "Patient", identifier: "patient", password: "patient123", label: "Patient Demo" },
-  ];
-
   const iconPaths = {
     medical: '<path d="M10 2h4v8h8v4h-8v8h-4v-8H2v-4h8V2Z"/>',
     dashboard: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
@@ -1615,17 +1608,6 @@
         registerForm.classList.remove("is-loading");
       }
     });
-    $$("[data-demo-account]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const account = demoAccounts.find((item) => item.role === button.dataset.demoAccount);
-        if (!account) return;
-        $("#login-identifier").value = account.identifier;
-        $("#login-password").value = account.password;
-        $$("[data-demo-account]").forEach((item) => item.classList.toggle("selected", item === button));
-        showStatus(loginForm, `${account.label} credentials are ready.`, "success");
-        $("#login-password").focus();
-      });
-    });
     $$("[data-toggle-password]").forEach((button) => {
       button.addEventListener("click", () => {
         const input = $(`#${button.dataset.togglePassword}`);
@@ -1759,7 +1741,7 @@
     }
   });
 
-  window.ClinicAuth = { destinations, demoAccounts, api, logout };
+  window.ClinicAuth = { destinations, api, logout };
   applyTextSize();
   hydrateStaticIcons();
   initLoginPage();
