@@ -139,7 +139,7 @@ $configs = [
 $roleConfig = $configs[$requiredRole];
 $pageTitle = $pageTitle ?? ($roleConfig['title'] . ' | Centralized Laboratory Results System');
 $pageDescription = $pageDescription ?? 'Centralized Laboratory Results System ' . strtolower($roleConfig['brandSmall']);
-$bodyAttributes = 'data-required-role="' . e($requiredRole) . '" data-initial-page="' . e($initialPage) . '"';
+$bodyAttributes = 'data-required-role="' . e($requiredRole) . '" data-user-id="' . e($currentUser['id'] ?? '') . '" data-initial-page="' . e($initialPage) . '"';
 
 require __DIR__ . '/../layouts/header.php';
 ?>

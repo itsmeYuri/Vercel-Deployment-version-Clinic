@@ -5,6 +5,8 @@
   const ASSET_BASE = window.CLINIC_ASSET_BASE || "../assets";
   const TEXT_SIZE_KEY = "clinicSystemTextSize";
   const SIDEBAR_COLLAPSED_KEY = "clinicSystemSidebarCollapsed";
+  const APP_CACHE_PREFIX = "clinicSystemAppData:v1";
+  const APP_CACHE_TTL = 2 * 60 * 1000;
   let resultScannerWorkerPromise = null;
   let resultScannerActiveForm = null;
   let resultCameraStream = null;
@@ -168,6 +170,48 @@
       try { localStorage.setItem(key, value); } catch { /* Storage can be unavailable in restricted browser modes. */ }
     },
   };
+  const safeSessionStorage = {
+    get(key) {
+      try { return sessionStorage.getItem(key); } catch { return null; }
+    },
+    set(key, value) {
+      try { sessionStorage.setItem(key, value); } catch {}
+    },
+    remove(key) {
+      try { sessionStorage.removeItem(key); } catch {}
+    },
+  };
+
+  function appCacheKey() {
+    const role = document.body?.dataset.requiredRole || "guest";
+    const userId = document.body?.dataset.userId || "anonymous";
+    return `${APP_CACHE_PREFIX}:${role}:${userId}`;
+  }
+
+  function readCachedAppData() {
+    try {
+      const cached = JSON.parse(safeSessionStorage.get(appCacheKey()) || "null");
+      const expectedRole = document.body?.dataset.requiredRole;
+      const expectedUserId = document.body?.dataset.userId;
+      if (!cached?.data || Date.now() - Number(cached.savedAt || 0) > APP_CACHE_TTL) return null;
+      if (cached.data.currentUser?.role !== expectedRole || String(cached.data.currentUser?.id || "") !== String(expectedUserId || "")) return null;
+      return cached.data;
+    } catch {
+      safeSessionStorage.remove(appCacheKey());
+      return null;
+    }
+  }
+
+  function writeCachedAppData() {
+    if (!state.data?.currentUser) return;
+    safeSessionStorage.set(appCacheKey(), JSON.stringify({ savedAt: Date.now(), data: state.data }));
+  }
+
+  function clearAppCache() {
+    try {
+      Object.keys(sessionStorage).filter((key) => key.startsWith(APP_CACHE_PREFIX)).forEach((key) => sessionStorage.removeItem(key));
+    } catch {}
+  }
 
   function getTextSize() {
     const saved = safeStorage.get(TEXT_SIZE_KEY);
@@ -205,6 +249,59 @@
     $$("[data-icon-name]").forEach((el) => {
       if (!el.querySelector("svg")) el.insertAdjacentHTML("afterbegin", icon(el.dataset.iconName));
     });
+    hydrateTooltips();
+  }
+
+  let activeTooltip = null;
+
+  function hydrateTooltips(root = document) {
+    $$(".icon-button[aria-label], .row-action[aria-label], .password-toggle[aria-label], .nav-item[title]", root).forEach((element) => {
+      const label = element.getAttribute("aria-label") || element.getAttribute("title");
+      if (!label) return;
+      element.dataset.tooltip = label;
+      element.removeAttribute("title");
+    });
+  }
+
+  function hideTooltip() {
+    activeTooltip?.remove();
+    activeTooltip = null;
+  }
+
+  function showTooltip(target) {
+    if (!target || (target.matches(".nav-item") && !document.body.classList.contains("sidebar-collapsed"))) return;
+    hideTooltip();
+    const tooltip = document.createElement("div");
+    tooltip.className = "app-tooltip";
+    tooltip.setAttribute("role", "tooltip");
+    tooltip.textContent = target.dataset.tooltip;
+    document.body.append(tooltip);
+    activeTooltip = tooltip;
+    const rect = target.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const sidebarTip = target.matches(".sidebar .nav-item, .sidebar-collapse");
+    let left = sidebarTip ? rect.right + 10 : rect.left + ((rect.width - tooltipRect.width) / 2);
+    let top = sidebarTip ? rect.top + ((rect.height - tooltipRect.height) / 2) : rect.top - tooltipRect.height - 9;
+    if (top < 8) top = rect.bottom + 9;
+    left = Math.max(8, Math.min(left, window.innerWidth - tooltipRect.width - 8));
+    top = Math.max(8, Math.min(top, window.innerHeight - tooltipRect.height - 8));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  }
+
+  function initTooltips() {
+    document.addEventListener("pointerover", (event) => {
+      const target = event.target.closest?.("[data-tooltip]");
+      if (target && !target.contains(event.relatedTarget)) showTooltip(target);
+    });
+    document.addEventListener("pointerout", (event) => {
+      const target = event.target.closest?.("[data-tooltip]");
+      if (target && !target.contains(event.relatedTarget)) hideTooltip();
+    });
+    document.addEventListener("focusin", (event) => showTooltip(event.target.closest?.("[data-tooltip]")));
+    document.addEventListener("focusout", hideTooltip);
+    window.addEventListener("scroll", hideTooltip, true);
+    window.addEventListener("resize", hideTooltip);
   }
 
   async function api(action, payload = {}) {
@@ -299,6 +396,7 @@
   }
 
   function toggleSidebarCollapsed() {
+    hideTooltip();
     const collapsed = !document.body.classList.contains("sidebar-collapsed");
     safeStorage.set(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
     applySidebarPreference(collapsed);
@@ -656,6 +754,14 @@
     return (state.data?.[collection] || []).find((item) => String(item.id) === String(id));
   }
 
+  function syncNotifications(notifications) {
+    state.data.notifications = notifications;
+    if (state.data.dashboard) {
+      state.data.dashboard.unreadNotifications = notifications.filter((item) => !item.isRead).length;
+    }
+    hydrateProfile();
+  }
+
   function apiUrl(action, params = {}) {
     const query = new URLSearchParams({ action, ...params });
     return `${API_URL}?${query.toString()}`;
@@ -734,7 +840,12 @@
   }
 
   function loading() {
-    return `<section class="card"><div class="card-body"><div class="empty-state">Loading live clinic data...</div></div></section>`;
+    return `<div class="skeleton-page" role="status" aria-live="polite" aria-busy="true">
+      <span class="sr-only">Loading live clinic data...</span>
+      <div class="skeleton-heading"><span class="skeleton-line skeleton-line-short"></span><span class="skeleton-line skeleton-line-title"></span><span class="skeleton-line skeleton-line-copy"></span></div>
+      <div class="skeleton-stats">${Array.from({ length: 4 }, () => '<div class="skeleton-card"><span class="skeleton-icon"></span><span class="skeleton-line skeleton-line-short"></span><span class="skeleton-line skeleton-line-value"></span></div>').join("")}</div>
+      <div class="skeleton-content"><div class="skeleton-panel"><span class="skeleton-line skeleton-line-title"></span>${Array.from({ length: 5 }, () => '<span class="skeleton-row"></span>').join("")}</div><div class="skeleton-panel"><span class="skeleton-line skeleton-line-copy"></span>${Array.from({ length: 3 }, () => '<span class="skeleton-row"></span>').join("")}</div></div>
+    </div>`;
   }
 
   function dashboardStats() {
@@ -1031,10 +1142,12 @@
     const data = await api("app_data");
     state.data = data;
     currentUser = data.currentUser || currentUser;
+    writeCachedAppData();
     hydrateProfile();
   }
 
   function setPage(requested = "dashboard", updateHash = true) {
+    hideTooltip();
     stopResultCamera();
     const role = currentUser.role;
     const roleRenderers = renderers[role] || {};
@@ -1054,6 +1167,7 @@
     }
     state.page = page;
     $("#page-content").innerHTML = renderer();
+    hydrateTooltips($("#page-content"));
     $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
     const meta = pageMeta[role]?.[page] || pageMeta[role]?.dashboard || ["Dashboard"];
     $("#page-title").textContent = meta[0];
@@ -1162,6 +1276,7 @@
       password: () => passwordForm(),
     }[type];
     body.innerHTML = content ? content() : '<div class="empty-state">Nothing to show.</div>';
+    hydrateTooltips(body);
     drawer.classList.add("open");
     drawer.setAttribute("aria-hidden", "false");
     $(".drawer-scrim").classList.add("open");
@@ -1208,6 +1323,7 @@
     if (payload?.app) {
       state.data = payload.app;
       currentUser = payload.app.currentUser || currentUser;
+      writeCachedAppData();
     } else {
       await loadAppData();
     }
@@ -1408,12 +1524,22 @@
 
     const toggleUser = event.target.closest("[data-toggle-user]");
     if (toggleUser) {
+      const user = recordBy("users", toggleUser.dataset.toggleUser);
+      const previousStatus = user?.status;
+      const nextStatus = toggleUser.dataset.status;
+      if (user) {
+        user.status = nextStatus;
+        setPage(state.page, false);
+      }
       try {
-        await api("toggle_user_status", { id: toggleUser.dataset.toggleUser, status: toggleUser.dataset.status });
-        await loadAppData();
+        const result = await api("toggle_user_status", { id: toggleUser.dataset.toggleUser, status: nextStatus });
+        if (result.users) state.data.users = result.users;
+        writeCachedAppData();
         setPage(state.page, false);
         toast("User status updated.");
       } catch (error) {
+        if (user) user.status = previousStatus;
+        setPage(state.page, false);
         toast(error.message);
       }
       return;
@@ -1436,11 +1562,19 @@
 
     const orderStatus = event.target.closest("[data-order-status]");
     if (orderStatus) {
+      const order = recordBy("orders", orderStatus.dataset.id);
+      const previousStatus = order?.status;
+      if (order) {
+        order.status = orderStatus.dataset.orderStatus;
+        setPage(state.page, false);
+      }
+      closeDrawer();
       try {
         const result = await api("update_order_status", { orderId: orderStatus.dataset.id, status: orderStatus.dataset.orderStatus });
         await refreshAfter(result, "Laboratory request status updated.");
-        closeDrawer();
       } catch (error) {
+        if (order) order.status = previousStatus;
+        setPage(state.page, false);
         toast(error.message);
       }
       return;
@@ -1448,11 +1582,19 @@
 
     const resultStatus = event.target.closest("[data-result-status]");
     if (resultStatus) {
+      const resultRecord = recordBy("results", resultStatus.dataset.id);
+      const previousStatus = resultRecord?.status;
+      if (resultRecord) {
+        resultRecord.status = resultStatus.dataset.resultStatus;
+        setPage(state.page, false);
+      }
+      closeDrawer();
       try {
         const result = await api("update_result_status", { resultId: resultStatus.dataset.id, status: resultStatus.dataset.resultStatus });
         await refreshAfter(result, "Result status updated.");
-        closeDrawer();
       } catch (error) {
+        if (resultRecord) resultRecord.status = previousStatus;
+        setPage(state.page, false);
         toast(error.message);
       }
       return;
@@ -1462,11 +1604,24 @@
     if (rejectResult) {
       const reason = window.prompt("Enter the reason for rejecting this result:");
       if (!reason?.trim()) return;
+      const resultRecord = recordBy("results", rejectResult.dataset.rejectResult);
+      const previousStatus = resultRecord?.status;
+      const previousReason = resultRecord?.rejectedReason;
+      if (resultRecord) {
+        resultRecord.status = "Rejected";
+        resultRecord.rejectedReason = reason.trim();
+        setPage(state.page, false);
+      }
+      closeDrawer();
       try {
         const result = await api("reject_result", { resultId: rejectResult.dataset.rejectResult, reason: reason.trim() });
         await refreshAfter(result, "Result rejected.");
-        closeDrawer();
       } catch (error) {
+        if (resultRecord) {
+          resultRecord.status = previousStatus;
+          resultRecord.rejectedReason = previousReason;
+        }
+        setPage(state.page, false);
         toast(error.message);
       }
       return;
@@ -1485,12 +1640,25 @@
 
     const releaseConfirm = event.target.closest("[data-release-confirm]");
     if (releaseConfirm) {
+      const resultRecord = recordBy("results", releaseConfirm.dataset.releaseConfirm);
+      const previousStatus = resultRecord?.status;
+      const previousReleasedAt = resultRecord?.releasedAt;
+      if (resultRecord) {
+        resultRecord.status = "Released";
+        resultRecord.releasedAt = new Date().toISOString();
+        setPage(state.page, false);
+      }
+      closeReleaseModal();
+      closeDrawer();
       try {
         const result = await api("release_result", { resultId: releaseConfirm.dataset.releaseConfirm });
         await refreshAfter(result, "Result released successfully.");
-        closeReleaseModal();
-        closeDrawer();
       } catch (error) {
+        if (resultRecord) {
+          resultRecord.status = previousStatus;
+          resultRecord.releasedAt = previousReleasedAt;
+        }
+        setPage(state.page, false);
         toast(error.message);
       }
       return;
@@ -1498,25 +1666,43 @@
 
     const readNotification = event.target.closest("[data-read-notification]");
     if (readNotification) {
+      const notification = recordBy("notifications", readNotification.dataset.readNotification);
+      const wasRead = notification?.isRead;
+      if (notification) notification.isRead = true;
+      syncNotifications(state.data.notifications);
+      setPage(state.page, false);
+      closeDrawer();
       try {
-        await api("mark_notification_read", { id: readNotification.dataset.readNotification });
-        await loadAppData();
+        const result = await api("mark_notification_read", { id: readNotification.dataset.readNotification });
+        if (result.notifications) syncNotifications(result.notifications);
+        writeCachedAppData();
         setPage(state.page, false);
-        closeDrawer();
         toast("Notification marked as read.");
       } catch (error) {
+        if (notification) notification.isRead = wasRead;
+        syncNotifications(state.data.notifications);
+        setPage(state.page, false);
         toast(error.message);
       }
       return;
     }
 
     if (event.target.closest("[data-mark-read]")) {
+      const previousReadState = state.data.notifications.map((item) => [item.id, item.isRead]);
+      state.data.notifications.forEach((item) => { item.isRead = true; });
+      syncNotifications(state.data.notifications);
+      setPage("notifications", false);
       try {
-        await api("mark_all_notifications_read");
-        await loadAppData();
+        const result = await api("mark_all_notifications_read");
+        if (result.notifications) syncNotifications(result.notifications);
+        writeCachedAppData();
         setPage("notifications", false);
         toast("All notifications marked as read.");
       } catch (error) {
+        const previousById = new Map(previousReadState);
+        state.data.notifications.forEach((item) => { item.isRead = previousById.get(item.id) ?? item.isRead; });
+        syncNotifications(state.data.notifications);
+        setPage("notifications", false);
         toast(error.message);
       }
     }
@@ -1581,6 +1767,7 @@
   }
 
   async function logout() {
+    clearAppCache();
     try { await api("logout"); } catch { /* ignored during navigation */ }
     location.href = LOGIN_URL;
   }
@@ -1588,6 +1775,7 @@
   function initLoginPage() {
     const loginForm = $("#login-form");
     if (!loginForm) return;
+    clearAppCache();
     const registerForm = $("#register-form");
     const screens = { login: $("#login-screen"), register: $("#register-screen") };
     const setScreen = (name, updateHash = true) => {
@@ -1672,6 +1860,7 @@
   function initPatientRegistrationPage() {
     const form = $("#patient-register-form");
     if (!form) return;
+    clearAppCache();
     const status = $(".register-status");
     const rules = {
       "patient-full-name": (v) => v.trim().length >= 2 ? "" : "Enter your full name.",
@@ -1741,36 +1930,61 @@
     });
   }
 
+  let protectedEventsBound = false;
+
+  function bindProtectedAppEvents() {
+    if (protectedEventsBound) return;
+    protectedEventsBound = true;
+    document.addEventListener("click", handleDashboardClick);
+    document.addEventListener("submit", handleDashboardSubmit);
+    document.addEventListener("input", handleDashboardInput);
+    document.addEventListener("change", handleDashboardChange);
+    document.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        $("#global-search")?.focus();
+      }
+      if (event.key === "Escape") {
+        closeDrawer();
+        closeSidebar();
+      }
+    });
+    window.addEventListener("hashchange", () => {
+      if (state.data && currentUser) setPage(location.hash.slice(1), false);
+    });
+  }
+
   async function initProtectedApp() {
     const requiredRole = document.body?.dataset.requiredRole;
     if (!requiredRole) return;
-    $("#page-content").innerHTML = loading();
+    const requestedPage = location.hash.slice(1) || document.body.dataset.initialPage || "dashboard";
+    const cachedData = readCachedAppData();
+    if (cachedData) {
+      state.data = cachedData;
+      currentUser = cachedData.currentUser;
+      hydrateProfile();
+      setPage(requestedPage, false);
+    } else {
+      $("#page-content").innerHTML = loading();
+    }
+    bindProtectedAppEvents();
     try {
       await loadAppData();
       if (!currentUser || currentUser.role !== requiredRole) {
+        clearAppCache();
         location.replace(currentUser ? destinations[currentUser.role] : LOGIN_URL);
         return;
       }
       hydrateStaticIcons();
       hydrateProfile();
-      setPage(location.hash.slice(1) || document.body.dataset.initialPage || "dashboard", false);
-      document.addEventListener("click", handleDashboardClick);
-      document.addEventListener("submit", handleDashboardSubmit);
-      document.addEventListener("input", handleDashboardInput);
-      document.addEventListener("change", handleDashboardChange);
-      document.addEventListener("keydown", (event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-          event.preventDefault();
-          $("#global-search")?.focus();
-        }
-        if (event.key === "Escape") {
-          closeDrawer();
-          closeSidebar();
-        }
-      });
-      window.addEventListener("hashchange", () => setPage(location.hash.slice(1), false));
-    } catch {
-      location.replace(LOGIN_URL);
+      setPage(requestedPage, false);
+    } catch (error) {
+      if (cachedData && ![401, 403].includes(error.status)) {
+        toast("Showing recently cached data while the live connection recovers.");
+      } else {
+        clearAppCache();
+        location.replace(LOGIN_URL);
+      }
     }
   }
 
@@ -1784,6 +1998,7 @@
   window.ClinicAuth = { destinations, api, logout };
   applyTextSize();
   applySidebarPreference();
+  initTooltips();
   hydrateStaticIcons();
   initLoginPage();
   initPatientRegistrationPage();
