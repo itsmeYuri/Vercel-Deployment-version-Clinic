@@ -5,12 +5,14 @@ CREATE DATABASE IF NOT EXISTS clinic_system_v2 CHARACTER SET utf8mb4 COLLATE utf
 USE clinic_system_v2;
 
 DROP TABLE IF EXISTS system_settings;
+DROP TABLE IF EXISTS auth_login_attempts;
 DROP TABLE IF EXISTS maintenance_settings;
 DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS notifications;
 DROP TABLE IF EXISTS clinical_notes;
 DROP TABLE IF EXISTS result_files;
 DROP TABLE IF EXISTS lab_result_values;
+DROP TABLE IF EXISTS result_workflow_events;
 DROP TABLE IF EXISTS lab_results;
 DROP TABLE IF EXISTS lab_order_items;
 DROP TABLE IF EXISTS lab_orders;
@@ -279,6 +281,27 @@ CREATE TABLE system_settings (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE result_workflow_events (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  result_id INT NOT NULL,
+  user_id INT NULL,
+  action VARCHAR(30) NOT NULL,
+  reason TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_workflow_result FOREIGN KEY (result_id) REFERENCES lab_results(id) ON DELETE CASCADE,
+  CONSTRAINT fk_workflow_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_result_workflow_result (result_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE auth_login_attempts (
+  key_hash CHAR(64) PRIMARY KEY,
+  attempts INT NOT NULL DEFAULT 0,
+  window_started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  blocked_until DATETIME NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_login_attempts_blocked (blocked_until)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 INSERT INTO roles (id, name, description) VALUES
 (1, 'Admin', 'System administrator with full access.'),
 (2, 'Doctor', 'Clinical user who submits laboratory requests and reviews results.'),
@@ -291,21 +314,20 @@ INSERT INTO facilities (id, name, address, phone, email, status) VALUES
 (3, 'Riverside Clinic', '76 Riverside Drive, Pasig', '+63 2 8638 2140', 'riverside@clinic.local', 'Active'),
 (4, 'Westbrook Health Hub', '19 Westbrook Road, Makati', '+63 2 8821 9073', 'westbrook@clinic.local', 'Active');
 
--- Demo seed hashes are SHA-256 wrappers so the SQL file contains no plain-text passwords.
--- The PHP login endpoint upgrades each demo password to password_hash() after the first successful login.
+-- Demo passwords use bcrypt hashes; the SQL file contains no plain-text passwords.
 INSERT INTO users (id, role_id, name, email, username, password_hash, avatar, contact, status) VALUES
-(1, 1, 'Admin User', 'admin@clinic.com', 'admin', 'cms-demo-sha256$240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'AU', '+63 917 820 4621', 'Active'),
-(2, 2, 'Dr. Amelia Carter', 'doctor@clinic.com', 'doctor', 'cms-demo-sha256$f348d5628621f3d8f59c8cabda0f8eb0aa7e0514a90be7571020b1336f26c113', 'AC', '+63 917 804 2216', 'Active'),
-(3, 3, 'Lab Staff User', 'labstaff@clinic.com', 'lab', 'cms-demo-sha256$3705b578e8fcb1b82a94ad917881ec248bbd4111645e91aed3c19af12d82116f', 'LS', '+63 917 542 1803', 'Active'),
-(4, 4, 'Sarah Johnson', 'patient@clinic.com', 'patient', 'cms-demo-sha256$d4587ea9ead060c13fd994f21ecfa7926272a78854a2c20136b10a3c9e53e71e', 'SJ', '+63 917 482 1064', 'Active'),
-(5, 2, 'Dr. Gabriel Cruz', 'gabriel.cruz@clinic.com', 'gcruz', 'cms-demo-sha256$f348d5628621f3d8f59c8cabda0f8eb0aa7e0514a90be7571020b1336f26c113', 'GC', '+63 917 110 2244', 'Active'),
-(6, 2, 'Dr. Amelia Reyes', 'amelia.reyes@clinic.com', 'areyes', 'cms-demo-sha256$f348d5628621f3d8f59c8cabda0f8eb0aa7e0514a90be7571020b1336f26c113', 'AR', '+63 917 210 8451', 'Active'),
-(7, 3, 'Marco Villanueva', 'marco.v@clinic.com', 'marco', 'cms-demo-sha256$3705b578e8fcb1b82a94ad917881ec248bbd4111645e91aed3c19af12d82116f', 'MV', '+63 917 772 1984', 'Active'),
-(8, 3, 'Sofia Ramos', 'sofia.ramos@clinic.com', 'sofia', 'cms-demo-sha256$3705b578e8fcb1b82a94ad917881ec248bbd4111645e91aed3c19af12d82116f', 'SR', '+63 917 883 1204', 'Active'),
-(9, 4, 'Maria Santos', 'maria.santos@example.com', 'maria.santos', 'cms-demo-sha256$d4587ea9ead060c13fd994f21ecfa7926272a78854a2c20136b10a3c9e53e71e', 'MS', '+63 917 230 1111', 'Active'),
-(10, 4, 'Daniel Chua', 'daniel.chua@example.com', 'daniel.chua', 'cms-demo-sha256$d4587ea9ead060c13fd994f21ecfa7926272a78854a2c20136b10a3c9e53e71e', 'DC', '+63 917 230 2222', 'Active'),
-(11, 4, 'Elena Garcia', 'elena.garcia@example.com', 'elena.garcia', 'cms-demo-sha256$d4587ea9ead060c13fd994f21ecfa7926272a78854a2c20136b10a3c9e53e71e', 'EG', '+63 917 230 3333', 'Active'),
-(12, 4, 'John Mendoza', 'john.mendoza@example.com', 'john.mendoza', 'cms-demo-sha256$d4587ea9ead060c13fd994f21ecfa7926272a78854a2c20136b10a3c9e53e71e', 'JM', '+63 917 230 4444', 'Active');
+(1, 1, 'Admin User', 'admin@clinic.com', 'admin', '$2y$12$BjBVgvhl/4L7UNYkqqg8Ye3Cnz3yCgRILQrDzeLiHMFXrzvmD6VVO', 'AU', '+63 917 820 4621', 'Active'),
+(2, 2, 'Dr. Amelia Carter', 'doctor@clinic.com', 'doctor', '$2y$12$53pTfdXLy7rocyC4zvpL4OrEaq2MVXxfqWxf3GdaZAc8sSYEEE.sC', 'AC', '+63 917 804 2216', 'Active'),
+(3, 3, 'Lab Staff User', 'labstaff@clinic.com', 'lab', '$2y$12$wWI3.w6LCHT8tHrNjCG8.OelA3kd3iGSODCsznlPlA1hNYRbzOKhy', 'LS', '+63 917 542 1803', 'Active'),
+(4, 4, 'Sarah Johnson', 'patient@clinic.com', 'patient', '$2y$12$4u299uVHERBDy80D0uv9GulSOfswcQ2ww1CJTKNFZGJ1Pt.FLPemS', 'SJ', '+63 917 482 1064', 'Active'),
+(5, 2, 'Dr. Gabriel Cruz', 'gabriel.cruz@clinic.com', 'gcruz', '$2y$12$53pTfdXLy7rocyC4zvpL4OrEaq2MVXxfqWxf3GdaZAc8sSYEEE.sC', 'GC', '+63 917 110 2244', 'Active'),
+(6, 2, 'Dr. Amelia Reyes', 'amelia.reyes@clinic.com', 'areyes', '$2y$12$53pTfdXLy7rocyC4zvpL4OrEaq2MVXxfqWxf3GdaZAc8sSYEEE.sC', 'AR', '+63 917 210 8451', 'Active'),
+(7, 3, 'Marco Villanueva', 'marco.v@clinic.com', 'marco', '$2y$12$wWI3.w6LCHT8tHrNjCG8.OelA3kd3iGSODCsznlPlA1hNYRbzOKhy', 'MV', '+63 917 772 1984', 'Active'),
+(8, 3, 'Sofia Ramos', 'sofia.ramos@clinic.com', 'sofia', '$2y$12$wWI3.w6LCHT8tHrNjCG8.OelA3kd3iGSODCsznlPlA1hNYRbzOKhy', 'SR', '+63 917 883 1204', 'Active'),
+(9, 4, 'Maria Santos', 'maria.santos@example.com', 'maria.santos', '$2y$12$4u299uVHERBDy80D0uv9GulSOfswcQ2ww1CJTKNFZGJ1Pt.FLPemS', 'MS', '+63 917 230 1111', 'Active'),
+(10, 4, 'Daniel Chua', 'daniel.chua@example.com', 'daniel.chua', '$2y$12$4u299uVHERBDy80D0uv9GulSOfswcQ2ww1CJTKNFZGJ1Pt.FLPemS', 'DC', '+63 917 230 2222', 'Active'),
+(11, 4, 'Elena Garcia', 'elena.garcia@example.com', 'elena.garcia', '$2y$12$4u299uVHERBDy80D0uv9GulSOfswcQ2ww1CJTKNFZGJ1Pt.FLPemS', 'EG', '+63 917 230 3333', 'Active'),
+(12, 4, 'John Mendoza', 'john.mendoza@example.com', 'john.mendoza', '$2y$12$4u299uVHERBDy80D0uv9GulSOfswcQ2ww1CJTKNFZGJ1Pt.FLPemS', 'JM', '+63 917 230 4444', 'Active');
 
 INSERT INTO patients (id, user_id, patient_code, date_of_birth, sex, address, primary_facility_id, emergency_contact_name, emergency_contact_phone) VALUES
 (1, 4, 'PT-10492', '1992-03-14', 'Female', '28 Sampaguita Street, Quezon City, Metro Manila', 1, 'Michael Johnson', '+63 917 502 7781'),

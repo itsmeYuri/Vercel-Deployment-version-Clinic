@@ -2,13 +2,15 @@
 
 This deployment keeps the current PHP pages, CSS, JavaScript, navigation, role workflows, validation, and API behavior. MySQL and local file uploads remain available for local development; production selects PostgreSQL, database-backed sessions, and private Supabase Storage through environment variables.
 
+For an existing Supabase project, run `database/supabase_production_hardening.sql` in the SQL Editor before deploying the latest application. New projects only need the complete `database/supabase_schema.sql` installer. The migration also replaces legacy demo wrapper hashes with bcrypt hashes, so keep `CLINIC_ALLOW_DEMO_HASHES=0` in Vercel.
+
 ## 1. Create the Supabase resources
 
 1. Create a Supabase project.
 2. Open **SQL Editor**, paste `database/supabase_schema.sql`, and run it once.
-3. Confirm that the 18 application tables, `auth_sessions`, and the private `lab-results` bucket exist.
+3. Confirm that the application tables, `auth_sessions`, `auth_login_attempts`, `result_workflow_events`, and the private `lab-results` bucket exist.
 4. In **Project Settings > Database**, copy the transaction-pooler connection string. Use port `6543`, replace its password placeholder, and URL-encode special characters in the password.
-5. In **Project Settings > API**, copy the project URL, anon key, and service-role key.
+5. In **Project Settings > API**, copy the project URL and server-side secret/service-role key.
 
 The service-role key deliberately bypasses Storage policies and must exist only as a Vercel server environment variable. The browser receives only short-lived, single-object signed URLs. Row Level Security is enabled without public table policies because all application database access remains behind the PHP API.
 
@@ -57,15 +59,19 @@ Import the repository as a Vercel project and add these Production and Preview e
 |---|---|
 | `SUPABASE_DB_URL` | Supabase transaction-pooler PostgreSQL URL on port 6543 |
 | `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
-| `SUPABASE_ANON_KEY` | Project anon/public key; reserved for future public client use |
 | `SUPABASE_SERVICE_ROLE_KEY` | Secret service-role key, server-side only |
 | `SUPABASE_STORAGE_BUCKET` | `lab-results` |
 | `CLINIC_STORAGE_DRIVER` | `supabase` |
 | `CLINIC_SESSION_DRIVER` | `database` |
 | `CLINIC_SESSION_TTL` | `43200` |
 | `CLINIC_COOKIE_SECURE` | `1` |
+| `CLINIC_ALLOW_DEMO_HASHES` | `0` |
 | `CLINIC_APP_TIMEZONE` | `Asia/Manila` |
 | `CLINIC_APP_DEBUG` | `0` |
+| `CLINIC_APP_NAME` | Display name for the clinic system |
+| `CLINIC_PAGE_SIZE` | `25` |
+| `CLINIC_PREVIEW_LIMIT` | `6` |
+| `CLINIC_SCANNER_LANGUAGE` | `eng` |
 
 Do not add a trailing slash to `SUPABASE_URL`. If the database password contains `@`, `:`, `/`, `#`, `%`, or other URL-reserved characters, percent-encode it in `SUPABASE_DB_URL`.
 

@@ -26,18 +26,17 @@ INSERT INTO facilities (id, name, address, phone, email, status) VALUES
   (2, 'Northside Diagnostic Center', '48 Quezon Boulevard, Quezon City', '+63 2 8555 0192', 'northside@example.test', 'Active'),
   (3, 'Riverside Community Clinic', '76 Riverside Drive, Pasig', '+63 2 8638 2140', 'riverside@example.test', 'Active');
 
--- These wrapper hashes are recognized by the demo login compatibility code and
--- upgraded to password_hash() automatically after the first successful login.
+-- These are bcrypt hashes for the documented demo-only passwords.
 INSERT INTO users (id, role_id, name, email, username, password_hash, avatar, contact, status) VALUES
-  (1, 1, 'Admin User', 'admin@clinic.com', 'admin', 'cms-demo-sha256$240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'AU', '+63 917 820 4621', 'Active'),
-  (2, 2, 'Dr. Amelia Carter', 'doctor@clinic.com', 'doctor', 'cms-demo-sha256$f348d5628621f3d8f59c8cabda0f8eb0aa7e0514a90be7571020b1336f26c113', 'AC', '+63 917 804 2216', 'Active'),
-  (3, 3, 'Laboratory Staff User', 'labstaff@clinic.com', 'lab', 'cms-demo-sha256$3705b578e8fcb1b82a94ad917881ec248bbd4111645e91aed3c19af12d82116f', 'LS', '+63 917 542 1803', 'Active'),
-  (4, 4, 'Sarah Johnson', 'patient@clinic.com', 'patient', 'cms-demo-sha256$d4587ea9ead060c13fd994f21ecfa7926272a78854a2c20136b10a3c9e53e71e', 'SJ', '+63 917 482 1064', 'Active'),
-  (5, 2, 'Dr. Gabriel Cruz', 'gabriel.cruz@example.test', 'gcruz', 'cms-demo-sha256$f348d5628621f3d8f59c8cabda0f8eb0aa7e0514a90be7571020b1336f26c113', 'GC', '+63 917 110 2244', 'Active'),
-  (6, 3, 'Marco Villanueva', 'marco.v@example.test', 'marco', 'cms-demo-sha256$3705b578e8fcb1b82a94ad917881ec248bbd4111645e91aed3c19af12d82116f', 'MV', '+63 917 772 1984', 'Active'),
-  (7, 4, 'Maria Santos', 'maria.santos@example.test', 'maria.santos', 'cms-demo-sha256$d4587ea9ead060c13fd994f21ecfa7926272a78854a2c20136b10a3c9e53e71e', 'MS', '+63 917 230 1111', 'Active'),
-  (8, 4, 'Daniel Chua', 'daniel.chua@example.test', 'daniel.chua', 'cms-demo-sha256$d4587ea9ead060c13fd994f21ecfa7926272a78854a2c20136b10a3c9e53e71e', 'DC', '+63 917 230 2222', 'Active'),
-  (9, 4, 'Elena Garcia', 'elena.garcia@example.test', 'elena.garcia', 'cms-demo-sha256$d4587ea9ead060c13fd994f21ecfa7926272a78854a2c20136b10a3c9e53e71e', 'EG', '+63 917 230 3333', 'Active');
+  (1, 1, 'Admin User', 'admin@clinic.com', 'admin', '$2y$12$BjBVgvhl/4L7UNYkqqg8Ye3Cnz3yCgRILQrDzeLiHMFXrzvmD6VVO', 'AU', '+63 917 820 4621', 'Active'),
+  (2, 2, 'Dr. Amelia Carter', 'doctor@clinic.com', 'doctor', '$2y$12$53pTfdXLy7rocyC4zvpL4OrEaq2MVXxfqWxf3GdaZAc8sSYEEE.sC', 'AC', '+63 917 804 2216', 'Active'),
+  (3, 3, 'Laboratory Staff User', 'labstaff@clinic.com', 'lab', '$2y$12$wWI3.w6LCHT8tHrNjCG8.OelA3kd3iGSODCsznlPlA1hNYRbzOKhy', 'LS', '+63 917 542 1803', 'Active'),
+  (4, 4, 'Sarah Johnson', 'patient@clinic.com', 'patient', '$2y$12$4u299uVHERBDy80D0uv9GulSOfswcQ2ww1CJTKNFZGJ1Pt.FLPemS', 'SJ', '+63 917 482 1064', 'Active'),
+  (5, 2, 'Dr. Gabriel Cruz', 'gabriel.cruz@example.test', 'gcruz', '$2y$12$53pTfdXLy7rocyC4zvpL4OrEaq2MVXxfqWxf3GdaZAc8sSYEEE.sC', 'GC', '+63 917 110 2244', 'Active'),
+  (6, 3, 'Marco Villanueva', 'marco.v@example.test', 'marco', '$2y$12$wWI3.w6LCHT8tHrNjCG8.OelA3kd3iGSODCsznlPlA1hNYRbzOKhy', 'MV', '+63 917 772 1984', 'Active'),
+  (7, 4, 'Maria Santos', 'maria.santos@example.test', 'maria.santos', '$2y$12$4u299uVHERBDy80D0uv9GulSOfswcQ2ww1CJTKNFZGJ1Pt.FLPemS', 'MS', '+63 917 230 1111', 'Active'),
+  (8, 4, 'Daniel Chua', 'daniel.chua@example.test', 'daniel.chua', '$2y$12$4u299uVHERBDy80D0uv9GulSOfswcQ2ww1CJTKNFZGJ1Pt.FLPemS', 'DC', '+63 917 230 2222', 'Active'),
+  (9, 4, 'Elena Garcia', 'elena.garcia@example.test', 'elena.garcia', '$2y$12$4u299uVHERBDy80D0uv9GulSOfswcQ2ww1CJTKNFZGJ1Pt.FLPemS', 'EG', '+63 917 230 3333', 'Active');
 
 INSERT INTO patients (id, user_id, patient_code, date_of_birth, sex, address, primary_facility_id, emergency_contact_name, emergency_contact_phone) VALUES
   (1, 4, 'PT-10492', DATE '1992-03-14', 'Female', '28 Sampaguita Street, Quezon City', 1, 'Michael Johnson', '+63 917 502 7781'),

@@ -49,7 +49,7 @@ index.php     Project-root web entry point
 
 ## Deploy to Vercel with Supabase
 
-1. Create a Supabase project and run `database/supabase_schema.sql` in its SQL Editor.
+1. Create a Supabase project and run `database/supabase_schema.sql` in its SQL Editor. For an existing project, run `database/supabase_production_hardening.sql` instead.
 2. Migrate existing table data in the order listed in the deployment guide.
 3. Import this repository into Vercel.
 4. Add every variable shown in `.env.example` to the Vercel project settings.
@@ -59,9 +59,9 @@ The Supabase service-role key is used only in server-side PHP to create short-li
 
 ## Laboratory Result Image Scanner
 
-Laboratory Staff can capture or select a JPG, PNG, or WEBP result image on the result-upload page. Local browser OCR detects supported laboratory parameters and fills the result value, unit, reference range, and flag fields for staff review. The OCR engine and English language data are stored under `public/assets/vendor/tesseract/`, so scanning does not require an internet connection or upload the image to a third-party OCR service.
+Laboratory Staff can capture or select a PDF, JPG, PNG, or WEBP report on the result-upload page. PDFs scan up to the first five pages. Browser OCR detects numeric and qualitative laboratory values, and fills the parameter, value, unit, reference range, and flag fields for staff review. Images remain in the browser during OCR and are attached to the result only when the staff member keeps the attachment option selected and submits the form.
 
-OCR output is assistive only. Laboratory Staff must compare every populated field with the source report before uploading the result.
+OCR output is assistive only. Laboratory Staff must compare every populated field with the source report before uploading the result. Low-confidence scans are highlighted, and image sources can be rotated or removed before processing.
 
 ## Verification
 
@@ -72,3 +72,12 @@ Get-ChildItem -Recurse -Filter *.php | ForEach-Object { php -l $_.FullName }
 ```
 
 The integration test is available at `tests/integration.php`. It writes test records, so run it only against a disposable test database.
+
+The non-destructive JavaScript checks can be run with:
+
+```powershell
+node tests/lab-result-scanner.test.js
+node tests/lab-utilization-analytics.test.js
+node tests/lab-forecasting-analysis.test.js
+node tests/ui-contract.test.js
+```

@@ -134,7 +134,9 @@ $doctorPatients = $doctorPayload['availablePatients'] ?? [];
 check($doctorData['status'] === 200 && $doctorFacilityId > 0, 'Doctor dashboard loads assigned facility from database');
 check(!array_filter($doctorPatients, fn ($row) => (int) ($row['primaryFacilityId'] ?? 0) !== $doctorFacilityId && (int) ($row['orderCount'] ?? 0) === 0), 'Doctor patient list is limited to assigned facility or own orders');
 
-$activeTest = array_values(array_filter($doctorPayload['tests'] ?? [], fn ($test) => $test['status'] === 'Active'))[0] ?? null;
+$doctorOrderPage = api($doctor, 'page_data', ['page' => 'create-order']);
+check($doctorOrderPage['status'] === 200 && in_array('create-order', $doctorOrderPage['json']['data']['loadedPages'] ?? [], true), 'Doctor lazily loads laboratory request form data');
+$activeTest = array_values(array_filter($doctorOrderPage['json']['data']['tests'] ?? [], fn ($test) => $test['status'] === 'Active'))[0] ?? null;
 $orderPatient = array_values(array_filter($doctorPatients, fn ($row) => (int) $row['id'] === $patientId))[0] ?? $doctorPatients[0] ?? null;
 $createOrder = api($doctor, 'create_order', [
     'patientId' => $orderPatient['id'] ?? 0,
@@ -146,7 +148,7 @@ $createOrder = api($doctor, 'create_order', [
 ]);
 $orderId = (int) ($createOrder['json']['data']['orderId'] ?? 0);
 check($createOrder['status'] === 200 && $orderId > 0, 'Doctor creates a laboratory order');
-$createdOrder = array_values(array_filter($createOrder['json']['data']['app']['orders'] ?? [], fn ($row) => (int) $row['id'] === $orderId))[0] ?? [];
+$createdOrder = array_values(array_filter($createOrder['json']['data']['orders'] ?? [], fn ($row) => (int) $row['id'] === $orderId))[0] ?? [];
 check(($createdOrder['status'] ?? '') === 'Pending' && ($createdOrder['priority'] ?? '') === 'Priority', 'New order is forced to Pending with allowed priority');
 
 $invalidTransition = api($lab, 'update_order_status', ['orderId' => $orderId, 'status' => 'Processing']);
@@ -170,7 +172,7 @@ $upload = api($lab, 'upload_result', [
 ]);
 $resultNumber = $upload['json']['data']['resultNumber'] ?? '';
 check($upload['status'] === 200 && $resultNumber !== '', 'Lab uploads structured result');
-$uploadedResult = array_values(array_filter($upload['json']['data']['app']['results'] ?? [], fn ($row) => $row['resultNumber'] === $resultNumber))[0] ?? [];
+$uploadedResult = array_values(array_filter($upload['json']['data']['results'] ?? [], fn ($row) => $row['resultNumber'] === $resultNumber))[0] ?? [];
 $resultId = (int) ($uploadedResult['id'] ?? 0);
 check(count($uploadedResult['files'] ?? []) === 1, 'Lab result attachment metadata is saved');
 $attachmentId = (int) ($uploadedResult['files'][0]['id'] ?? 0);
@@ -179,10 +181,15 @@ check($attachmentDownload['status'] === 200 && str_contains($attachmentDownload[
 
 $earlyRelease = api($lab, 'release_result', ['resultId' => $resultId]);
 check($earlyRelease['status'] === 409, 'Pending-review result cannot be released before verification');
-$verify = api($lab, 'update_result_status', ['resultId' => $resultId, 'status' => 'Verified']);
-check($verify['status'] === 200, 'Lab verifies result');
-$release = api($lab, 'release_result', ['resultId' => $resultId]);
-check($release['status'] === 200, 'Lab releases verified result');
+$selfVerify = api($lab, 'update_result_status', ['resultId' => $resultId, 'status' => 'Verified']);
+check($selfVerify['status'] === 409, 'Result entry staff cannot verify their own result');
+$reviewer = client($base);
+$reviewerLogin = login($reviewer, 'marco', 'lab123');
+check($reviewerLogin['status'] === 200, 'Second laboratory staff login');
+$verify = api($reviewer, 'update_result_status', ['resultId' => $resultId, 'status' => 'Verified']);
+check($verify['status'] === 200, 'A different laboratory staff member verifies result');
+$release = api($reviewer, 'release_result', ['resultId' => $resultId]);
+check($release['status'] === 200, 'A different laboratory staff member releases verified result');
 
 $note = api($doctor, 'add_clinical_note', ['resultId' => $resultId, 'note' => 'Integration clinical note.']);
 check($note['status'] === 200, 'Doctor adds a clinical note to own result');
@@ -203,7 +210,7 @@ foreach (['Accepted', 'Sample Collected', 'Processing'] as $status) {
 }
 $secondUpload = api($lab, 'upload_result', ['orderId' => $secondOrderId, 'findings' => 'Rejected test result.', 'values' => []]);
 $secondNumber = $secondUpload['json']['data']['resultNumber'] ?? '';
-$secondResult = array_values(array_filter($secondUpload['json']['data']['app']['results'] ?? [], fn ($row) => $row['resultNumber'] === $secondNumber))[0] ?? [];
+$secondResult = array_values(array_filter($secondUpload['json']['data']['results'] ?? [], fn ($row) => $row['resultNumber'] === $secondNumber))[0] ?? [];
 $reject = api($lab, 'reject_result', ['resultId' => $secondResult['id'] ?? 0, 'reason' => 'Specimen integrity failure.']);
 check($reject['status'] === 200, 'Lab rejects result with a reason');
 
@@ -212,7 +219,7 @@ $newUser = api($admin, 'save_user', [
     'name' => $newUserName,
     'email' => strtolower(str_replace(' ', '.', $newUserName)) . '@example.test',
     'username' => 'itest.' . bin2hex(random_bytes(3)),
-    'password' => 'Testpass123',
+    'password' => 'Testpass1234',
     'role' => 'Laboratory Staff',
     'facilityId' => $doctorFacilityId,
     'status' => 'Active',
@@ -232,7 +239,7 @@ $registered = api($registration, 'register_patient', [
     'contact' => '+63 917 555 0101',
     'address' => '100 Integration Street, Manila',
     'username' => "integration.{$suffix}",
-    'password' => 'Patient123',
+    'password' => 'Patient12345',
     'termsAccepted' => true,
     'privacyAcknowledged' => true,
 ]);
@@ -248,6 +255,8 @@ $maintenanceOn = api($admin, 'save_maintenance_settings', [
 check($maintenanceOn['status'] === 200 && ($maintenanceOn['json']['data']['maintenance']['isActive'] ?? false), 'Admin enables database-backed page maintenance');
 $blockedPage = request($base, $doctor['cookie'], 'GET', '/public/doctor/orders.php');
 check($blockedPage['status'] === 302 && str_contains($blockedPage['headers'], 'maintenance.php'), 'Selected maintenance page redirects non-admin users');
+$blockedPageData = api($doctor, 'page_data', ['page' => 'orders']);
+check($blockedPageData['status'] === 503, 'Selected maintenance page also blocks lazy API loading');
 $maintenanceOff = api($admin, 'save_maintenance_settings', [
     'isEnabled' => false,
     'scope' => 'all',
@@ -260,7 +269,7 @@ check($logout['status'] === 200, 'Logout clears the API session');
 $loggedOutSession = api($patient, 'session');
 check($loggedOutSession['status'] === 401, 'Logged-out session cannot access protected data');
 
-foreach ([$admin, $doctor, $lab, $patient, $registration] as $testClient) {
+foreach ([$admin, $doctor, $lab, $reviewer, $patient, $registration] as $testClient) {
     @unlink($testClient['cookie']);
 }
 

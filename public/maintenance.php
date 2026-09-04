@@ -5,7 +5,7 @@ require_once __DIR__ . '/../app/core/maintenance.php';
 require_once __DIR__ . '/../app/core/auth.php';
 
 $assetBase = clinic_asset_base('assets');
-$pageTitle = 'System Under Maintenance | Centralized Laboratory Results System';
+$pageTitle = 'System Under Maintenance | ' . clinic_app_name();
 $pageDescription = 'The laboratory results system is temporarily under maintenance.';
 $bodyClass = 'maintenance-public-page';
 clinic_start_session();
@@ -29,7 +29,7 @@ require __DIR__ . '/../app/views/layouts/header.php';
       <section class="maintenance-card-public" aria-labelledby="maintenance-title">
         <a class="admin-brand maintenance-brand" href="<?= e(clinic_public_url('auth/login.php#login')) ?>">
           <span class="admin-brand-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 2h4v8h8v4h-8v8h-4v-8H2v-4h8V2Z"/></svg></span>
-          <span><strong>Centralized Laboratory Results System</strong><small>System notice</small></span>
+          <span><strong><?= e(clinic_app_name()) ?></strong><small>System notice</small></span>
         </a>
         <div class="maintenance-public-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M9 15h6"/></svg>

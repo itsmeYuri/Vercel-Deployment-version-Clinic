@@ -36,9 +36,9 @@ $configs = [
         'ariaLabel' => 'Main navigation',
         'workspaceLabel' => 'Workspace',
         'searchPlaceholder' => 'Search users, laboratory requests, results, facilities...',
-        'notificationCount' => 7,
+        'notificationCount' => 0,
         'drawerId' => 'admin-drawer',
-        'drawerEyebrow' => 'Centralized Laboratory Results System',
+        'drawerEyebrow' => clinic_app_name(),
         'bodyClass' => 'admin-app',
         'avatarClass' => 'avatar-teal',
         'profilePage' => 'profile',
@@ -65,7 +65,7 @@ $configs = [
         'ariaLabel' => 'Doctor navigation',
         'workspaceLabel' => 'Clinical workspace',
         'searchPlaceholder' => 'Search patients, laboratory requests, results, facilities...',
-        'notificationCount' => 5,
+        'notificationCount' => 0,
         'drawerId' => 'doctor-drawer',
         'drawerEyebrow' => 'Doctor Workspace',
         'bodyClass' => 'admin-app doctor-app',
@@ -79,8 +79,8 @@ $configs = [
             ['page' => 'patients', 'file' => 'patients', 'icon' => 'users', 'label' => 'Patients'],
             ['page' => 'facilities', 'file' => 'facilities', 'icon' => 'facility', 'label' => 'Facilities & Tests'],
             ['page' => 'create-order', 'file' => 'create-order', 'icon' => 'plus-file', 'label' => 'New Laboratory Request'],
-            ['page' => 'orders', 'file' => 'orders', 'icon' => 'orders', 'label' => 'My Laboratory Requests', 'count' => 12],
-            ['page' => 'results', 'file' => 'results', 'icon' => 'results', 'label' => 'Results', 'count' => 7],
+            ['page' => 'orders', 'file' => 'orders', 'icon' => 'orders', 'label' => 'My Laboratory Requests', 'count' => 0],
+            ['page' => 'results', 'file' => 'results', 'icon' => 'results', 'label' => 'Results', 'count' => 0],
         ]),
     ],
     'Laboratory Staff' => [
@@ -90,7 +90,7 @@ $configs = [
         'ariaLabel' => 'Laboratory navigation',
         'workspaceLabel' => 'Laboratory workspace',
         'searchPlaceholder' => 'Search laboratory requests, patients, results, facilities...',
-        'notificationCount' => 6,
+        'notificationCount' => 0,
         'drawerId' => 'lab-drawer',
         'drawerEyebrow' => 'Laboratory Workspace',
         'bodyClass' => 'admin-app lab-app',
@@ -101,12 +101,12 @@ $configs = [
         'illustration' => $simpleClinicSvg,
         'nav' => clinic_route_nav([
             ['page' => 'dashboard', 'file' => 'dashboard', 'icon' => 'dashboard', 'label' => 'Dashboard'],
-            ['page' => 'orders', 'file' => 'orders', 'icon' => 'orders', 'label' => 'Laboratory Requests', 'count' => 18],
+            ['page' => 'orders', 'file' => 'orders', 'icon' => 'orders', 'label' => 'Laboratory Requests', 'count' => 0],
             ['page' => 'upload', 'file' => 'upload-result', 'icon' => 'upload', 'label' => 'Results Upload'],
-            ['page' => 'review', 'file' => 'verify-result', 'icon' => 'review', 'label' => 'Result Review', 'count' => 9],
+            ['page' => 'review', 'file' => 'verify-result', 'icon' => 'review', 'label' => 'Result Review', 'count' => 0],
             ['page' => 'operations', 'file' => 'operations', 'icon' => 'activity', 'label' => 'Assigned Operations'],
             ['page' => 'facilities', 'file' => 'facilities', 'icon' => 'facility', 'label' => 'Assigned Facilities'],
-            ['page' => 'queue', 'file' => 'queue', 'icon' => 'queue', 'label' => 'Test Queue', 'count' => 24],
+            ['page' => 'queue', 'file' => 'queue', 'icon' => 'queue', 'label' => 'Test Queue', 'count' => 0],
         ]),
     ],
     'Patient' => [
@@ -116,7 +116,7 @@ $configs = [
         'ariaLabel' => 'Patient portal navigation',
         'workspaceLabel' => 'My health records',
         'searchPlaceholder' => 'Search my laboratory requests, results, notifications...',
-        'notificationCount' => 4,
+        'notificationCount' => 0,
         'drawerId' => 'patient-drawer',
         'drawerEyebrow' => 'My Secure Health Record',
         'bodyClass' => 'admin-app patient-app',
@@ -128,17 +128,15 @@ $configs = [
         'illustration' => $patientPrivacySvg,
         'nav' => clinic_route_nav([
             ['page' => 'dashboard', 'file' => 'dashboard', 'icon' => 'dashboard', 'label' => 'Dashboard'],
-            ['page' => 'orders', 'file' => 'orders', 'icon' => 'orders', 'label' => 'My Laboratory Requests', 'count' => 8],
-            ['page' => 'results', 'file' => 'results', 'icon' => 'results', 'label' => 'My Results', 'count' => 4],
-            ['section' => 'My account'],
-            ['page' => 'profile', 'file' => 'profile', 'icon' => 'user', 'label' => 'Profile'],
+            ['page' => 'orders', 'file' => 'orders', 'icon' => 'orders', 'label' => 'My Laboratory Requests', 'count' => 0],
+            ['page' => 'results', 'file' => 'results', 'icon' => 'results', 'label' => 'My Results', 'count' => 0],
         ]),
     ],
 ];
 
 $roleConfig = $configs[$requiredRole];
-$pageTitle = $pageTitle ?? ($roleConfig['title'] . ' | Centralized Laboratory Results System');
-$pageDescription = $pageDescription ?? 'Centralized Laboratory Results System ' . strtolower($roleConfig['brandSmall']);
+$pageTitle = $pageTitle ?? ($roleConfig['title'] . ' | ' . clinic_app_name());
+$pageDescription = $pageDescription ?? clinic_app_name() . ' ' . strtolower($roleConfig['brandSmall']);
 $bodyAttributes = 'data-required-role="' . e($requiredRole) . '" data-user-id="' . e($currentUser['id'] ?? '') . '" data-initial-page="' . e($initialPage) . '"';
 
 require __DIR__ . '/../layouts/header.php';

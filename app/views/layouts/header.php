@@ -3,8 +3,8 @@ require_once __DIR__ . '/../../core/helpers.php';
 require_once __DIR__ . '/../../core/auth.php';
 clinic_start_session();
 
-$pageTitle = $pageTitle ?? 'Centralized Laboratory Results System';
-$pageDescription = $pageDescription ?? 'Secure Centralized Laboratory Results System workspace';
+$pageTitle = $pageTitle ?? clinic_app_name();
+$pageDescription = $pageDescription ?? ('Secure ' . clinic_app_name() . ' workspace');
 $assetBase = rtrim($assetBase ?? 'assets', '/');
 $bodyAttributes = $bodyAttributes ?? '';
 $bodyClass = trim($bodyClass ?? '');

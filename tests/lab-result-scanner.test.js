@@ -42,4 +42,32 @@ assert.equal(scanner.inferredFlag("3.2", "4.0-5.5"), "Low");
 const ocrPunctuation = scanner.parse('WBC 7.1 x10"9/L 4.5-11.0');
 assert.equal(ocrPunctuation.values[0].unit, "x10^9/L");
 
+const reportLayout = scanner.parse(`
+FINDINGS SUMMARY
+Complete blood count values are within the expected ranges.
+REMARKS
+Specimen received in acceptable condition.
+RESULT VALUES
+PARAMETER VALUE UNIT REFERENCE RANGE FLAG
+WBC 6.8 x10^9/L 4.0 - 11.0 Normal
+TSH 2.1 mIU/L 0.4 - 4.0 Normal
+PERFORMED BY
+Medical Technologist
+`);
+assert.equal(reportLayout.findings, "Complete blood count values are within the expected ranges.");
+assert.equal(reportLayout.remarks, "Specimen received in acceptable condition.");
+assert.equal(reportLayout.values.find((row) => row.parameter === "WBC").value, "6.8");
+assert.equal(reportLayout.values.find((row) => row.parameter === "TSH").referenceRange, "0.4-4.0");
+
+const qualitative = scanner.parse(`
+Pregnancy Test Negative
+Hepatitis B Surface Antigen Non-reactive
+SARS-CoV-2 Detected
+`);
+assert.equal(qualitative.values.length, 3);
+assert.equal(qualitative.values[0].value, "Negative");
+assert.equal(qualitative.values[0].flag, "Normal");
+assert.equal(qualitative.values[1].value, "Non-reactive");
+assert.equal(qualitative.values[2].flag, "Abnormal");
+
 console.log("Lab result scanner parser tests passed.");

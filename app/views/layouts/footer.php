@@ -18,7 +18,6 @@ $roleUrls = $roleUrls ?? [
       window.CLINIC_MAINTENANCE_URL = <?= json_encode($maintenanceUrl, JSON_UNESCAPED_SLASHES) ?>;
       window.CLINIC_ASSET_BASE = <?= json_encode($assetBase, JSON_UNESCAPED_SLASHES) ?>;
     </script>
-    <script src="<?= e($assetBase) ?>/vendor/tesseract/tesseract.min.js?v=7.0.0"></script>
     <script src="<?= e($assetBase) ?>/js/lab-result-scanner.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-result-scanner.js')) ?>"></script>
     <script src="<?= e($assetBase) ?>/js/lab-utilization-analytics.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-utilization-analytics.js')) ?>"></script>
     <script src="<?= e($assetBase) ?>/js/lab-forecasting-analysis.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-forecasting-analysis.js')) ?>"></script>

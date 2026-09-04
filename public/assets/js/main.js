@@ -5,11 +5,13 @@
   const ASSET_BASE = window.CLINIC_ASSET_BASE || "../assets";
   const TEXT_SIZE_KEY = "clinicSystemTextSize";
   const SIDEBAR_COLLAPSED_KEY = "clinicSystemSidebarCollapsed";
-  const APP_CACHE_PREFIX = "clinicSystemAppData:v1";
-  const APP_CACHE_TTL = 2 * 60 * 1000;
+  const LEGACY_APP_CACHE_PREFIX = "clinicSystemAppData:v1";
   let resultScannerWorkerPromise = null;
   let resultScannerActiveForm = null;
   let resultCameraStream = null;
+  let notificationPollTimer = null;
+  let notificationPollPending = false;
+  let notificationPollDelay = 30000;
   const textSizeOptions = [
     { value: "small", label: "Small" },
     { value: "default", label: "Default" },
@@ -157,7 +159,7 @@
   };
 
   let currentUser = null;
-  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, utilization: null, forecast: { horizon: 7 } };
+  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, utilization: null, forecast: { horizon: 7 }, loadingPages: new Set() };
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -167,49 +169,12 @@
       try { return localStorage.getItem(key); } catch { return null; }
     },
     set(key, value) {
-      try { localStorage.setItem(key, value); } catch { /* Storage can be unavailable in restricted browser modes. */ }
+      try { localStorage.setItem(key, value); } catch {}
     },
   };
-  const safeSessionStorage = {
-    get(key) {
-      try { return sessionStorage.getItem(key); } catch { return null; }
-    },
-    set(key, value) {
-      try { sessionStorage.setItem(key, value); } catch {}
-    },
-    remove(key) {
-      try { sessionStorage.removeItem(key); } catch {}
-    },
-  };
-
-  function appCacheKey() {
-    const role = document.body?.dataset.requiredRole || "guest";
-    const userId = document.body?.dataset.userId || "anonymous";
-    return `${APP_CACHE_PREFIX}:${role}:${userId}`;
-  }
-
-  function readCachedAppData() {
-    try {
-      const cached = JSON.parse(safeSessionStorage.get(appCacheKey()) || "null");
-      const expectedRole = document.body?.dataset.requiredRole;
-      const expectedUserId = document.body?.dataset.userId;
-      if (!cached?.data || Date.now() - Number(cached.savedAt || 0) > APP_CACHE_TTL) return null;
-      if (cached.data.currentUser?.role !== expectedRole || String(cached.data.currentUser?.id || "") !== String(expectedUserId || "")) return null;
-      return cached.data;
-    } catch {
-      safeSessionStorage.remove(appCacheKey());
-      return null;
-    }
-  }
-
-  function writeCachedAppData() {
-    if (!state.data?.currentUser) return;
-    safeSessionStorage.set(appCacheKey(), JSON.stringify({ savedAt: Date.now(), data: state.data }));
-  }
-
   function clearAppCache() {
     try {
-      Object.keys(sessionStorage).filter((key) => key.startsWith(APP_CACHE_PREFIX)).forEach((key) => sessionStorage.removeItem(key));
+      Object.keys(sessionStorage).filter((key) => key.startsWith(LEGACY_APP_CACHE_PREFIX)).forEach((key) => sessionStorage.removeItem(key));
     } catch {}
   }
 
@@ -238,6 +203,9 @@
     const pad = (part) => String(part).padStart(2, "0");
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
+  const uiConfig = () => state.data?.uiConfig || {};
+  const appName = () => uiConfig().appName || "Centralized Laboratory Results System";
+  const previewLimit = () => Number(uiConfig().previewLimit || 6);
 
   function icon(name, className = "") {
     return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" ${name === "medical" ? "" : 'fill="none"'}>${iconPaths[name] || iconPaths.file}</svg>`;
@@ -300,6 +268,12 @@
     });
     document.addEventListener("focusin", (event) => showTooltip(event.target.closest?.("[data-tooltip]")));
     document.addEventListener("focusout", hideTooltip);
+    document.addEventListener("pointerdown", (event) => {
+      if (!window.matchMedia("(hover: none)").matches) return;
+      const target = event.target.closest?.("[data-tooltip]");
+      if (target) showTooltip(target);
+      else hideTooltip();
+    });
     window.addEventListener("scroll", hideTooltip, true);
     window.addEventListener("resize", hideTooltip);
   }
@@ -369,7 +343,7 @@
           try {
             const error = await response.json();
             message = error.message || error.error || message;
-          } catch { /* Supabase may return an empty error response. */ }
+          } catch {}
           throw new Error(message);
         }
       }
@@ -403,11 +377,35 @@
   }
 
   function resultValueInputRow(item = {}, disabled = "") {
-    return `<tr><td><input name="parameter" value="${h(item.parameter || "")}" ${disabled}></td><td><input name="value" value="${h(item.value || "")}" ${disabled}></td><td><input name="unit" value="${h(item.unit || "")}" ${disabled}></td><td><input name="referenceRange" value="${h(item.referenceRange || "")}" ${disabled}></td><td><input name="flag" value="${h(item.flag || "")}" ${disabled}></td></tr>`;
+    const lowConfidence = Number(item.confidence || 100) < 75;
+    return `<tr class="${lowConfidence ? "ocr-low-confidence" : ""}" ${item.confidence ? `data-tooltip="OCR confidence: ${h(item.confidence)}%. Verify this row carefully."` : ""}><td><input name="parameter" aria-label="Parameter" value="${h(item.parameter || "")}" ${disabled}></td><td><input name="value" aria-label="Value" value="${h(item.value || "")}" ${disabled}></td><td><input name="unit" aria-label="Unit" value="${h(item.unit || "")}" ${disabled}></td><td><input name="referenceRange" aria-label="Reference range" value="${h(item.referenceRange || "")}" ${disabled}></td><td><input name="flag" aria-label="Flag" value="${h(item.flag || "")}" ${disabled}></td><td><button class="parameter-remove" type="button" data-remove-result-parameter aria-label="Remove parameter" data-tooltip="Remove parameter" ${disabled}>${icon("trash")}</button></td></tr>`;
+  }
+
+  function resultValueTable(rows, disabled = "") {
+    return `<div class="parameter-table-wrap"><table class="parameter-input-table"><thead><tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Reference Range</th><th>Flag</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div><button class="btn btn-secondary btn-sm parameter-add" type="button" data-add-result-parameter ${disabled}>${icon("plus")} Add Parameter</button>`;
   }
 
   function scannerAssetUrl(path) {
     return new URL(`${String(ASSET_BASE).replace(/\/$/, "")}/${path.replace(/^\//, "")}`, document.baseURI).href;
+  }
+
+  function loadScriptOnce(src, ready) {
+    if (ready()) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[data-lazy-src="${src}"]`);
+      if (existing) {
+        existing.addEventListener("load", resolve, { once: true });
+        existing.addEventListener("error", reject, { once: true });
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = src;
+      script.async = true;
+      script.dataset.lazySrc = src;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error("A scanner component could not be loaded."));
+      document.head.append(script);
+    });
   }
 
   function updateScannerStatus(form, message, progress = null, tone = "working") {
@@ -425,10 +423,11 @@
   }
 
   async function scannerWorker(form) {
+    await loadScriptOnce(scannerAssetUrl("vendor/tesseract/tesseract.min.js?v=7.0.0"), () => Boolean(window.Tesseract?.createWorker));
     if (!window.Tesseract?.createWorker) throw new Error("The local image scanner could not be loaded.");
     resultScannerActiveForm = form;
     if (!resultScannerWorkerPromise) {
-      resultScannerWorkerPromise = window.Tesseract.createWorker("eng", 1, {
+      resultScannerWorkerPromise = window.Tesseract.createWorker(uiConfig().scannerLanguage || "eng", 1, {
         workerPath: scannerAssetUrl("vendor/tesseract/worker.min.js"),
         corePath: scannerAssetUrl("vendor/tesseract/core"),
         langPath: scannerAssetUrl("vendor/tesseract/lang"),
@@ -446,16 +445,41 @@
     return resultScannerWorkerPromise;
   }
 
-  async function prepareResultScan(file) {
-    if (!window.createImageBitmap) return file;
+  async function prepareResultScan(file, rotation = 0) {
+    if (file.type === "application/pdf") {
+      const pdfScript = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+      await loadScriptOnce(pdfScript, () => Boolean(window.pdfjsLib?.getDocument));
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+      const pages = [];
+      for (let pageNumber = 1; pageNumber <= Math.min(pdf.numPages, 5); pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(2, 2200 / Math.max(baseViewport.width, baseViewport.height));
+        const viewport = page.getViewport({ scale, rotation });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        await page.render({ canvasContext: canvas.getContext("2d", { willReadFrequently: true }), viewport }).promise;
+        pages.push(canvas);
+      }
+      return pages;
+    }
+    if (!window.createImageBitmap) return [file];
     const bitmap = await createImageBitmap(file);
     const maxDimension = 2400;
     const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const sourceWidth = Math.max(1, Math.round(bitmap.width * scale));
+    const sourceHeight = Math.max(1, Math.round(bitmap.height * scale));
+    const quarterTurn = Math.abs(rotation % 180) === 90;
+    canvas.width = quarterTurn ? sourceHeight : sourceWidth;
+    canvas.height = quarterTurn ? sourceWidth : sourceHeight;
     const context = canvas.getContext("2d", { willReadFrequently: true });
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    context.translate(canvas.width / 2, canvas.height / 2);
+    context.rotate((rotation * Math.PI) / 180);
+    context.drawImage(bitmap, -sourceWidth / 2, -sourceHeight / 2, sourceWidth, sourceHeight);
+    context.setTransform(1, 0, 0, 1, 0, 0);
     bitmap.close();
     const image = context.getImageData(0, 0, canvas.width, canvas.height);
     for (let index = 0; index < image.data.length; index += 4) {
@@ -466,15 +490,24 @@
       image.data[index + 2] = contrasted;
     }
     context.putImageData(image, 0, 0);
-    return canvas;
+    return [canvas];
   }
 
-  function populateScannedResultValues(form, values) {
+  async function populateScannedResultValues(form, values) {
     const tbody = $(".parameter-input-table tbody", form);
     if (!tbody) return;
     const hasEnteredValues = $$('.parameter-input-table input[name="value"]', form).some((input) => input.value.trim());
-    if (hasEnteredValues && !window.confirm("Replace the result values already entered with the values detected from this image?")) return;
+    if (hasEnteredValues && !await glassDialog({ title: "Replace entered values?", message: "The detected values will replace the result values currently in this form.", confirmText: "Replace values" })) return false;
     tbody.innerHTML = values.map((item) => resultValueInputRow(item)).join("");
+    hydrateTooltips(tbody);
+    return true;
+  }
+
+  function populateScannedResultText(form, parsed) {
+    [["findings", parsed.findings], ["remarks", parsed.remarks]].forEach(([name, value]) => {
+      const input = $(`[name="${name}"]`, form);
+      if (input && value && !input.value.trim()) input.value = value;
+    });
   }
 
   async function scanResultImage(form) {
@@ -484,8 +517,8 @@
       toast("Choose or capture a laboratory result image first.");
       return;
     }
-    if (!file.type.startsWith("image/") || file.size > 10 * 1024 * 1024) {
-      updateScannerStatus(form, "Choose a JPG, PNG, or WEBP image up to 10 MB.", null, "error");
+    if (!(file.type.startsWith("image/") || file.type === "application/pdf") || file.size > 10 * 1024 * 1024) {
+      updateScannerStatus(form, "Choose a PDF, JPG, PNG, or WEBP file up to 10 MB.", null, "error");
       return;
     }
 
@@ -494,9 +527,13 @@
     updateScannerStatus(form, "Preparing image scanner…", 0);
     try {
       const worker = await scannerWorker(form);
-      const preparedImage = await prepareResultScan(file);
-      const result = await worker.recognize(preparedImage);
-      const parsed = window.ClinicLabScanner?.parse(result.data?.text || "");
+      const preparedPages = await prepareResultScan(file, Number(form.dataset.scanRotation || 0));
+      const recognizedPages = [];
+      for (let index = 0; index < preparedPages.length; index += 1) {
+        updateScannerStatus(form, `Reading page ${index + 1} of ${preparedPages.length}...`, index / preparedPages.length);
+        recognizedPages.push(await worker.recognize(preparedPages[index]));
+      }
+      const parsed = window.ClinicLabScanner?.parse(recognizedPages.map((page) => page.data?.text || "").join("\n"));
       const rawOutput = $("[data-result-scan-text]", form);
       const rawPanel = $("[data-result-scan-output]", form);
       if (rawOutput) rawOutput.textContent = parsed?.rawText || "No text detected.";
@@ -505,8 +542,15 @@
         updateScannerStatus(form, "Text was read, but no supported laboratory values were matched. Try a clearer, straight-on image or enter the values manually.", null, "error");
         return;
       }
-      populateScannedResultValues(form, parsed.values);
-      updateScannerStatus(form, `${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"} detected and filled. Compare every value with the source image before uploading.`, null, "success");
+      const confidence = Math.round(recognizedPages.reduce((sum, page) => sum + Number(page.data?.confidence || 0), 0) / Math.max(1, recognizedPages.length));
+      parsed.values = parsed.values.map((value) => ({ ...value, confidence }));
+      const populated = await populateScannedResultValues(form, parsed.values);
+      if (populated === false) {
+        updateScannerStatus(form, "Scan completed without replacing your entered values.", null, "idle");
+        return;
+      }
+      populateScannedResultText(form, parsed);
+      updateScannerStatus(form, `${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"} detected with ${confidence}% OCR confidence. Compare every value with the source image before uploading.`, null, confidence >= 75 ? "success" : "warning");
       toast(`${parsed.values.length} laboratory values filled from the scanned image.`);
     } catch (error) {
       updateScannerStatus(form, error.message || "The image could not be scanned.", null, "error");
@@ -529,8 +573,13 @@
   function openImagePicker(form, cameraOnly = false) {
     const input = $("[data-result-scan-input]", form);
     if (!input) return;
-    if (cameraOnly) input.setAttribute("capture", "environment");
-    else input.removeAttribute("capture");
+    if (cameraOnly) {
+      input.accept = "image/jpeg,image/png,image/webp";
+      input.setAttribute("capture", "environment");
+    } else {
+      input.accept = "application/pdf,image/jpeg,image/png,image/webp";
+      input.removeAttribute("capture");
+    }
     input.click();
   }
 
@@ -598,7 +647,7 @@
   }
 
   function heading(title, subtitle, actions = "") {
-    return `<div class="page-heading"><div><p class="eyebrow">Centralized Laboratory Results System</p><h2>${h(title)}</h2><p>${h(subtitle)}</p></div>${actions ? `<div class="heading-actions">${actions}</div>` : ""}</div>`;
+    return `<div class="page-heading"><div><p class="eyebrow">${h(appName())}</p><h2>${h(title)}</h2><p>${h(subtitle)}</p></div>${actions ? `<div class="heading-actions">${actions}</div>` : ""}</div>`;
   }
 
   function stat(label, value, iconName, change = "-", color = "teal") {
@@ -620,7 +669,27 @@
     const body = rows.length
       ? rows.map((row) => `<tr>${row.map((cell, index) => `<td data-label="${h(clean(headers[index]))}">${cell}</td>`).join("")}</tr>`).join("")
       : `<tr><td colspan="${headers.length}"><div class="empty-state">No records found.</div></td></tr>`;
-    return `<section class="card table-card"><div class="table-responsive"><table class="data-table"><thead><tr>${headers.map((item) => `<th>${h(item)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div><div class="table-footer"><span>${h(footer || `Showing ${rows.length} records`)}</span></div></section>`;
+    return `<section class="card table-card" data-paginated-table data-page="1" data-table-label="${h(footer)}"><div class="table-responsive"><table class="data-table"><thead><tr>${headers.map((item) => `<th scope="col">${h(item)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div><div class="table-footer"><span data-table-page-summary aria-live="polite">${h(footer || `${rows.length} records`)}</span><div class="table-pager" aria-label="Table pages"><button class="btn btn-secondary btn-sm" type="button" data-table-prev>Previous</button><button class="btn btn-secondary btn-sm" type="button" data-table-next>Next</button></div></div></section>`;
+  }
+
+  function paginateTables(root = document) {
+    $$('[data-paginated-table]', root).forEach((card) => {
+      const pageSize = Number(uiConfig().pageSize || 25);
+      const rows = $$('.data-table tbody tr', card).filter((row) => !row.querySelector(".empty-state") && row.dataset.filterMatch !== "false");
+      const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+      const page = Math.min(Math.max(1, Number(card.dataset.page || 1)), pages);
+      card.dataset.page = String(page);
+      $$('.data-table tbody tr', card).forEach((row) => { row.hidden = true; });
+      rows.forEach((row, index) => { row.hidden = index < (page - 1) * pageSize || index >= page * pageSize; });
+      const summary = $('[data-table-page-summary]', card);
+      const label = card.dataset.tableLabel;
+      if (summary) summary.textContent = rows.length ? `${label ? `${label} · ` : ""}Page ${page} of ${pages} · ${rows.length} records` : `${label ? `${label} · ` : ""}No records`;
+      const previous = $('[data-table-prev]', card);
+      const next = $('[data-table-next]', card);
+      if (previous) previous.disabled = page <= 1;
+      if (next) next.disabled = page >= pages;
+      $('.table-pager', card)?.toggleAttribute("hidden", pages <= 1);
+    });
   }
 
   function filters(placeholder, selects = [], actions = "") {
@@ -663,10 +732,11 @@
 
   function chartFromCounts(counts) {
     const values = Object.values(counts || {});
-    const points = (values.length ? values : [1, 1, 1, 1]).slice(0, 7);
+    if (!values.length) return '<div class="empty-state">No chart data is available yet.</div>';
+    const points = values;
     const max = Math.max(...points, 1);
     const coords = points.map((value, index) => `${index * (420 / Math.max(1, points.length - 1))},${126 - (value / max) * 92}`).join(" ");
-    return `<div class="line-chart" style="--chart-points:${points.length}"><svg viewBox="0 0 420 145" preserveAspectRatio="none"><path class="chart-grid-line" d="M0 36H420M0 72H420M0 108H420"/><polygon points="0,145 ${coords} 420,145" fill="#08a394" opacity=".09"/><polyline class="chart-line" points="${coords}"/>${coords.split(" ").map((point) => { const [x, y] = point.split(","); return `<circle class="chart-dot" cx="${x}" cy="${y}" r="3"/>`; }).join("")}</svg><div class="chart-axis">${Object.keys(counts || { Records: 1 }).slice(0, 7).map((key) => `<span>${h(key)}</span>`).join("")}</div></div>`;
+    return `<div class="line-chart" style="--chart-points:${points.length}"><svg viewBox="0 0 420 145" preserveAspectRatio="none"><path class="chart-grid-line" d="M0 36H420M0 72H420M0 108H420"/><polygon points="0,145 ${coords} 420,145" fill="#08a394" opacity=".09"/><polyline class="chart-line" points="${coords}"/>${coords.split(" ").map((point) => { const [x, y] = point.split(","); return `<circle class="chart-dot" cx="${x}" cy="${y}" r="3"/>`; }).join("")}</svg><div class="chart-axis">${Object.keys(counts || {}).map((key) => `<span>${h(key)}</span>`).join("")}</div></div>`;
   }
 
   function utilizationTrendChart(analytics) {
@@ -762,6 +832,42 @@
     hydrateProfile();
   }
 
+  function rebuildDerivedData() {
+    if (!state.data) return;
+    const orders = state.data.orders || [];
+    const results = state.data.results || [];
+    const users = state.data.users || [];
+    const notifications = state.data.notifications || [];
+    const countBy = (items, key) => items.reduce((counts, item) => {
+      const label = item[key] || "Unknown";
+      counts[label] = (counts[label] || 0) + 1;
+      return counts;
+    }, {});
+    const tests = {};
+    orders.forEach((order) => String(order.tests || "").split(",").map((name) => name.trim()).filter(Boolean).forEach((name) => { tests[name] = (tests[name] || 0) + 1; }));
+    state.data.reports = {
+      ...(state.data.reports || {}),
+      ordersByStatus: countBy(orders, "status"),
+      resultsByStatus: countBy(results, "status"),
+      ordersByFacility: countBy(orders, "facilityName"),
+      topTests: Object.fromEntries(Object.entries(tests).sort((a, b) => b[1] - a[1]).slice(0, 8)),
+    };
+    state.data.dashboard = {
+      ...(state.data.dashboard || {}),
+      totalUsers: users.length,
+      totalPatients: users.filter((item) => item.role === "Patient").length,
+      totalDoctors: users.filter((item) => item.role === "Doctor").length,
+      totalLabStaff: users.filter((item) => item.role === "Laboratory Staff").length,
+      totalFacilities: (state.data.facilities || []).length,
+      totalTests: (state.data.tests || []).length,
+      totalOrders: orders.length,
+      pendingOrders: orders.filter((item) => !["Released", "Rejected", "Cancelled"].includes(item.status)).length,
+      openOrders: orders.filter((item) => !["Released", "Rejected", "Cancelled"].includes(item.status)).length,
+      releasedResults: results.filter((item) => item.status === "Released").length,
+      unreadNotifications: notifications.filter((item) => !item.isRead).length,
+    };
+  }
+
   function apiUrl(action, params = {}) {
     const query = new URLSearchParams({ action, ...params });
     return `${API_URL}?${query.toString()}`;
@@ -800,33 +906,72 @@
     }
   }
 
-  function toast(message) {
+  function toast(message, tone = "success") {
     const region = $(".toast-region");
     if (!region) return;
     const el = document.createElement("div");
-    el.className = "toast";
-    el.innerHTML = `${icon("check")}<span>${h(message)}</span>`;
+    el.className = `toast toast-${tone}`;
+    el.setAttribute("role", tone === "error" ? "alert" : "status");
+    el.innerHTML = `${icon(tone === "error" ? "alert" : "check")}<span>${h(message)}</span><button type="button" class="toast-close" aria-label="Dismiss notification">${icon("close")}</button>`;
+    $(".toast-close", el)?.addEventListener("click", () => el.remove());
     region.append(el);
     setTimeout(() => el.remove(), 3500);
   }
 
-  function downloadRecords() {
+  function glassDialog({ title, message, confirmText = "Confirm", danger = false, inputLabel = "", inputRequired = false }) {
+    return new Promise((resolve) => {
+      const returnFocus = document.activeElement;
+      const modal = document.createElement("div");
+      modal.className = "glass-dialog";
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      const titleId = `dialog-title-${Date.now()}`;
+      const messageId = `dialog-message-${Date.now()}`;
+      modal.setAttribute("aria-labelledby", titleId);
+      modal.setAttribute("aria-describedby", messageId);
+      modal.innerHTML = `<div class="glass-dialog-card"><h2 id="${titleId}">${h(title)}</h2><p id="${messageId}">${h(message)}</p>${inputLabel ? `<label>${h(inputLabel)}<textarea data-dialog-input ${inputRequired ? "required" : ""}></textarea></label>` : ""}<div class="form-actions"><button class="btn btn-secondary" type="button" data-dialog-cancel>Cancel</button><button class="btn ${danger ? "btn-danger" : "btn-primary"}" type="button" data-dialog-confirm>${h(confirmText)}</button></div></div>`;
+      const siblings = [...document.body.children];
+      siblings.forEach((element) => element.setAttribute("inert", ""));
+      const finish = (value) => {
+        modal.remove();
+        siblings.forEach((element) => element.removeAttribute("inert"));
+        returnFocus?.focus?.();
+        resolve(value);
+      };
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal || event.target.closest("[data-dialog-cancel]")) finish(null);
+        if (event.target.closest("[data-dialog-confirm]")) {
+          const input = $("[data-dialog-input]", modal);
+          if (inputRequired && !input?.value.trim()) { input?.focus(); return; }
+          finish(input ? input.value.trim() : true);
+        }
+      });
+      modal.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") finish(null);
+        if (event.key === "Enter" && !event.shiftKey && event.target.matches("[data-dialog-input]")) {
+          event.preventDefault();
+          $("[data-dialog-confirm]", modal)?.click();
+        }
+        if (event.key === "Tab") {
+          const focusable = $$("button, textarea, input, select, [tabindex]:not([tabindex='-1'])", modal).filter((element) => !element.disabled);
+          if (!focusable.length) return;
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        }
+      });
+      document.body.append(modal);
+      ($("[data-dialog-input]", modal) || $("[data-dialog-confirm]", modal))?.focus();
+    });
+  }
+
+  async function downloadRecords() {
     if (!state.data || !currentUser) {
       toast("No records are loaded yet.");
       return;
     }
-    const payload = {
-      generatedAt: new Date().toISOString(),
-      user: {
-        id: currentUser.id,
-        name: currentUser.name,
-        role: currentUser.role,
-        patientProfileId: currentUser.patientProfileId,
-      },
-      orders: state.data.orders,
-      results: state.data.results,
-      notifications: state.data.notifications,
-    };
+    const payload = await api("export_records");
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -872,10 +1017,10 @@
   }
 
   function renderAdminDashboard() {
-    const auditRows = state.data.audit.slice(0, 8).map((item) => [shortDateTime(item.createdAt), person(item.userName, item.role, initials(item.userName)), badge(item.action), item.module, `<span class="cell-wrap">${h(item.details)}</span>`]);
+    const auditRows = state.data.audit.slice(0, previewLimit()).map((item) => [shortDateTime(item.createdAt), person(item.userName, item.role, initials(item.userName)), badge(item.action), item.module, `<span class="cell-wrap">${h(item.details)}</span>`]);
     return `${heading(...pageMeta.Admin.dashboard, `<button class="btn btn-secondary" data-go-page="audit">${icon("audit")} Audit Trail</button><button class="btn btn-primary" data-drawer="user">${icon("plus")} New User</button>`)}
       <div class="stats-grid">${stat("Users", state.data.users.length, "users")}${stat("Active Users", state.data.users.filter((u) => u.status === "Active").length, "check", "-", "green")}${stat("Facilities", state.data.facilities.length, "facility", "-", "blue")}${stat("Audit Records", state.data.audit.length, "audit", "-", "purple")}</div>
-      <div class="admin-dashboard-layout"><div class="admin-dashboard-main"><section class="card order-activity-card"><div class="card-head"><div><h3 class="card-title">Account Overview</h3><p class="card-subtitle">Users by role</p></div></div><div class="card-body">${chartFromCounts(Object.fromEntries(["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => [role, state.data.users.filter((u) => u.role === role).length])))}</div></section></div><section class="card notifications-card"><div class="card-head"><div><h3 class="card-title">Latest Notifications</h3><p class="card-subtitle">Database-backed system notices</p></div><button class="card-link" data-go-page="notifications">View all</button></div><div class="card-body notification-list">${notificationArticles(state.data.notifications.slice(0, 4))}</div></section></div>
+      <div class="admin-dashboard-layout"><div class="admin-dashboard-main"><section class="card order-activity-card"><div class="card-head"><div><h3 class="card-title">Account Overview</h3><p class="card-subtitle">Users by role</p></div></div><div class="card-body">${chartFromCounts(Object.fromEntries((uiConfig().roles || ["Admin", "Doctor", "Laboratory Staff", "Patient"]).map((role) => [role, state.data.users.filter((u) => u.role === role).length])))}</div></section></div><section class="card notifications-card"><div class="card-head"><div><h3 class="card-title">Latest Notifications</h3><p class="card-subtitle">Database-backed system notices</p></div><button class="card-link" data-go-page="notifications">View all</button></div><div class="card-body notification-list">${notificationArticles(state.data.notifications.slice(0, previewLimit()))}</div></section></div>
       ${table(["Time", "User", "Action", "Module", "Details"], auditRows, "Latest audit records")}`;
   }
 
@@ -992,11 +1137,11 @@
                 { value: "roles", label: "Selected roles" },
                 { value: "pages", label: "Selected modules/pages" },
               ], settings.scope || "all")}</div>
-              <fieldset class="form-field full maintenance-options"><legend>Affected Roles</legend>
-                ${["Doctor", "Laboratory Staff", "Patient"].map((role) => `<label class="register-check"><input type="checkbox" name="affectedRoles" value="${h(role)}" ${(settings.affectedRoles || []).includes(role) ? "checked" : ""}><span>${h(role)}</span></label>`).join("")}
+              <fieldset class="form-field full maintenance-options" data-maintenance-options="roles" ${settings.scope !== "roles" ? "hidden" : ""}><legend>Affected Roles</legend>
+                <div class="maintenance-option-grid">${(uiConfig().roles || ["Admin", "Doctor", "Laboratory Staff", "Patient"]).filter((role) => role !== "Admin").map((role) => `<label class="maintenance-option"><input type="checkbox" name="affectedRoles" value="${h(role)}" ${(settings.affectedRoles || []).includes(role) ? "checked" : ""}><span>${h(role)}</span></label>`).join("")}</div>
               </fieldset>
-              <fieldset class="form-field full maintenance-options"><legend>Affected Modules</legend>
-                ${["dashboard", "orders", "results", "notifications", "settings", "patients", "facilities", "create-order", "upload", "review", "queue", "profile", "registration"].map((page) => `<label class="register-check"><input type="checkbox" name="affectedPages" value="${h(page)}" ${(settings.affectedPages || []).includes(page) ? "checked" : ""}><span>${h({ orders: "laboratory requests", "create-order": "new laboratory request" }[page] || page.replace("-", " "))}</span></label>`).join("")}
+              <fieldset class="form-field full maintenance-options" data-maintenance-options="pages" ${settings.scope !== "pages" ? "hidden" : ""}><legend>Affected Modules</legend>
+                <div class="maintenance-option-grid maintenance-module-grid">${(uiConfig().maintenancePages || ["dashboard", "orders", "results", "notifications", "settings", "patients", "facilities", "create-order", "upload", "review", "queue", "profile", "registration"]).map((page) => `<label class="maintenance-option"><input type="checkbox" name="affectedPages" value="${h(page)}" ${(settings.affectedPages || []).includes(page) ? "checked" : ""}><span>${h({ orders: "laboratory requests", "create-order": "new laboratory request" }[page] || page.replace("-", " "))}</span></label>`).join("")}</div>
               </fieldset>
               ${field("Maintenance Message", "message", settings.message || "", "textarea", "rows=\"4\" required maxlength=\"255\"")}
               ${field("Reason", "reason", settings.reason || "", "text", "maxlength=\"255\" placeholder=\"Optional internal or public reason\"")}
@@ -1010,8 +1155,8 @@
   }
 
   function renderDoctorDashboard() {
-    const patientRows = state.data.patients.slice(0, 5).map((patient) => [h(patient.patientCode), person(patient.name, patient.email, patient.avatar), h(patient.sex || "-"), h(patient.primaryFacility || "-"), badge(patient.latestStatus || "Pending"), `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
-    const resultRows = state.data.results.slice(0, 5).map((result) => [h(result.resultNumber), h(result.patientName), h(result.testName), badge(result.status), h(result.facilityName), `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const patientRows = state.data.patients.slice(0, previewLimit()).map((patient) => [h(patient.patientCode), person(patient.name, patient.email, patient.avatar), h(patient.sex || "-"), h(patient.primaryFacility || "-"), badge(patient.latestStatus || "Pending"), `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
+    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.patientName), h(result.testName), badge(result.status), h(result.facilityName), `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">Review</button>`]);
     return `${heading(...pageMeta.Doctor.dashboard, `<button class="btn btn-secondary" data-go-page="results">${icon("results")} Results</button><button class="btn btn-primary" data-go-page="create-order">${icon("plus")} New Laboratory Request</button>`)}
       <div class="stats-grid">${dashboardStats()}</div>
       <div class="doctor-dashboard-grid"><section class="card"><div class="card-head"><div><h3 class="card-title">My Laboratory Requests</h3><p class="card-subtitle">Current status distribution</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByStatus)}</div></section>${donutCard("My Request Status", state.data.reports.ordersByStatus, "Requests")}</div>
@@ -1050,7 +1195,7 @@
     const formHint = cannotSubmit ? '<div class="form-hint">Add at least one active patient, facility, doctor, and test before submitting a laboratory request.</div>' : "";
     const meta = pageMeta[currentUser.role]["create-order"] || pageMeta.Doctor["create-order"];
     return `${heading(...meta)}
-      <div class="create-order-layout"><section class="card"><div class="card-head"><div><h3 class="card-title">Available Patients</h3><p class="card-subtitle">Choose from database patient records.</p></div></div><div class="recent-patient-list">${state.data.availablePatients.slice(0, 6).map((patient, index) => `<button class="recent-patient ${index === 0 ? "selected" : ""}" type="button" data-patient-pick="${patient.id}">${avatar(patient.avatar)}<div><strong>${h(patient.name)}</strong><span>${h(patient.patientCode)} - ${h(patient.sex || "No sex recorded")}</span></div></button>`).join("")}</div></section>
+      <div class="create-order-layout"><section class="card"><div class="card-head"><div><h3 class="card-title">Available Patients</h3><p class="card-subtitle">Choose from database patient records.</p></div></div><div class="recent-patient-list">${state.data.availablePatients.slice(0, previewLimit()).map((patient, index) => `<button class="recent-patient ${index === 0 ? "selected" : ""}" type="button" data-patient-pick="${patient.id}">${avatar(patient.avatar)}<div><strong>${h(patient.name)}</strong><span>${h(patient.patientCode)} - ${h(patient.sex || "No sex recorded")}</span></div></button>`).join("")}</div></section>
       <form class="card order-compose-card" data-form="create-order"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Laboratory Request Details</h3><p class="card-subtitle">New requests are submitted as Pending for laboratory intake.</p></div>${badge("Pending")}</div>${formHint}<div class="form-grid"><div class="form-field full"><label>Patient</label>${patientSelect}</div><div class="form-field full"><label>Facility</label>${facilitySelect}</div><div class="form-field full"><label>Requested Tests</label><div class="test-choice-grid">${testsMarkup}</div></div><div class="form-field"><label>Priority</label>${select("priority", ["Regular", "Priority"], "Regular", disabled)}</div><div class="form-field"><label>Status</label><div class="readonly-pill">${badge("Pending")} Laboratory staff updates this after intake.</div></div><div class="form-field full"><label>Clinical Indication / Notes</label><textarea name="clinicalNotes" ${disabled} placeholder="Clinical indication, provisional diagnosis, or special instructions"></textarea></div></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("plus-file")} Submit Laboratory Request</button></div></form>
       <aside class="card order-summary"><p class="eyebrow">Request Summary</p><h3 class="card-title">Clinical workflow</h3><div class="clinical-note-box"><h4>${icon("shield")} Notifications included</h4><p>Submitting creates a laboratory request, notifies laboratory staff and the patient, and writes an audit record.</p></div></aside></div>`;
   }
@@ -1064,8 +1209,8 @@
   }
 
   function renderLabDashboard() {
-    const orderRows = state.data.orders.slice(0, 6).map((order) => [h(order.orderNumber), h(order.patientName), h(order.tests), badge(order.priority), badge(order.status), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">Process</button>`]);
-    const resultRows = state.data.results.slice(0, 5).map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), badge(result.status), `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const orderRows = state.data.orders.slice(0, previewLimit()).map((order) => [h(order.orderNumber), h(order.patientName), h(order.tests), badge(order.priority), badge(order.status), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">Process</button>`]);
+    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), badge(result.status), `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">Review</button>`]);
     return `${heading(...pageMeta["Laboratory Staff"].dashboard)}
       <div class="stats-grid">${dashboardStats()}</div>
       <div class="lab-dashboard-grid"><section>${table(["Request No.", "Patient", "Tests", "Priority", "Status", "Action"], orderRows, "Assigned laboratory requests")}</section><div class="lab-side-stack">${donutCard("Assigned Request Status", state.data.reports.ordersByStatus, "Requests")}${table(["Result", "Request", "Patient", "Test", "Status", "Action"], resultRows, "Recent result records")}</div></div>`;
@@ -1079,9 +1224,9 @@
     const queueRows = eligible.map((order) => [h(order.orderNumber), h(order.patientName), h(order.tests), badge(order.priority), badge(order.status), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
     const disabled = eligible.length ? "" : "disabled";
     const orderSelect = eligible.length ? select("orderId", orderOptions, orderOptions[0]?.value || "", "required") : '<select name="orderId" required disabled><option>No eligible laboratory requests</option></select>';
-    const defaultValueRows = ["WBC", "Hemoglobin", "Platelets", "CRP"].map((parameter) => resultValueInputRow({ parameter }, disabled)).join("");
+    const defaultValueRows = resultValueInputRow({}, disabled);
     return `${heading(...pageMeta["Laboratory Staff"].upload)}
-      <div class="upload-layout"><form class="card upload-panel" data-form="upload-result"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Structured Result Entry</h3><p class="card-subtitle">Saved as a pending-review result.</p></div>${icon("upload")}</div><div class="form-grid"><div class="form-field full"><label>Laboratory Request</label>${orderSelect}</div><section class="result-scanner full" aria-labelledby="result-scanner-title"><div class="result-scanner-copy"><span class="result-scanner-icon">${icon("scan")}</span><div><h3 id="result-scanner-title">Scan Laboratory Result</h3><p>Take a new photo or choose an existing result image. The scanner fills recognized values for staff review; it never submits them automatically.</p></div></div><div class="result-scanner-controls"><button class="btn btn-secondary" type="button" data-open-result-camera ${disabled}>${icon("camera")} Take Photo</button><button class="btn btn-secondary" type="button" data-choose-result-image ${disabled}>${icon("file")} Choose Image</button><button class="btn btn-primary" type="button" data-scan-result ${disabled}>${icon("scan")} Scan and Fill Values</button><input class="result-scan-file-input" type="file" accept="image/jpeg,image/png,image/webp" data-result-scan-input ${disabled}></div><div class="result-camera-panel" data-result-camera-panel hidden><video data-result-camera-video autoplay playsinline muted></video><canvas data-result-camera-canvas hidden></canvas><div class="result-camera-actions"><button class="btn btn-primary" type="button" data-capture-result-photo>${icon("camera")} Capture Photo</button><button class="btn btn-secondary" type="button" data-close-result-camera>Cancel Camera</button></div></div><img class="result-scan-preview" alt="Selected laboratory result preview" data-result-scan-preview hidden><progress class="result-scan-progress" max="100" value="0" data-result-scan-progress hidden></progress><p class="result-scan-status" role="status" aria-live="polite" data-result-scan-status>Select a sharp, straight-on image with readable parameter names and values.</p><details class="result-scan-output" data-result-scan-output hidden><summary>Review text detected in image</summary><pre data-result-scan-text></pre></details><div class="result-scan-warning">${icon("alert")} OCR can misread decimal points, units, or flags. Laboratory Staff must compare every populated field with the source report before uploading.</div></section><div class="form-field full"><label>Findings Summary</label><textarea name="findings" required ${disabled} placeholder="Enter laboratory findings"></textarea></div><div class="form-field full"><label>Remarks</label><textarea name="remarks" ${disabled} placeholder="Specimen notes, QC notes, or review comments"></textarea></div><div class="form-field full"><label>Additional Result Attachments</label><input name="attachments" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple ${disabled}><small>The scanned image is included automatically. You can attach additional PDF reports or result images up to 10 MB each.</small></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3><table class="parameter-input-table"><thead><tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Reference</th><th>Flag</th></tr></thead><tbody>${defaultValueRows}</tbody></table><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("upload")} Upload Result</button></div></form><section>${table(["Request No.", "Patient", "Tests", "Priority", "Status", "Action"], queueRows, "Requests available for result upload")}</section></div>`;
+      <div class="upload-layout"><form class="card upload-panel" data-form="upload-result"><div class="card-head form-card-head"><div><h3 class="card-title">Structured Result Entry</h3><p class="card-subtitle">Saved as a pending-review result.</p></div>${icon("upload")}</div><div class="form-grid"><div class="form-field full"><label>Laboratory Request</label>${orderSelect}</div><section class="result-scanner full" aria-labelledby="result-scanner-title"><div class="result-scanner-copy"><span class="result-scanner-icon">${icon("scan")}</span><div><h3 id="result-scanner-title">Scan Laboratory Result</h3><p>PDF, JPG, PNG, or WEBP up to 10 MB. PDFs scan the first five pages. OCR fills the form but never submits it.</p></div></div><div class="result-scanner-controls"><button class="btn btn-secondary" type="button" data-open-result-camera ${disabled}>${icon("camera")} Take Photo</button><button class="btn btn-secondary" type="button" data-choose-result-image ${disabled}>${icon("file")} Choose File</button><button class="btn btn-primary" type="button" data-scan-result ${disabled}>${icon("scan")} Scan and Fill Values</button><input class="result-scan-file-input" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" data-result-scan-input ${disabled}></div><div class="result-camera-panel" data-result-camera-panel hidden><video data-result-camera-video autoplay playsinline muted></video><canvas data-result-camera-canvas hidden></canvas><div class="result-camera-actions"><button class="btn btn-primary" type="button" data-capture-result-photo>${icon("camera")} Capture Photo</button><button class="btn btn-secondary" type="button" data-close-result-camera>Cancel Camera</button></div></div><img class="result-scan-preview" alt="Selected laboratory result preview" data-result-scan-preview hidden><div class="result-scan-file-actions"><button class="btn btn-secondary btn-sm" type="button" data-rotate-result-image disabled>${icon("activity")} Rotate 90°</button><button class="btn btn-secondary btn-sm" type="button" data-remove-result-source disabled>${icon("trash")} Remove source</button></div><label class="register-check result-source-choice"><input type="checkbox" data-include-result-source checked><span>Keep the selected source report as a protected result attachment.</span></label><progress class="result-scan-progress" max="100" value="0" data-result-scan-progress hidden></progress><p class="result-scan-status" role="status" aria-live="polite" data-result-scan-status>Select a sharp, straight-on image with the complete result table visible.</p><details class="result-scan-output" data-result-scan-output hidden><summary>Review text detected in file</summary><pre data-result-scan-text></pre></details><div class="result-scan-warning">${icon("alert")} OCR can misread decimal points, units, or flags. Rows below 75% confidence are highlighted. Compare every field with the source before uploading.</div></section><div class="form-field full"><label>Findings Summary</label><textarea name="findings" required ${disabled} placeholder="Enter laboratory findings"></textarea></div><div class="form-field full"><label>Remarks</label><textarea name="remarks" ${disabled} placeholder="Specimen notes, QC notes, or review comments"></textarea></div><div class="form-field full"><label>Additional Result Attachments</label><input name="attachments" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple ${disabled}><small>Add up to five protected reports or images, maximum 10 MB each.</small></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3>${resultValueTable(defaultValueRows, disabled)}<div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("upload")} Upload Result</button></div></form><section>${table(["Request No.", "Patient", "Tests", "Priority", "Status", "Action"], queueRows, "Requests available for result upload")}</section></div>`;
   }
 
   function renderLabReview() {
@@ -1094,7 +1239,7 @@
 
   function renderLabOperations() {
     return `${heading(...pageMeta["Laboratory Staff"].operations)}
-      <div class="operations-layout"><section class="card"><div class="card-head"><div><h3 class="card-title">Facility Workload</h3><p class="card-subtitle">Open work by assigned facility.</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByFacility)}</div></section><section class="card"><div class="card-head"><div><h3 class="card-title">Operational Tasks</h3><p class="card-subtitle">Generated from current database queue</p></div></div><div class="card-body task-list">${state.data.orders.slice(0, 8).map((order) => `<div class="task-item"><span class="check">${icon("check")}</span><div><strong>${h(order.orderNumber)} - ${h(order.tests)}</strong><span>${h(order.patientName)} at ${h(order.facilityName)}</span></div><time>${h(order.status)}</time></div>`).join("") || '<div class="empty-state">No active tasks.</div>'}</div></section></div>`;
+      <div class="operations-layout"><section class="card"><div class="card-head"><div><h3 class="card-title">Facility Workload</h3><p class="card-subtitle">Open work by assigned facility.</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByFacility)}</div></section><section class="card"><div class="card-head"><div><h3 class="card-title">Operational Tasks</h3><p class="card-subtitle">Generated from current database queue</p></div></div><div class="card-body task-list">${state.data.orders.slice(0, previewLimit()).map((order) => `<div class="task-item"><span class="check">${icon("check")}</span><div><strong>${h(order.orderNumber)} - ${h(order.tests)}</strong><span>${h(order.patientName)} at ${h(order.facilityName)}</span></div><time>${h(order.status)}</time></div>`).join("") || '<div class="empty-state">No active tasks.</div>'}</div></section></div>`;
   }
 
   function renderLabFacilities() {
@@ -1111,8 +1256,8 @@
   }
 
   function renderPatientDashboard() {
-    const orderRows = state.data.orders.slice(0, 5).map((order) => [h(order.orderNumber), h(order.tests), h(order.facilityName), badge(order.status), shortDate(order.createdAt), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
-    const resultRows = state.data.results.slice(0, 4).map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.testName), badge(result.status), shortDateTime(result.releasedAt), `<button class="btn btn-primary btn-sm" data-drawer="result" data-id="${result.id}">View Result</button>`]);
+    const orderRows = state.data.orders.slice(0, previewLimit()).map((order) => [h(order.orderNumber), h(order.tests), h(order.facilityName), badge(order.status), shortDate(order.createdAt), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
+    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.testName), badge(result.status), shortDateTime(result.releasedAt), `<button class="btn btn-primary btn-sm" data-drawer="result" data-id="${result.id}">View Result</button>`]);
     return `${heading(...pageMeta.Patient.dashboard)}
       <div class="privacy-banner">${icon("shield")} You are viewing only records linked to patient ID ${h(currentUser.patientProfileId)}.</div>
       <div class="stats-grid">${dashboardStats()}</div>
@@ -1138,12 +1283,83 @@
     Patient: { dashboard: renderPatientDashboard, orders: () => renderOrders("Patient"), results: () => renderResults("Patient"), notifications: () => renderNotifications("Patient"), profile: renderPatientProfile, settings: renderPatientSettings },
   };
 
-  async function loadAppData() {
-    const data = await api("app_data");
+  async function loadAppData(page = "dashboard") {
+    const data = await api("app_data", { page });
     state.data = data;
     currentUser = data.currentUser || currentUser;
-    writeCachedAppData();
     hydrateProfile();
+  }
+
+  function pageDataKeys(page) {
+    const role = currentUser?.role;
+    const map = {
+      dashboard: role === "Admin" ? ["users", "facilities", "notifications", "audit"] : role === "Doctor" ? ["patients", "orders", "results", "notifications"] : role === "Patient" ? ["patients", "orders", "results", "notifications"] : ["orders", "results", "notifications"],
+      users: ["users", "facilities"], facilities: role === "Doctor" ? ["facilities", "tests"] : ["facilities"], tests: ["tests"], patients: ["patients", "facilities"],
+      "create-order": ["patients", "availablePatients", "facilities", "tests"], orders: ["orders", "facilities"], queue: ["orders", "facilities"], upload: ["orders", "results"],
+      review: ["results"], results: ["results", "facilities"], operations: ["orders"], reports: ["users", "facilities", "tests", "orders", "results", "notifications"],
+      audit: ["audit"], notifications: ["notifications"], profile: role === "Patient" ? ["patients", "results"] : [], settings: [], maintenance: [],
+    };
+    return map[page] || [];
+  }
+
+  async function ensurePageData(page) {
+    const loaded = new Set(state.data?.loadedPages || []);
+    if (loaded.has(page) || state.loadingPages.has(page)) return;
+    state.loadingPages.add(page);
+    try {
+      const fresh = await api("page_data", { page });
+      pageDataKeys(page).forEach((key) => { state.data[key] = fresh[key] || []; });
+      if (page === "dashboard" || page === "reports" || ["orders", "results", "review", "operations", "queue", "upload"].includes(page)) {
+        state.data.dashboard = fresh.dashboard || state.data.dashboard;
+        state.data.reports = fresh.reports || state.data.reports;
+      }
+      state.data.maintenance = fresh.maintenance || state.data.maintenance;
+      state.data.uiConfig = fresh.uiConfig || state.data.uiConfig;
+      loaded.add(page);
+      state.data.loadedPages = [...loaded];
+      rebuildDerivedData();
+      setPage(page, false);
+    } catch (error) {
+      toast(error.message || "This page could not be loaded.", "error");
+      if ($("#page-content")) $("#page-content").innerHTML = `<section class="card"><div class="empty-state">${h(error.message || "This page could not be loaded.")}</div></section>`;
+    } finally {
+      state.loadingPages.delete(page);
+    }
+  }
+
+  async function pollNotifications() {
+    if (document.hidden || notificationPollPending || !state.data || !currentUser) return;
+    notificationPollPending = true;
+    try {
+      const payload = await api("notifications", { limit: 50 });
+      if (Array.isArray(payload.notifications)) {
+        const previous = state.data.notifications || [];
+        const merged = [...payload.notifications, ...previous.filter((item) => !payload.notifications.some((fresh) => fresh.id === item.id))]
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        const changed = JSON.stringify(merged) !== JSON.stringify(previous);
+        syncNotifications(merged);
+        if (changed && state.page === "notifications" && !document.activeElement?.closest("form")) setPage("notifications", false);
+      }
+      notificationPollDelay = 30000;
+    } catch (error) {
+      if (error.status === 401) {
+        clearTimeout(notificationPollTimer);
+        notificationPollTimer = null;
+        currentUser = null;
+        return;
+      }
+      notificationPollDelay = Math.min(notificationPollDelay * 2, 300000);
+    } finally {
+      notificationPollPending = false;
+      if (currentUser) notificationPollTimer = setTimeout(pollNotifications, notificationPollDelay);
+    }
+  }
+
+  function startNotificationPolling() {
+    if (notificationPollTimer) clearTimeout(notificationPollTimer);
+    notificationPollDelay = 30000;
+    notificationPollTimer = setTimeout(pollNotifications, notificationPollDelay);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) pollNotifications(); });
   }
 
   function setPage(requested = "dashboard", updateHash = true) {
@@ -1152,6 +1368,16 @@
     const role = currentUser.role;
     const roleRenderers = renderers[role] || {};
     const page = roleRenderers[requested] ? requested : "dashboard";
+    const loadedPages = new Set(state.data?.loadedPages || []);
+    if (!loadedPages.has(page)) {
+      state.page = page;
+      if (updateHash && location.hash !== `#${page}`) history.pushState(null, "", `#${page}`);
+      const meta = pageMeta[role]?.[page] || pageMeta[role]?.dashboard || ["Dashboard"];
+      if ($("#page-title")) $("#page-title").textContent = meta[0];
+      if ($("#page-content")) $("#page-content").innerHTML = loading();
+      ensurePageData(page);
+      return;
+    }
     const maintenance = state.data?.maintenance;
     const roleBlocked = maintenance?.scope === "all"
       || (maintenance?.scope === "roles" && (maintenance.affectedRoles || []).includes(role));
@@ -1168,10 +1394,11 @@
     state.page = page;
     $("#page-content").innerHTML = renderer();
     hydrateTooltips($("#page-content"));
+    paginateTables($("#page-content"));
     $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
     const meta = pageMeta[role]?.[page] || pageMeta[role]?.dashboard || ["Dashboard"];
     $("#page-title").textContent = meta[0];
-    document.title = `${meta[0]} | Centralized Laboratory Results System`;
+    document.title = `${meta[0]} | ${appName()}`;
     const profileDropdown = $(".profile-dropdown");
     if (profileDropdown) profileDropdown.hidden = true;
     $("[data-profile-toggle]")?.setAttribute("aria-expanded", "false");
@@ -1186,7 +1413,7 @@
   }
 
   function userForm(user = {}) {
-    const roles = ["Admin", "Doctor", "Laboratory Staff", "Patient"];
+    const roles = uiConfig().roles || ["Admin", "Doctor", "Laboratory Staff", "Patient"];
     const facilityOptions = [{ value: "", label: "Unassigned" }, ...state.data.facilities.map((facility) => ({ value: facility.id, label: facility.name }))];
     return `<form data-form="user"><input type="hidden" name="id" value="${h(user.id || "")}"><div class="form-grid">${field("Full Name", "name", user.name || "", "text", "required")}${field("Email", "email", user.email || "", "email", "required")}${field("Username", "username", user.username || "", "text", 'required minlength="3" maxlength="20" pattern="[A-Za-z0-9._-]{3,20}"')}${field("Contact", "contact", user.contact || "")}<div class="form-field full"><label>Role</label>${select("role", roles, user.role || "Patient", "required")}</div><div class="form-field full"><label>Assigned Facility</label>${select("facilityId", facilityOptions, user.assignedFacilityId || "")}</div><div class="form-field full"><label>Status</label>${select("status", ["Active", "Inactive"], user.status || "Active", "required")}</div>${field(user.id ? "New Password (optional)" : "Password", "password", "", "password", user.id ? "" : "required")}</div><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Save User</button></div></form>`;
   }
@@ -1231,17 +1458,17 @@
       ? `<form data-form="clinical-note"><input type="hidden" name="resultId" value="${h(result.id)}"><div class="form-field full"><label>Clinical Note</label><textarea name="note" required>${h(result.clinicalNote || "")}</textarea></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save Clinical Note</button></div></form>`
       : "";
     const canDownload = result.status === "Released";
-    const detailDownload = canDownload ? `<a class="btn btn-primary btn-sm" href="${h(apiUrl("download_result_details", { id: result.id }))}" target="_blank" rel="noopener">${icon("download")} Download Result Details</a>` : "";
+    const detailDownload = canDownload ? `<a class="btn btn-primary btn-sm" href="${h(apiUrl("download_result_details", { id: result.id }))}" target="_blank" rel="noopener">${icon("download")} Print / Save PDF</a>` : "";
     const files = (result.files || []).length
       ? `<div class="attachment-list">${result.files.map((file) => `<a class="attachment-link" href="${h(API_URL.replace(/[^/]+$/, ""))}${h(file.downloadUrl)}" target="_blank" rel="noopener">${icon("file")} <span>Download Uploaded File: ${h(file.originalName)}</span><small>${Math.round((file.sizeBytes || 0) / 1024)} KB</small></a>`).join("")}</div>`
       : '<p>No files attached.</p>';
-    return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Request No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Created", h(shortDateTime(result.createdAt || result.uploadedAt))], ["Updated", h(shortDateTime(result.updatedAt || result.uploadedAt))], ["Released", h(shortDateTime(result.releasedAt))], ["Status", badge(result.status)]])}${detailDownload ? `<div class="result-download-actions">${detailDownload}</div>` : ""}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${noteForm}${labActions}`;
+    return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Request No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Created", h(shortDateTime(result.createdAt || result.uploadedAt))], ["Updated", h(shortDateTime(result.updatedAt || result.uploadedAt))], ["Released", h(shortDateTime(result.releasedAt))], ["Status", badge(result.status)], ["Entered by", h(result.uploadedBy || "-")], ["Verified by", h(result.reviewedBy || "-")], ["Released by", h(result.releasedBy || "-")]])}${detailDownload ? `<div class="result-download-actions">${detailDownload}</div>` : ""}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${noteForm}${labActions}`;
   }
 
   function resultEditForm(result) {
     if (!result) return '<div class="empty-state">Result not found.</div>';
-    const rows = (result.values?.length ? result.values : [{ parameter: "", value: "", unit: "", referenceRange: "", flag: "" }]).map((value) => `<tr><td><input name="parameter" value="${h(value.parameter)}"></td><td><input name="value" value="${h(value.value)}"></td><td><input name="unit" value="${h(value.unit)}"></td><td><input name="referenceRange" value="${h(value.referenceRange)}"></td><td><input name="flag" value="${h(value.flag)}"></td></tr>`).join("");
-    return `<form data-form="result-edit"><input type="hidden" name="resultId" value="${h(result.id)}"><div class="form-grid">${field("Findings Summary", "findings", result.findings || "", "textarea", "required")}${field("Remarks", "remarks", result.remarks || "", "textarea")}<div class="form-field full"><label>Add Attachments</label><input name="attachments" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple><small>New files will be added to the result record.</small></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3><table class="parameter-input-table"><thead><tr><th>Parameter</th><th>Value</th><th>Unit</th><th>Reference</th><th>Flag</th></tr></thead><tbody>${rows}</tbody></table><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">${icon("check")} Save Result</button></div></form>`;
+    const rows = (result.values?.length ? result.values : [{ parameter: "", value: "", unit: "", referenceRange: "", flag: "" }]).map((value) => resultValueInputRow(value)).join("");
+    return `<form data-form="result-edit"><input type="hidden" name="resultId" value="${h(result.id)}"><input type="hidden" name="expectedUpdatedAt" value="${h(result.updatedAt || result.createdAt || "")}"><div class="form-grid">${field("Findings Summary", "findings", result.findings || "", "textarea", "required")}${field("Remarks", "remarks", result.remarks || "", "textarea")}<div class="form-field full"><label>Add Attachments</label><input name="attachments" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple><small>New files will be added to the result record.</small></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3>${resultValueTable(rows)}<div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">${icon("check")} Save Result</button></div></form>`;
   }
 
   function patientDetails(patient) {
@@ -1323,10 +1550,15 @@
     if (payload?.app) {
       state.data = payload.app;
       currentUser = payload.app.currentUser || currentUser;
-      writeCachedAppData();
     } else {
-      await loadAppData();
+      ["users", "facilities", "tests", "patients", "availablePatients", "orders", "results", "notifications", "audit"].forEach((key) => {
+        if (Array.isArray(payload?.[key])) state.data[key] = payload[key];
+      });
+      if (payload?.maintenance) state.data.maintenance = payload.maintenance;
+      if (payload?.currentUser || payload?.user) currentUser = payload.currentUser || payload.user;
+      state.data.currentUser = currentUser;
     }
+    rebuildDerivedData();
     hydrateProfile();
     setPage(state.page, false);
     toast(message);
@@ -1360,9 +1592,10 @@
         await refreshAfter(result, "Laboratory request submitted.");
         setPage("orders");
       } else if (kind === "upload-result") {
+        const includeSource = $("[data-include-result-source]", form)?.checked !== false;
         const attachmentFiles = [
           ...($('input[name="attachments"]', form)?.files || []),
-          ...($("[data-result-scan-input]", form)?.files || []),
+          ...(includeSource ? ($("[data-result-scan-input]", form)?.files || []) : []),
         ];
         payload.attachments = await readAttachments(attachmentFiles.filter((file, index, files) => files.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.lastModified === file.lastModified) === index));
         payload.values = $$("tbody tr", form).map((row) => ({
@@ -1399,7 +1632,7 @@
         payload.affectedRoles = $$('input[name="affectedRoles"]:checked', form).map((input) => input.value);
         payload.affectedPages = $$('input[name="affectedPages"]:checked', form).map((input) => input.value);
         const wasEnabled = Boolean(state.data?.maintenance?.isEnabled);
-        if (payload.isEnabled && !wasEnabled && !window.confirm("Enabling maintenance mode will prevent patients, doctors, and lab staff from accessing the system. Continue?")) {
+        if (payload.isEnabled && !wasEnabled && !await glassDialog({ title: "Enable maintenance mode?", message: "Patients, doctors, and laboratory staff covered by this scope will temporarily lose access.", confirmText: "Enable maintenance", danger: true })) {
           return;
         }
         result = await api("save_maintenance_settings", payload);
@@ -1410,7 +1643,7 @@
         closeDrawer();
       }
     } catch (error) {
-      toast(error.message || "The request failed.");
+      toast(error.message || "The request failed.", "error");
     } finally {
       button?.removeAttribute("disabled");
     }
@@ -1434,7 +1667,66 @@
     if (event.target.closest("[data-toggle-sidebar]")) { toggleSidebarCollapsed(); return; }
     if (event.target.closest("[data-open-sidebar]")) { openSidebar(); return; }
     if (event.target.closest("[data-close-sidebar]")) { closeSidebar(); return; }
-    if (event.target.closest("[data-download]")) { downloadRecords(); return; }
+    if (event.target.closest("[data-download]")) {
+      downloadRecords().catch((error) => toast(error.message || "The export failed.", "error"));
+      return;
+    }
+
+    const tablePageButton = event.target.closest("[data-table-prev], [data-table-next]");
+    if (tablePageButton) {
+      const card = tablePageButton.closest("[data-paginated-table]");
+      card.dataset.page = String(Math.max(1, Number(card.dataset.page || 1) + (tablePageButton.matches("[data-table-next]") ? 1 : -1)));
+      paginateTables(card.parentElement || document);
+      return;
+    }
+
+    const addParameter = event.target.closest("[data-add-result-parameter]");
+    if (addParameter) {
+      const form = addParameter.closest('form[data-form="upload-result"], form[data-form="result-edit"]');
+      const tbody = $(".parameter-input-table tbody", form);
+      if (tbody) {
+        tbody.insertAdjacentHTML("beforeend", resultValueInputRow());
+        const row = tbody.lastElementChild;
+        hydrateTooltips(row);
+        $('input[name="parameter"]', row)?.focus();
+      }
+      return;
+    }
+
+    const removeParameter = event.target.closest("[data-remove-result-parameter]");
+    if (removeParameter) {
+      const row = removeParameter.closest("tr");
+      const tbody = row?.parentElement;
+      if (!row || !tbody) return;
+      if (tbody.children.length > 1) row.remove();
+      else $$('input', row).forEach((input) => { input.value = ""; });
+      return;
+    }
+
+    const rotateResultImage = event.target.closest("[data-rotate-result-image]");
+    if (rotateResultImage) {
+      const form = rotateResultImage.closest('form[data-form="upload-result"]');
+      if (!form || !$("[data-result-scan-input]", form)?.files?.length) return;
+      form.dataset.scanRotation = String((Number(form.dataset.scanRotation || 0) + 90) % 360);
+      const preview = $("[data-result-scan-preview]", form);
+      if (preview) preview.style.transform = `rotate(${form.dataset.scanRotation}deg)`;
+      scanResultImage(form);
+      return;
+    }
+
+    const removeResultSource = event.target.closest("[data-remove-result-source]");
+    if (removeResultSource) {
+      const form = removeResultSource.closest('form[data-form="upload-result"]');
+      const input = $("[data-result-scan-input]", form);
+      const preview = $("[data-result-scan-preview]", form);
+      if (input) input.value = "";
+      if (preview?.dataset.objectUrl) URL.revokeObjectURL(preview.dataset.objectUrl);
+      if (preview) { preview.hidden = true; preview.removeAttribute("src"); preview.style.transform = ""; }
+      $$('[data-rotate-result-image], [data-remove-result-source]', form).forEach((button) => { button.disabled = true; });
+      form.dataset.scanRotation = "0";
+      updateScannerStatus(form, "Source removed. Choose another file or enter values manually.", null, "idle");
+      return;
+    }
 
     const utilizationPeriod = event.target.closest("[data-utilization-period]");
     if (utilizationPeriod) {
@@ -1534,13 +1826,12 @@
       try {
         const result = await api("toggle_user_status", { id: toggleUser.dataset.toggleUser, status: nextStatus });
         if (result.users) state.data.users = result.users;
-        writeCachedAppData();
         setPage(state.page, false);
         toast("User status updated.");
       } catch (error) {
         if (user) user.status = previousStatus;
         setPage(state.page, false);
-        toast(error.message);
+        toast(error.message, "error");
       }
       return;
     }
@@ -1548,14 +1839,14 @@
     const deleteUser = event.target.closest("[data-delete-user]");
     if (deleteUser) {
       const name = deleteUser.dataset.userName || "this user";
-      if (!window.confirm(`Deactivate ${name}? They will no longer be able to sign in, but existing laboratory requests and results will remain intact.`)) {
+      if (!await glassDialog({ title: `Deactivate ${name}?`, message: "This user will no longer be able to sign in. Existing laboratory requests and results will remain intact.", confirmText: "Deactivate user", danger: true })) {
         return;
       }
       try {
         const result = await api("delete_user", { id: deleteUser.dataset.deleteUser });
         await refreshAfter(result, "User deactivated successfully.");
       } catch (error) {
-        toast(error.message);
+        toast(error.message, "error");
       }
       return;
     }
@@ -1570,12 +1861,12 @@
       }
       closeDrawer();
       try {
-        const result = await api("update_order_status", { orderId: orderStatus.dataset.id, status: orderStatus.dataset.orderStatus });
+        const result = await api("update_order_status", { orderId: orderStatus.dataset.id, status: orderStatus.dataset.orderStatus, expectedUpdatedAt: order?.updatedAt || order?.createdAt });
         await refreshAfter(result, "Laboratory request status updated.");
       } catch (error) {
         if (order) order.status = previousStatus;
         setPage(state.page, false);
-        toast(error.message);
+        toast(error.message, "error");
       }
       return;
     }
@@ -1590,19 +1881,19 @@
       }
       closeDrawer();
       try {
-        const result = await api("update_result_status", { resultId: resultStatus.dataset.id, status: resultStatus.dataset.resultStatus });
+        const result = await api("update_result_status", { resultId: resultStatus.dataset.id, status: resultStatus.dataset.resultStatus, expectedUpdatedAt: resultRecord?.updatedAt || resultRecord?.createdAt });
         await refreshAfter(result, "Result status updated.");
       } catch (error) {
         if (resultRecord) resultRecord.status = previousStatus;
         setPage(state.page, false);
-        toast(error.message);
+        toast(error.message, "error");
       }
       return;
     }
 
     const rejectResult = event.target.closest("[data-reject-result]");
     if (rejectResult) {
-      const reason = window.prompt("Enter the reason for rejecting this result:");
+      const reason = await glassDialog({ title: "Reject laboratory result?", message: "Record why this result cannot be verified. The reason will be stored with the workflow.", confirmText: "Reject result", danger: true, inputLabel: "Rejection reason", inputRequired: true });
       if (!reason?.trim()) return;
       const resultRecord = recordBy("results", rejectResult.dataset.rejectResult);
       const previousStatus = resultRecord?.status;
@@ -1614,7 +1905,7 @@
       }
       closeDrawer();
       try {
-        const result = await api("reject_result", { resultId: rejectResult.dataset.rejectResult, reason: reason.trim() });
+        const result = await api("reject_result", { resultId: rejectResult.dataset.rejectResult, reason: reason.trim(), expectedUpdatedAt: resultRecord?.updatedAt || resultRecord?.createdAt });
         await refreshAfter(result, "Result rejected.");
       } catch (error) {
         if (resultRecord) {
@@ -1622,7 +1913,7 @@
           resultRecord.rejectedReason = previousReason;
         }
         setPage(state.page, false);
-        toast(error.message);
+        toast(error.message, "error");
       }
       return;
     }
@@ -1651,7 +1942,7 @@
       closeReleaseModal();
       closeDrawer();
       try {
-        const result = await api("release_result", { resultId: releaseConfirm.dataset.releaseConfirm });
+        const result = await api("release_result", { resultId: releaseConfirm.dataset.releaseConfirm, expectedUpdatedAt: resultRecord?.updatedAt || resultRecord?.createdAt });
         await refreshAfter(result, "Result released successfully.");
       } catch (error) {
         if (resultRecord) {
@@ -1659,7 +1950,7 @@
           resultRecord.releasedAt = previousReleasedAt;
         }
         setPage(state.page, false);
-        toast(error.message);
+        toast(error.message, "error");
       }
       return;
     }
@@ -1675,14 +1966,13 @@
       try {
         const result = await api("mark_notification_read", { id: readNotification.dataset.readNotification });
         if (result.notifications) syncNotifications(result.notifications);
-        writeCachedAppData();
         setPage(state.page, false);
         toast("Notification marked as read.");
       } catch (error) {
         if (notification) notification.isRead = wasRead;
         syncNotifications(state.data.notifications);
         setPage(state.page, false);
-        toast(error.message);
+        toast(error.message, "error");
       }
       return;
     }
@@ -1695,7 +1985,6 @@
       try {
         const result = await api("mark_all_notifications_read");
         if (result.notifications) syncNotifications(result.notifications);
-        writeCachedAppData();
         setPage("notifications", false);
         toast("All notifications marked as read.");
       } catch (error) {
@@ -1703,7 +1992,7 @@
         state.data.notifications.forEach((item) => { item.isRead = previousById.get(item.id) ?? item.isRead; });
         syncNotifications(state.data.notifications);
         setPage("notifications", false);
-        toast(error.message);
+        toast(error.message, "error");
       }
     }
   }
@@ -1721,8 +2010,12 @@
       .map((value) => value.toLowerCase());
     $$(".data-table tbody tr, .notification-item, .facility-card, .task-item", content).forEach((row) => {
       const text = row.textContent.toLowerCase();
-      row.hidden = searchTerms.some((term) => !text.includes(term)) || selectedTerms.some((term) => !text.includes(term));
+      const matches = !searchTerms.some((term) => !text.includes(term)) && !selectedTerms.some((term) => !text.includes(term));
+      row.dataset.filterMatch = String(matches);
+      row.hidden = !matches;
     });
+    $$('[data-paginated-table]', content).forEach((card) => { card.dataset.page = "1"; });
+    paginateTables(content);
   }
 
   function handleDashboardInput(event) {
@@ -1731,6 +2024,13 @@
   }
 
   async function handleDashboardChange(event) {
+    if (event.target.matches('form[data-form="maintenance"] select[name="scope"]')) {
+      const form = event.target.closest('form[data-form="maintenance"]');
+      $$('[data-maintenance-options]', form).forEach((group) => {
+        group.hidden = group.dataset.maintenanceOptions !== event.target.value;
+      });
+      return;
+    }
     if (event.target.matches("[data-utilization-anchor], [data-utilization-from], [data-utilization-to]")) {
       if (event.target.matches("[data-utilization-anchor]")) state.utilization.anchor = event.target.value;
       if (event.target.matches("[data-utilization-from]")) state.utilization.from = event.target.value;
@@ -1742,17 +2042,27 @@
       const form = event.target.closest('form[data-form="upload-result"]');
       const file = event.target.files?.[0];
       const preview = $("[data-result-scan-preview]", form);
+      form.dataset.scanRotation = "0";
       if (preview?.dataset.objectUrl) URL.revokeObjectURL(preview.dataset.objectUrl);
       if (!file) {
         if (preview) preview.hidden = true;
+        $$('[data-rotate-result-image], [data-remove-result-source]', form).forEach((button) => { button.disabled = true; });
         updateScannerStatus(form, "Select a sharp, straight-on image with readable parameter names and values.", null, "idle");
         return;
       }
+      $$('[data-rotate-result-image], [data-remove-result-source]', form).forEach((button) => { button.disabled = false; });
       const objectUrl = URL.createObjectURL(file);
       if (preview) {
-        preview.src = objectUrl;
-        preview.dataset.objectUrl = objectUrl;
-        preview.hidden = false;
+        if (file.type === "application/pdf") {
+          URL.revokeObjectURL(objectUrl);
+          preview.removeAttribute("src");
+          preview.hidden = true;
+          updateScannerStatus(form, `Selected PDF: ${file.name}. Up to five pages will be scanned.`, null, "idle");
+        } else {
+          preview.src = objectUrl;
+          preview.dataset.objectUrl = objectUrl;
+          preview.hidden = false;
+        }
       }
       await scanResultImage(form);
       return;
@@ -1768,7 +2078,7 @@
 
   async function logout() {
     clearAppCache();
-    try { await api("logout"); } catch { /* ignored during navigation */ }
+    try { await api("logout"); } catch {}
     location.href = LOGIN_URL;
   }
 
@@ -1869,8 +2179,9 @@
       "patient-email": (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? "" : "Enter a valid email address.",
       "patient-contact": (v) => /^[+\d][\d\s()-]{7,17}$/.test(v.trim()) ? "" : "Enter a valid contact number.",
       "patient-address": (v) => v.trim().length >= 5 ? "" : "Enter your complete address.",
+      "patient-facility": (v) => v ? "" : "Select your primary facility.",
       "patient-username": (v) => /^[a-zA-Z0-9._-]{3,20}$/.test(v) ? "" : "Use 3-20 letters, numbers, dots, hyphens, or underscores.",
-      "patient-password": (v) => /^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(v) ? "" : "Use 8+ characters with a letter and number.",
+      "patient-password": (v) => /^(?=.*[A-Za-z])(?=.*\d).{12,128}$/.test(v) ? "" : "Use 12-128 characters with a letter and number.",
       "patient-confirm": (v) => v && v === $("#patient-password").value ? "" : "Passwords do not match.",
     };
     const validateInput = (input) => {
@@ -1909,6 +2220,7 @@
           email: $("#patient-email").value,
           contact: $("#patient-contact").value,
           address: $("#patient-address").value,
+          facilityId: $("#patient-facility").value,
           username: $("#patient-username").value,
           password: $("#patient-password").value,
           termsAccepted: $("#patient-terms").checked,
@@ -1958,18 +2270,10 @@
     const requiredRole = document.body?.dataset.requiredRole;
     if (!requiredRole) return;
     const requestedPage = location.hash.slice(1) || document.body.dataset.initialPage || "dashboard";
-    const cachedData = readCachedAppData();
-    if (cachedData) {
-      state.data = cachedData;
-      currentUser = cachedData.currentUser;
-      hydrateProfile();
-      setPage(requestedPage, false);
-    } else {
-      $("#page-content").innerHTML = loading();
-    }
+    $("#page-content").innerHTML = loading();
     bindProtectedAppEvents();
     try {
-      await loadAppData();
+      await loadAppData(requestedPage);
       if (!currentUser || currentUser.role !== requiredRole) {
         clearAppCache();
         location.replace(currentUser ? destinations[currentUser.role] : LOGIN_URL);
@@ -1979,12 +2283,8 @@
       hydrateProfile();
       setPage(requestedPage, false);
     } catch (error) {
-      if (cachedData && ![401, 403].includes(error.status)) {
-        toast("Showing recently cached data while the live connection recovers.");
-      } else {
-        clearAppCache();
-        location.replace(LOGIN_URL);
-      }
+      clearAppCache();
+      location.replace(LOGIN_URL);
     }
   }
 

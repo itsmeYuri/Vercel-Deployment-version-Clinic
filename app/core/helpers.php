@@ -5,6 +5,11 @@ function e($value)
     return htmlspecialchars((string) ($value ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
+function clinic_app_name()
+{
+    return trim((string) (getenv('CLINIC_APP_NAME') ?: 'Centralized Laboratory Results System'));
+}
+
 function clinic_asset_base($localBase = 'assets')
 {
     $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
