@@ -2,16 +2,16 @@
 require_once __DIR__ . '/../../middleware/require-role.php';
 
 $assetBase = $assetBase ?? clinic_asset_base('../assets');
-$apiUrl = $apiUrl ?? '../../api/index.php';
-$loginUrl = $loginUrl ?? '../auth/login.php#login';
-$logoutUrl = $logoutUrl ?? '../auth/logout.php';
-$maintenanceUrl = $maintenanceUrl ?? '../maintenance.php';
+$apiUrl = $apiUrl ?? clinic_api_url();
+$loginUrl = $loginUrl ?? clinic_public_url('auth/login.php#login');
+$logoutUrl = $logoutUrl ?? clinic_public_url('auth/logout.php');
+$maintenanceUrl = $maintenanceUrl ?? clinic_public_url('maintenance.php');
 $initialPage = $initialPage ?? 'dashboard';
 $roleUrls = $roleUrls ?? [
-    'Admin' => '../admin/dashboard.php#dashboard',
-    'Doctor' => '../doctor/dashboard.php#dashboard',
-    'Laboratory Staff' => '../laboratory/dashboard.php#dashboard',
-    'Patient' => '../patient/dashboard.php#dashboard',
+    'Admin' => clinic_public_url('admin/dashboard.php#dashboard'),
+    'Doctor' => clinic_public_url('doctor/dashboard.php#dashboard'),
+    'Laboratory Staff' => clinic_public_url('laboratory/dashboard.php#dashboard'),
+    'Patient' => clinic_public_url('patient/dashboard.php#dashboard'),
 ];
 
 function clinic_route_nav($items)

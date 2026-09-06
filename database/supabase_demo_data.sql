@@ -1,25 +1,17 @@
--- Clinic System V2 - DEMO DATA FOR SUPABASE/POSTGRESQL
--- Run database/supabase_schema.sql first, then run this file once in Supabase SQL Editor.
--- DEMO ONLY: the credentials below are public and must never be used for real patient data.
+-- Optional demo data for Supabase/PostgreSQL
+-- Run supabase_schema.sql first. Never use this seed with real patient data.
 
 BEGIN;
 
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM users)
-     OR EXISTS (SELECT 1 FROM roles)
      OR EXISTS (SELECT 1 FROM facilities)
-     OR EXISTS (SELECT 1 FROM lab_orders) THEN
-    RAISE EXCEPTION 'This seed is intended to run once on a fresh schema with no application data.';
+     OR EXISTS (SELECT 1 FROM lab_orders)
+     OR EXISTS (SELECT 1 FROM lab_results) THEN
+    RAISE EXCEPTION 'Demo data requires a fresh schema without application records.';
   END IF;
 END $$;
-
-INSERT INTO roles (id, name, description) VALUES
-  (1, 'Admin', 'System administrator with full access.'),
-  (2, 'Doctor', 'Creates laboratory requests and reviews results.'),
-  (3, 'Laboratory Staff', 'Processes laboratory requests and results.'),
-  (4, 'Patient', 'Views personal requests and released results.')
-ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO facilities (id, name, address, phone, email, status) VALUES
   (1, 'Central Medical Center', '120 Rizal Avenue, Manila', '+63 2 8123 4567', 'central@example.test', 'Active'),
@@ -65,7 +57,25 @@ INSERT INTO test_definitions (id, code, name, category, sample_type, turnaround_
   (7, 'CRP', 'C-Reactive Protein', 'Immunology', 'Serum', '8 hours', 1100.00, '< 10 mg/L', 'Collect serum sample.', 'Active'),
   (8, 'ESR', 'Erythrocyte Sedimentation Rate', 'Hematology', 'Whole Blood', '6 hours', 700.00, '0-20 mm/hr', 'Collect EDTA blood.', 'Inactive');
 
--- Current workflow examples.
+
+UPDATE maintenance_settings
+SET is_enabled = 0,
+    scope = 'all',
+    affected_roles = '["Doctor","Laboratory Staff","Patient"]',
+    affected_pages = '[]',
+    created_by = 1,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = 1;
+
+INSERT INTO system_settings (setting_key, setting_value) VALUES
+  ('clinic_name', 'Centralized Laboratory Results System - Demo'),
+  ('default_facility_id', '1'),
+  ('result_release_policy', 'Only released results are visible to patients.'),
+  ('audit_retention_days', '365')
+ON CONFLICT (setting_key) DO UPDATE
+SET setting_value = EXCLUDED.setting_value,
+    updated_at = CURRENT_TIMESTAMP;
+
 INSERT INTO lab_orders (id, order_number, patient_id, doctor_id, facility_id, priority, status, clinical_notes, latest_update, created_at) VALUES
   (1, 'DEMO-LAB-0001', 1, 2, 1, 'Priority', 'Released', 'Persistent fatigue and fever.', 'Result released', CURRENT_TIMESTAMP - INTERVAL '2 hours'),
   (2, 'DEMO-LAB-0002', 3, 2, 2, 'Regular', 'Processing', 'Routine lipid monitoring.', 'Sample processing', CURRENT_TIMESTAMP - INTERVAL '5 hours'),
@@ -179,30 +189,11 @@ INSERT INTO audit_logs (user_id, user_name, role_name, action, module, details, 
   (6, 'Marco Villanueva', 'Laboratory Staff', 'RELEASE', 'Result', 'Released DEMO-RES-0001', '127.0.0.1', CURRENT_TIMESTAMP - INTERVAL '60 minutes'),
   (2, 'Dr. Amelia Carter', 'Doctor', 'UPDATE', 'Result', 'Added clinical note to DEMO-RES-0001', '127.0.0.1', CURRENT_TIMESTAMP - INTERVAL '45 minutes');
 
-UPDATE maintenance_settings
-SET is_enabled = 0,
-    scope = 'all',
-    affected_roles = '["Doctor","Laboratory Staff","Patient"]',
-    affected_pages = '[]',
-    created_by = 1,
-    updated_at = CURRENT_TIMESTAMP
-WHERE id = 1;
-
-INSERT INTO system_settings (setting_key, setting_value) VALUES
-  ('clinic_name', 'Centralized Laboratory Results System - Demo'),
-  ('default_facility_id', '1'),
-  ('result_release_policy', 'Only released results are visible to patients.'),
-  ('audit_retention_days', '365')
-ON CONFLICT (setting_key) DO UPDATE
-SET setting_value = EXCLUDED.setting_value,
-    updated_at = CURRENT_TIMESTAMP;
-
--- Advance identity sequences after inserting explicit demo IDs.
 DO $$
 DECLARE table_name TEXT;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
-    'roles', 'facilities', 'users', 'patients', 'doctors', 'laboratory_staff',
+    'facilities', 'users', 'patients', 'doctors', 'laboratory_staff',
     'staff_facilities', 'test_definitions', 'lab_orders', 'lab_order_items',
     'lab_results', 'lab_result_values', 'clinical_notes', 'notifications', 'audit_logs'
   ] LOOP
@@ -215,13 +206,12 @@ END $$;
 
 COMMIT;
 
--- Summary returned by Supabase SQL Editor after a successful seed.
 SELECT
-  (SELECT COUNT(*) FROM users) AS users,
-  (SELECT COUNT(*) FROM patients) AS patients,
-  (SELECT COUNT(*) FROM facilities) AS facilities,
-  (SELECT COUNT(*) FROM test_definitions) AS tests,
-  (SELECT COUNT(*) FROM lab_orders) AS laboratory_requests,
-  (SELECT COUNT(*) FROM lab_results) AS results,
-  (SELECT COUNT(*) FROM notifications) AS notifications,
-  (SELECT COUNT(*) FROM audit_logs) AS audit_entries;
+  (SELECT COUNT(*) FROM users) AS demo_users,
+  (SELECT COUNT(*) FROM patients) AS demo_patients,
+  (SELECT COUNT(*) FROM facilities) AS demo_facilities,
+  (SELECT COUNT(*) FROM test_definitions) AS demo_tests,
+  (SELECT COUNT(*) FROM lab_orders) AS demo_requests,
+  (SELECT COUNT(*) FROM lab_results) AS demo_results,
+  (SELECT COUNT(*) FROM notifications) AS demo_notifications,
+  (SELECT COUNT(*) FROM audit_logs) AS demo_audit_entries;

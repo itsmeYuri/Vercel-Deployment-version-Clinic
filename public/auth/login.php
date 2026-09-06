@@ -8,19 +8,19 @@ unset($_SESSION['auth_notice']);
 $pageTitle = clinic_app_name();
 $pageDescription = 'Secure login for ' . clinic_app_name();
 $assetBase = clinic_asset_base('../assets');
-$apiUrl = '../../api/index.php';
-$loginUrl = 'login.php#login';
+$apiUrl = clinic_api_url();
+$loginUrl = clinic_public_url('auth/login.php#login');
 $roleUrls = [
-    'Admin' => '../admin/dashboard.php#dashboard',
-    'Doctor' => '../doctor/dashboard.php#dashboard',
-    'Laboratory Staff' => '../laboratory/dashboard.php#dashboard',
-    'Patient' => '../patient/dashboard.php#dashboard',
+    'Admin' => clinic_public_url('admin/dashboard.php#dashboard'),
+    'Doctor' => clinic_public_url('doctor/dashboard.php#dashboard'),
+    'Laboratory Staff' => clinic_public_url('laboratory/dashboard.php#dashboard'),
+    'Patient' => clinic_public_url('patient/dashboard.php#dashboard'),
 ];
 require __DIR__ . '/../../app/views/layouts/header.php';
 ?>
     <main class="auth-shell">
       <section class="brand-panel" aria-labelledby="brand-title">
-        <a class="brand" href="login.php#login" aria-label="<?= e(clinic_app_name()) ?> home">
+        <a class="brand" href="<?= e(clinic_public_url('auth/login.php#login')) ?>" aria-label="<?= e(clinic_app_name()) ?> home">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 32 32" role="img"><path d="M13 5a3 3 0 0 1 6 0v8h8a3 3 0 0 1 0 6h-8v8a3 3 0 0 1-6 0v-8H5a3 3 0 0 1 0-6h8V5Z" /></svg>
           </span>

@@ -1156,7 +1156,7 @@
 
   function renderDoctorDashboard() {
     const patientRows = state.data.patients.slice(0, previewLimit()).map((patient) => [h(patient.patientCode), person(patient.name, patient.email, patient.avatar), h(patient.sex || "-"), h(patient.primaryFacility || "-"), badge(patient.latestStatus || "Pending"), `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
-    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.patientName), h(result.testName), badge(result.status), h(result.facilityName), `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.patientName), h(result.testName), badge(result.status), h(result.facilityName), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
     return `${heading(...pageMeta.Doctor.dashboard, `<button class="btn btn-secondary" data-go-page="results">${icon("results")} Results</button><button class="btn btn-primary" data-go-page="create-order">${icon("plus")} New Laboratory Request</button>`)}
       <div class="stats-grid">${dashboardStats()}</div>
       <div class="doctor-dashboard-grid"><section class="card"><div class="card-head"><div><h3 class="card-title">My Laboratory Requests</h3><p class="card-subtitle">Current status distribution</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByStatus)}</div></section>${donutCard("My Request Status", state.data.reports.ordersByStatus, "Requests")}</div>
@@ -1210,7 +1210,7 @@
 
   function renderLabDashboard() {
     const orderRows = state.data.orders.slice(0, previewLimit()).map((order) => [h(order.orderNumber), h(order.patientName), h(order.tests), badge(order.priority), badge(order.status), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">Process</button>`]);
-    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), badge(result.status), `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), badge(result.status), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
     return `${heading(...pageMeta["Laboratory Staff"].dashboard)}
       <div class="stats-grid">${dashboardStats()}</div>
       <div class="lab-dashboard-grid"><section>${table(["Request No.", "Patient", "Tests", "Priority", "Status", "Action"], orderRows, "Assigned laboratory requests")}</section><div class="lab-side-stack">${donutCard("Assigned Request Status", state.data.reports.ordersByStatus, "Requests")}${table(["Result", "Request", "Patient", "Test", "Status", "Action"], resultRows, "Recent result records")}</div></div>`;
@@ -1230,7 +1230,7 @@
   }
 
   function renderLabReview() {
-    const rows = state.data.results.map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), h(result.facilityName), badge(result.status), shortDateTime(result.uploadedAt), `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const rows = state.data.results.map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), h(result.facilityName), badge(result.status), shortDateTime(result.uploadedAt), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
     return `${heading(...pageMeta["Laboratory Staff"].review)}
       <div class="stats-grid">${stat("Results", state.data.results.length, "results")}${stat("Pending Review", state.data.results.filter((r) => r.status === "Pending Review").length, "clock", "-", "orange")}${stat("Verified", state.data.results.filter((r) => r.status === "Verified").length, "check", "-", "green")}${stat("Released", state.data.results.filter((r) => r.status === "Released").length, "download", "-", "blue")}</div>
       ${filters("Search review queue", [["All statuses", Object.keys(state.data.reports.resultsByStatus || {})]])}

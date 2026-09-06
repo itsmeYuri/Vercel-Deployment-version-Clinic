@@ -315,5 +315,24 @@ ON CONFLICT (id) DO UPDATE SET
 
 INSERT INTO maintenance_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
+INSERT INTO roles (id, name, description) VALUES
+  (1, 'Admin', 'System administrator with full access.'),
+  (2, 'Doctor', 'Creates laboratory requests and reviews results.'),
+  (3, 'Laboratory Staff', 'Processes laboratory requests and results.'),
+  (4, 'Patient', 'Views personal requests and released results.')
+ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description;
+
+SELECT setval(
+  pg_get_serial_sequence('roles', 'id'),
+  COALESCE((SELECT MAX(id) FROM roles), 1),
+  EXISTS (SELECT 1 FROM roles)
+);
+
+INSERT INTO system_settings (setting_key, setting_value) VALUES
+  ('clinic_name', 'Centralized Laboratory Results System'),
+  ('result_release_policy', 'Only released results are visible to patients.'),
+  ('audit_retention_days', '365')
+ON CONFLICT (setting_key) DO NOTHING;
+
 -- Preserve the application's display-time behavior for new pooled connections.
 ALTER ROLE postgres SET timezone = 'Asia/Manila';

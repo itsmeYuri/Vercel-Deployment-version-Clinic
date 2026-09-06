@@ -33,7 +33,22 @@ function clinic_public_url($path = '')
         $base = in_array($lastSegment, $publicSubdirs, true) ? dirname($scriptDir) : $scriptDir;
     }
 
-    return rtrim($base, '/') . '/' . ltrim($path, '/');
+    return preg_replace('#/+#', '/', str_replace('\\', '/', rtrim($base, '/') . '/' . ltrim($path, '/')));
+}
+
+function clinic_api_url($path = 'index.php')
+{
+    $scriptDir = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? ''));
+    $publicPos = strpos($scriptDir, '/public');
+    if ($publicPos !== false) {
+        $base = substr($scriptDir, 0, $publicPos);
+    } else {
+        $publicSubdirs = ['admin', 'doctor', 'laboratory', 'patient', 'auth'];
+        $lastSegment = trim(basename($scriptDir), '/');
+        $base = in_array($lastSegment, $publicSubdirs, true) ? dirname($scriptDir) : $scriptDir;
+    }
+
+    return preg_replace('#/+#', '/', str_replace('\\', '/', rtrim($base, '/') . '/api/' . ltrim($path, '/')));
 }
 
 function clinic_redirect($path)

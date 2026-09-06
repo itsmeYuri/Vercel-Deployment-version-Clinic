@@ -1,4 +1,4 @@
 <?php
+require_once __DIR__ . '/app/core/helpers.php';
 
-header('Location: public/auth/login.php#login');
-exit;
+clinic_redirect('public/auth/login.php#login');

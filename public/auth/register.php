@@ -2,14 +2,14 @@
 require_once __DIR__ . '/../../app/core/helpers.php';
 $pageTitle = 'Create Patient Account | ' . clinic_app_name();
 $pageDescription = 'Create a secure ' . clinic_app_name() . ' patient account';
-$apiUrl = '../../api/index.php';
-$loginUrl = 'login.php#login';
+$apiUrl = clinic_api_url();
+$loginUrl = clinic_public_url('auth/login.php#login');
 $bodyClass = 'patient-registration-page';
 $roleUrls = [
-    'Admin' => '../admin/dashboard.php#dashboard',
-    'Doctor' => '../doctor/dashboard.php#dashboard',
-    'Laboratory Staff' => '../laboratory/dashboard.php#dashboard',
-    'Patient' => '../patient/dashboard.php#dashboard',
+    'Admin' => clinic_public_url('admin/dashboard.php#dashboard'),
+    'Doctor' => clinic_public_url('doctor/dashboard.php#dashboard'),
+    'Laboratory Staff' => clinic_public_url('laboratory/dashboard.php#dashboard'),
+    'Patient' => clinic_public_url('patient/dashboard.php#dashboard'),
 ];
 require_once __DIR__ . '/../../app/config/database.php';
 require_once __DIR__ . '/../../app/core/maintenance.php';
@@ -28,7 +28,7 @@ require __DIR__ . '/../../app/views/layouts/header.php';
 ?>
     <main class="patient-register-shell">
       <section class="patient-register-visual">
-        <a class="admin-brand register-brand" href="login.php#login">
+        <a class="admin-brand register-brand" href="<?= e(clinic_public_url('auth/login.php#login')) ?>">
           <span class="admin-brand-mark register-medical-mark"><svg viewBox="0 0 24 24"><path d="M10 2h4v8h8v4h-8v8h-4v-8H2v-4h8V2Z"/></svg></span>
           <span><strong><?= e(clinic_app_name()) ?></strong><small>Secure patient portal</small></span>
         </a>
@@ -63,7 +63,7 @@ require __DIR__ . '/../../app/views/layouts/header.php';
             <label class="register-check"><input id="patient-privacy-ack" type="checkbox" required><span>I understand that I can only access my own medical information and will not attempt to access anyone else's data.</span></label>
             <button class="btn btn-primary register-submit" type="submit" <?= $registrationUnavailable || !$registrationFacilities ? 'disabled' : '' ?>>Create Account <span>-&gt;</span></button>
           </form>
-          <p class="register-signin">Already have an account? <a href="login.php#login">Sign in here</a></p>
+          <p class="register-signin">Already have an account? <a href="<?= e(clinic_public_url('auth/login.php#login')) ?>">Sign in here</a></p>
           <div class="register-security-footer">Secure access keeps your information safe and private.</div>
         </div>
       </section>
