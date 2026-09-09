@@ -159,7 +159,8 @@
   };
 
   let currentUser = null;
-  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, utilization: null, forecast: { horizon: 7 }, loadingPages: new Set() };
+  const PAGE_CACHE_TTL = 60000;
+  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map() };
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -279,15 +280,26 @@
   }
 
   async function api(action, payload = {}) {
-    const response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRF-Token": window.CLINIC_CSRF_TOKEN || document.querySelector('meta[name="csrf-token"]')?.content || "",
-      },
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    let response;
+    try {
+      response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": window.CLINIC_CSRF_TOKEN || document.querySelector('meta[name="csrf-token"]')?.content || "",
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error("The clinic server took too long to respond. Try again.");
+      throw new Error("The clinic server could not be reached. Check your connection and try again.");
+    } finally {
+      clearTimeout(timeout);
+    }
     const text = await response.text();
     let json;
     try {
@@ -813,11 +825,11 @@
         return `${colors[index % colors.length]} ${start}% ${cursor}%`;
       }).join(",")
       : "#dce9eb 0 100%";
-    return `<section class="card"><div class="card-head"><div><h3 class="card-title">${h(title)}</h3><p class="card-subtitle">Current database distribution</p></div></div><div class="card-body donut-layout"><div class="donut" style="--segments:${segments}"><div class="donut-center"><strong>${total}</strong><span>${h(totalLabel)}</span></div></div><div class="chart-legend">${(entries.length ? entries : [["No records", 0]]).map(([label, count], index) => `<div class="legend-row" style="--dot:${colors[index % colors.length]}"><i></i><span>${h(label)}</span><strong>${h(count)}</strong></div>`).join("")}</div></div></section>`;
+    return `<section class="card"><div class="card-head"><div><h3 class="card-title">${h(title)}</h3><p class="card-subtitle">Breakdown of records currently in scope</p></div></div><div class="card-body donut-layout"><div class="donut" style="--segments:${segments}"><div class="donut-center"><strong>${total}</strong><span>${h(totalLabel)}</span></div></div><div class="chart-legend">${(entries.length ? entries : [["No records", 0]]).map(([label, count], index) => `<div class="legend-row" style="--dot:${colors[index % colors.length]}"><i></i><span>${h(label)}</span><strong>${h(count)}</strong></div>`).join("")}</div></div></section>`;
   }
 
   function notificationArticles(notifications) {
-    return notifications.length ? notifications.map((item) => `<article class="notification-item ${item.isRead ? "" : "unread"}" data-drawer="notification" data-id="${item.id}"><span class="notification-icon">${icon(item.type || "bell")}</span><div class="notification-copy"><strong>${h(item.title)}</strong><p>${h(item.message)}</p></div><div class="notification-actions"><time>${shortDateTime(item.createdAt)}</time><button class="row-action" type="button" aria-label="View details">${icon("arrow")}</button></div></article>`).join("") : `<div class="empty-state">No notifications found.</div>`;
+    return notifications.length ? notifications.map((item) => `<article class="notification-item ${item.isRead ? "" : "unread"}" data-drawer="notification" data-id="${item.id}" role="button" tabindex="0" aria-label="Open notification: ${h(item.title)}"><span class="notification-icon">${icon(item.type || "bell")}</span><div class="notification-copy"><strong>${h(item.title)}</strong><p>${h(item.message)}</p></div><div class="notification-actions"><time>${shortDateTime(item.createdAt)}</time><span class="row-action" aria-hidden="true">${icon("arrow")}</span></div></article>`).join("") : `<div class="empty-state">No notifications found.</div>`;
   }
 
   function recordBy(collection, id) {
@@ -879,7 +891,10 @@
     $$(".profile-copy small").forEach((el) => { el.textContent = currentUser.role; });
     $$(".profile-button .avatar").forEach((el) => { el.textContent = currentUser.avatar || initials(currentUser.name); });
     const unread = (state.data?.notifications || []).filter((item) => !item.isRead).length;
-    $$(".notification-count").forEach((el) => { el.textContent = unread; });
+    $$(".notification-count").forEach((el) => {
+      el.textContent = unread;
+      el.hidden = unread === 0;
+    });
     $$(".notification-button").forEach((el) => { el.setAttribute("aria-label", `View ${unread} unread notifications`); });
     const counts = {
       notifications: unread,
@@ -976,12 +991,12 @@
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `clinic-system-v2-${currentUser.role.toLowerCase().replace(/\s+/g, "-")}-records.json`;
+    link.download = `clinic-records-${currentUser.role.toLowerCase().replace(/\s+/g, "-")}-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.append(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    toast("Database-backed records exported.");
+    toast("Your records were exported.");
   }
 
   function loading() {
@@ -1020,7 +1035,7 @@
     const auditRows = state.data.audit.slice(0, previewLimit()).map((item) => [shortDateTime(item.createdAt), person(item.userName, item.role, initials(item.userName)), badge(item.action), item.module, `<span class="cell-wrap">${h(item.details)}</span>`]);
     return `${heading(...pageMeta.Admin.dashboard, `<button class="btn btn-secondary" data-go-page="audit">${icon("audit")} Audit Trail</button><button class="btn btn-primary" data-drawer="user">${icon("plus")} New User</button>`)}
       <div class="stats-grid">${stat("Users", state.data.users.length, "users")}${stat("Active Users", state.data.users.filter((u) => u.status === "Active").length, "check", "-", "green")}${stat("Facilities", state.data.facilities.length, "facility", "-", "blue")}${stat("Audit Records", state.data.audit.length, "audit", "-", "purple")}</div>
-      <div class="admin-dashboard-layout"><div class="admin-dashboard-main"><section class="card order-activity-card"><div class="card-head"><div><h3 class="card-title">Account Overview</h3><p class="card-subtitle">Users by role</p></div></div><div class="card-body">${chartFromCounts(Object.fromEntries((uiConfig().roles || ["Admin", "Doctor", "Laboratory Staff", "Patient"]).map((role) => [role, state.data.users.filter((u) => u.role === role).length])))}</div></section></div><section class="card notifications-card"><div class="card-head"><div><h3 class="card-title">Latest Notifications</h3><p class="card-subtitle">Database-backed system notices</p></div><button class="card-link" data-go-page="notifications">View all</button></div><div class="card-body notification-list">${notificationArticles(state.data.notifications.slice(0, previewLimit()))}</div></section></div>
+      <div class="admin-dashboard-layout"><div class="admin-dashboard-main"><section class="card order-activity-card"><div class="card-head"><div><h3 class="card-title">Account Overview</h3><p class="card-subtitle">Active users grouped by role</p></div></div><div class="card-body">${chartFromCounts(Object.fromEntries((uiConfig().roles || ["Admin", "Doctor", "Laboratory Staff", "Patient"]).map((role) => [role, state.data.users.filter((u) => u.role === role).length])))}</div></section></div><section class="card notifications-card"><div class="card-head"><div><h3 class="card-title">Latest Notifications</h3><p class="card-subtitle">Recent clinic activity requiring attention</p></div><button class="card-link" data-go-page="notifications">View all</button></div><div class="card-body notification-list">${notificationArticles(state.data.notifications.slice(0, previewLimit()))}</div></section></div>
       ${table(["Time", "User", "Action", "Module", "Details"], auditRows, "Latest audit records")}`;
   }
 
@@ -1104,7 +1119,7 @@
 
   function renderAdminSettings() {
     return `${heading(...pageMeta.Admin.settings)}
-      <div class="settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Change your password using the secure API.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}<section class="card settings-card"><div class="settings-card-head"><div><h3>Role Permissions</h3><p>Server-side access is enforced by every API action.</p></div>${icon("lock")}</div>${["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => `<div class="setting-row"><div><strong>${h(role)}</strong><p>${role === "Admin" ? "Full system access" : "Role-scoped records and workflow actions"}</p></div>${toggle(true, "", "disabled aria-label=\"Server enforced\"")}</div>`).join("")}</section></div>`;
+      <div class="settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update the password for your administrator account.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}<section class="card settings-card"><div class="settings-card-head"><div><h3>Role Permissions</h3><p>Access is assigned according to each clinic role.</p></div>${icon("lock")}</div>${["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => `<div class="setting-row"><div><strong>${h(role)}</strong><p>${role === "Admin" ? "Full system access" : "Role-scoped records and workflow actions"}</p></div><span class="badge badge-green">Enforced</span></div>`).join("")}</section></div>`;
   }
 
   function renderAdminMaintenance() {
@@ -1287,6 +1302,7 @@
     const data = await api("app_data", { page });
     state.data = data;
     currentUser = data.currentUser || currentUser;
+    (data.loadedPages || [page]).forEach((loadedPage) => state.pageLoadedAt.set(loadedPage, Date.now()));
     hydrateProfile();
   }
 
@@ -1302,11 +1318,13 @@
     return map[page] || [];
   }
 
-  async function ensurePageData(page) {
+  async function ensurePageData(page, force = false) {
     const loaded = new Set(state.data?.loadedPages || []);
-    if (loaded.has(page) || state.loadingPages.has(page)) return;
+    const isFresh = Date.now() - (state.pageLoadedAt.get(page) || 0) < PAGE_CACHE_TTL;
+    if (!force && loaded.has(page) && isFresh) return;
+    if (state.pageRequests.has(page)) return state.pageRequests.get(page);
     state.loadingPages.add(page);
-    try {
+    const request = (async () => { try {
       const fresh = await api("page_data", { page });
       pageDataKeys(page).forEach((key) => { state.data[key] = fresh[key] || []; });
       if (page === "dashboard" || page === "reports" || ["orders", "results", "review", "operations", "queue", "upload"].includes(page)) {
@@ -1317,14 +1335,18 @@
       state.data.uiConfig = fresh.uiConfig || state.data.uiConfig;
       loaded.add(page);
       state.data.loadedPages = [...loaded];
+      state.pageLoadedAt.set(page, Date.now());
       rebuildDerivedData();
-      setPage(page, false);
+      if (state.page === page && !document.activeElement?.closest("form")) setPage(page, false);
     } catch (error) {
       toast(error.message || "This page could not be loaded.", "error");
-      if ($("#page-content")) $("#page-content").innerHTML = `<section class="card"><div class="empty-state">${h(error.message || "This page could not be loaded.")}</div></section>`;
+      if ($("#page-content")) $("#page-content").innerHTML = `<section class="card"><div class="empty-state"><h3>Unable to load this page</h3><p>${h(error.message || "Check your connection and try again.")}</p><button class="btn btn-primary" type="button" data-retry-page="${h(page)}">Try again</button></div></section>`;
     } finally {
       state.loadingPages.delete(page);
-    }
+      state.pageRequests.delete(page);
+    } })();
+    state.pageRequests.set(page, request);
+    return request;
   }
 
   async function pollNotifications() {
@@ -1378,6 +1400,7 @@
       ensurePageData(page);
       return;
     }
+    if (Date.now() - (state.pageLoadedAt.get(page) || 0) >= PAGE_CACHE_TTL) ensurePageData(page, true);
     const maintenance = state.data?.maintenance;
     const roleBlocked = maintenance?.scope === "all"
       || (maintenance?.scope === "roles" && (maintenance.affectedRoles || []).includes(role));
@@ -1395,7 +1418,12 @@
     $("#page-content").innerHTML = renderer();
     hydrateTooltips($("#page-content"));
     paginateTables($("#page-content"));
-    $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
+    $$(".nav-item").forEach((item) => {
+      const active = item.dataset.page === page;
+      item.classList.toggle("active", active);
+      if (active) item.setAttribute("aria-current", "page");
+      else item.removeAttribute("aria-current");
+    });
     const meta = pageMeta[role]?.[page] || pageMeta[role]?.dashboard || ["Dashboard"];
     $("#page-title").textContent = meta[0];
     document.title = `${meta[0]} | ${appName()}`;
@@ -1489,6 +1517,7 @@
     state.activeDrawer = type;
     state.activeRecordId = id;
     const drawer = $(".drawer");
+    if (!drawer?.classList.contains("open")) state.lastFocusedElement = document.activeElement;
     const body = $("#drawer-body");
     $("#drawer-title").textContent = drawerTitle(type);
     const content = {
@@ -1520,6 +1549,8 @@
     document.body.style.overflow = "";
     state.activeDrawer = null;
     state.activeRecordId = null;
+    if (state.lastFocusedElement?.isConnected) state.lastFocusedElement.focus();
+    state.lastFocusedElement = null;
   }
 
   function closeReleaseModal() {
@@ -1559,6 +1590,7 @@
       state.data.currentUser = currentUser;
     }
     rebuildDerivedData();
+    state.pageLoadedAt.set(state.page, Date.now());
     hydrateProfile();
     setPage(state.page, false);
     toast(message);
@@ -1650,6 +1682,13 @@
   }
 
   async function handleDashboardClick(event) {
+    const retry = event.target.closest("[data-retry-page]");
+    if (retry) {
+      const page = retry.dataset.retryPage || state.page;
+      $("#page-content").innerHTML = loading();
+      ensurePageData(page, true);
+      return;
+    }
     const pageLink = event.target.closest("[data-page], [data-go-page]");
     if (pageLink) {
       event.preventDefault();
@@ -2018,6 +2057,18 @@
     paginateTables(content);
   }
 
+  function trapDrawerFocus(event) {
+    const drawer = $(".drawer.open");
+    if (!drawer || event.key !== "Tab") return;
+    const focusable = $$("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])", drawer)
+      .filter((element) => !element.hidden && element.getClientRects().length);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
+
   function handleDashboardInput(event) {
     if (!event.target.matches("[data-table-search], #global-search")) return;
     applyPageFilters();
@@ -2252,6 +2303,13 @@
     document.addEventListener("input", handleDashboardInput);
     document.addEventListener("change", handleDashboardChange);
     document.addEventListener("keydown", (event) => {
+      trapDrawerFocus(event);
+      const keyboardDrawer = event.target.closest?.("[data-drawer][role='button']");
+      if (keyboardDrawer && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        openDrawer(keyboardDrawer.dataset.drawer, keyboardDrawer.dataset.id || null);
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         $("#global-search")?.focus();

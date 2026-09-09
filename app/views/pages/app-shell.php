@@ -150,7 +150,7 @@ require __DIR__ . '/../layouts/header.php';
       </div>
 
       <div class="drawer-scrim" data-close-drawer></div>
-      <aside class="drawer" id="<?= e($roleConfig['drawerId']) ?>" aria-hidden="true" aria-labelledby="drawer-title">
+      <aside class="drawer" id="<?= e($roleConfig['drawerId']) ?>" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="drawer-title">
         <div class="drawer-head">
           <div><p class="eyebrow"><?= e($roleConfig['drawerEyebrow']) ?></p><h2 id="drawer-title">Details</h2></div>
           <button class="icon-button" type="button" aria-label="Close panel" data-close-drawer data-icon-button="close"></button>

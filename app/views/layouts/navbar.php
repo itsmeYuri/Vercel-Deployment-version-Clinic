@@ -18,7 +18,7 @@ $notificationCount = $roleConfig['notificationCount'] ?? 0;
     </label>
 
     <a class="icon-button notification-button" href="notifications.php" aria-label="View <?= e($notificationCount) ?> unread notifications" data-go-page="notifications" data-icon-button="bell">
-      <span class="notification-count"><?= e($notificationCount) ?></span>
+      <span class="notification-count"<?= $notificationCount > 0 ? '' : ' hidden' ?>><?= e($notificationCount) ?></span>
     </a>
 
     <div class="profile-menu-wrap">
