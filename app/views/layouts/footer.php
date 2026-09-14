@@ -21,6 +21,7 @@ $roleUrls = $roleUrls ?? [
     <script src="<?= e($assetBase) ?>/js/lab-result-scanner.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-result-scanner.js')) ?>"></script>
     <script src="<?= e($assetBase) ?>/js/lab-utilization-analytics.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-utilization-analytics.js')) ?>"></script>
     <script src="<?= e($assetBase) ?>/js/lab-forecasting-analysis.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-forecasting-analysis.js')) ?>"></script>
+    <script src="<?= e($assetBase) ?>/js/lab-trend-analysis.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-trend-analysis.js')) ?>"></script>
     <script src="<?= e($assetBase) ?>/js/main.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/main.js')) ?>"></script>
   </body>
 </html>

@@ -160,7 +160,7 @@
 
   let currentUser = null;
   const PAGE_CACHE_TTL = 60000;
-  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map() };
+  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, trends: null, loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map() };
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -836,6 +836,27 @@
     return (state.data?.[collection] || []).find((item) => String(item.id) === String(id));
   }
 
+  function trendBarRows(rows, labelKey, valueKey, suffix = "") {
+    const max = Math.max(1, ...rows.map((row) => Number(row[valueKey]) || 0));
+    return rows.length
+      ? `<div class="trend-bars">${rows.map((row) => `<div class="trend-bar-row"><span title="${h(row[labelKey])}">${h(row[labelKey])}</span><div><i style="width:${Math.max(2, ((Number(row[valueKey]) || 0) / max) * 100)}%"></i></div><strong>${h(row[valueKey])}${h(suffix)}</strong></div>`).join("")}</div>`
+      : '<div class="empty-state">No records match the selected filters.</div>';
+  }
+
+  function trendAnalysisSection() {
+    const service = window.LabTrendAnalysis;
+    if (!service) return "";
+    if (!state.trends) {
+      const dates = [...state.data.orders, ...state.data.results].map((row) => service.parseDate(row.createdAt)).filter(Boolean).sort((a, b) => a - b);
+      const latest = dates.at(-1) || new Date();
+      state.trends = { from: service.dateKey(new Date(latest.getFullYear(), latest.getMonth(), latest.getDate() - 29)), to: service.dateKey(latest), group: "day", facility: "", test: "" };
+    }
+    const analysis = service.build(state.data.orders, state.data.results, state.trends);
+    const turnaround = analysis.totals.averageTurnaroundMinutes === null ? "No data" : analysis.totals.averageTurnaroundMinutes < 120 ? `${analysis.totals.averageTurnaroundMinutes} min` : `${(analysis.totals.averageTurnaroundMinutes / 60).toFixed(1)} hr`;
+    const timeRows = analysis.buckets.filter((row) => row.averageTurnaroundMinutes !== null);
+    return `<section class="trend-analysis" aria-labelledby="trend-analysis-title"><div class="trend-analysis-head"><div><span class="eyebrow">Operational intelligence</span><h2 id="trend-analysis-title">Trend Analysis</h2><p>Descriptive and diagnostic views for laboratory volume, turnaround, validation flags, and facility workload.</p></div>${icon("trend")}</div><div class="trend-filter-grid"><label>From<input class="control" type="date" value="${h(analysis.filters.from)}" data-trend-from></label><label>To<input class="control" type="date" value="${h(analysis.filters.to)}" data-trend-to></label><label>Group by${select("trendGroup", [{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], analysis.filters.group, "data-trend-group")}</label><label>Facility${select("trendFacility", [{ value: "", label: "All facilities" }, ...analysis.facilities.map((value) => ({ value, label: value }))], analysis.filters.facility, "data-trend-facility")}</label><label>Test type${select("trendTest", [{ value: "", label: "All test types" }, ...analysis.tests.map((value) => ({ value, label: value }))], analysis.filters.test, "data-trend-test")}</label></div><div class="stats-grid utilization-stats trend-summary">${stat("Tests Processed", analysis.totals.tests, "test", "-", "purple")}${stat("Results Encoded", analysis.totals.results, "results", "-", "blue")}${stat("Average Turnaround", turnaround, "clock", "-", "teal")}${stat("Validation Flags", analysis.totals.flaggedValues, "alert", "-", "orange")}</div><div class="trend-analysis-grid"><section class="trend-panel"><h3>Test Volume Trends</h3><p>Requested tests over the selected period.</p>${trendBarRows(analysis.buckets, "label", "tests")}</section><section class="trend-panel"><h3>Turnaround Time Trends</h3><p>Average time from result encoding to release.</p>${trendBarRows(timeRows, "label", "averageTurnaroundMinutes", " min")}</section><section class="trend-panel"><h3>Flagged-result Trends</h3><p>Flags produced during rule-based result validation.</p>${trendBarRows(analysis.flags, "category", "count")}</section><section class="trend-panel"><h3>Workload Distribution</h3><p>Requested test volume by facility.</p>${trendBarRows(analysis.workload, "facility", "tests")}</section></div><p class="utilization-note">Turnaround uses released results with valid encoding and release timestamps. Workload is grouped by facility because staff-shift data is not currently stored.</p></section>`;
+  }
+
   function syncNotifications(notifications) {
     state.data.notifications = notifications;
     if (state.data.dashboard) {
@@ -1086,6 +1107,7 @@
     const facilityRows = Object.entries(state.data.reports.ordersByFacility || {}).map(([facility, count]) => [h(facility), h(count), `${Math.round((count / Math.max(1, state.data.orders.length)) * 100)}%`]);
     const testRows = Object.entries(state.data.reports.topTests || {}).map(([test, count]) => [h(test), h(count), badge(count > 1 ? "Active" : "Pending")]);
     return `${heading(...pageMeta.Admin.reports, `<button class="btn btn-secondary" data-download>${icon("download")} Export</button>`)}
+      ${trendAnalysisSection()}
       ${utilizationAnalyticsSection()}
       ${forecastingAnalysisSection()}
       <div class="stats-grid stats-eight">${dashboardStats()}</div>
@@ -2086,6 +2108,15 @@
       if (event.target.matches("[data-utilization-anchor]")) state.utilization.anchor = event.target.value;
       if (event.target.matches("[data-utilization-from]")) state.utilization.from = event.target.value;
       if (event.target.matches("[data-utilization-to]")) state.utilization.to = event.target.value;
+      setPage("reports", false);
+      return;
+    }
+    if (event.target.matches("[data-trend-from], [data-trend-to], [data-trend-group], [data-trend-facility], [data-trend-test]")) {
+      if (event.target.matches("[data-trend-from]")) state.trends.from = event.target.value;
+      if (event.target.matches("[data-trend-to]")) state.trends.to = event.target.value;
+      if (event.target.matches("[data-trend-group]")) state.trends.group = event.target.value;
+      if (event.target.matches("[data-trend-facility]")) state.trends.facility = event.target.value;
+      if (event.target.matches("[data-trend-test]")) state.trends.test = event.target.value;
       setPage("reports", false);
       return;
     }
