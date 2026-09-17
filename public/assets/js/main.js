@@ -767,8 +767,8 @@
       const dots = buckets.map((bucket, index) => `<circle cx="${x(index)}" cy="${y(bucket[item.key])}" r="3" tabindex="0" style="--series-color:${item.color}"><title>${h(bucket.label)}: ${h(bucket[item.key])} ${h(item.label.toLowerCase())}</title></circle>`).join("");
       return `<polyline points="${points}" style="--series-color:${item.color}"/>${dots}`;
     }).join("");
-    const labels = buckets.map((bucket, index) => `<span style="left:${x(index)}px">${h(bucket.label)}</span>`).join("");
-    return `<div class="utilization-legend">${series.map((item) => `<span><i style="--series-color:${item.color}"></i>${h(item.label)}</span>`).join("")}</div><div class="utilization-chart-scroll"><div class="utilization-chart" style="width:${width}px"><svg viewBox="0 0 ${width} 215" role="img" aria-label="Laboratory utilization trend"><path class="utilization-grid" d="M34 40H${width - 34}M34 92H${width - 34}M34 144H${width - 34}M34 196H${width - 34}"/>${paths}</svg><div class="utilization-axis" aria-hidden="true">${labels}</div></div></div>`;
+    const labels = buckets.map((bucket, index) => `<span style="left:${(x(index) / width) * 100}%">${h(bucket.label)}</span>`).join("");
+    return `<div class="utilization-legend">${series.map((item) => `<span><i style="--series-color:${item.color}"></i>${h(item.label)}</span>`).join("")}</div><div class="utilization-chart-scroll"><div class="utilization-chart" style="width:${width}px"><svg viewBox="0 0 ${width} 215" preserveAspectRatio="none" role="img" aria-label="Laboratory utilization trend"><path class="utilization-grid" d="M34 40H${width - 34}M34 92H${width - 34}M34 144H${width - 34}M34 196H${width - 34}"/>${paths}</svg><div class="utilization-axis" aria-hidden="true">${labels}</div></div></div>`;
   }
 
   function utilizationAnalyticsSection() {
@@ -1106,13 +1106,13 @@
   function renderReports() {
     const facilityRows = Object.entries(state.data.reports.ordersByFacility || {}).map(([facility, count]) => [h(facility), h(count), `${Math.round((count / Math.max(1, state.data.orders.length)) * 100)}%`]);
     const testRows = Object.entries(state.data.reports.topTests || {}).map(([test, count]) => [h(test), h(count), badge(count > 1 ? "Active" : "Pending")]);
-    return `${heading(...pageMeta.Admin.reports, `<button class="btn btn-secondary" data-download>${icon("download")} Export</button>`)}
+    return `<div class="reports-workspace">${heading(...pageMeta.Admin.reports, `<button class="btn btn-secondary" data-download>${icon("download")} Export report</button>`)}
       ${trendAnalysisSection()}
       ${utilizationAnalyticsSection()}
       ${forecastingAnalysisSection()}
       <div class="stats-grid stats-eight">${dashboardStats()}</div>
       <div class="charts-pair">${donutCard("Requests by Status", state.data.reports.ordersByStatus, "Requests")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div>
-      <div class="dashboard-grid">${table(["Facility", "Requests", "Share"], facilityRows, "Requests per facility")}${table(["Requested Test", "Count", "Status"], testRows, "Most requested tests")}</div>`;
+      <div class="dashboard-grid">${table(["Facility", "Requests", "Share"], facilityRows, "Requests per facility")}${table(["Requested Test", "Count", "Status"], testRows, "Most requested tests")}</div></div>`;
   }
 
   function renderAudit() {
