@@ -681,7 +681,7 @@
     const body = rows.length
       ? rows.map((row) => `<tr>${row.map((cell, index) => `<td data-label="${h(clean(headers[index]))}">${cell}</td>`).join("")}</tr>`).join("")
       : `<tr><td colspan="${headers.length}"><div class="empty-state">No records found.</div></td></tr>`;
-    return `<section class="card table-card" data-paginated-table data-page="1" data-table-label="${h(footer)}"><div class="table-responsive"><table class="data-table"><thead><tr>${headers.map((item) => `<th scope="col">${h(item)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div><div class="table-footer"><span data-table-page-summary aria-live="polite">${h(footer || `${rows.length} records`)}</span><div class="table-pager" aria-label="Table pages"><button class="btn btn-secondary btn-sm" type="button" data-table-prev>Previous</button><button class="btn btn-secondary btn-sm" type="button" data-table-next>Next</button></div></div></section>`;
+    return `<section class="card table-card" data-paginated-table data-table-page="1" data-table-label="${h(footer)}"><div class="table-responsive"><table class="data-table"><thead><tr>${headers.map((item) => `<th scope="col">${h(item)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div><div class="table-footer"><span data-table-page-summary aria-live="polite">${h(footer || `${rows.length} records`)}</span><div class="table-pager" aria-label="Table pages"><button class="btn btn-secondary btn-sm" type="button" data-table-prev>Previous</button><button class="btn btn-secondary btn-sm" type="button" data-table-next>Next</button></div></div></section>`;
   }
 
   function paginateTables(root = document) {
@@ -689,8 +689,8 @@
       const pageSize = Number(uiConfig().pageSize || 25);
       const rows = $$('.data-table tbody tr', card).filter((row) => !row.querySelector(".empty-state") && row.dataset.filterMatch !== "false");
       const pages = Math.max(1, Math.ceil(rows.length / pageSize));
-      const page = Math.min(Math.max(1, Number(card.dataset.page || 1)), pages);
-      card.dataset.page = String(page);
+      const page = Math.min(Math.max(1, Number(card.dataset.tablePage || 1)), pages);
+      card.dataset.tablePage = String(page);
       $$('.data-table tbody tr', card).forEach((row) => { row.hidden = true; });
       rows.forEach((row, index) => { row.hidden = index < (page - 1) * pageSize || index >= page * pageSize; });
       const summary = $('[data-table-page-summary]', card);
@@ -1711,7 +1711,7 @@
       ensurePageData(page, true);
       return;
     }
-    const pageLink = event.target.closest("[data-page], [data-go-page]");
+    const pageLink = event.target.closest("a[data-page], button[data-page], a[data-go-page], button[data-go-page]");
     if (pageLink) {
       event.preventDefault();
       setPage(pageLink.dataset.page || pageLink.dataset.goPage);
@@ -1736,7 +1736,7 @@
     const tablePageButton = event.target.closest("[data-table-prev], [data-table-next]");
     if (tablePageButton) {
       const card = tablePageButton.closest("[data-paginated-table]");
-      card.dataset.page = String(Math.max(1, Number(card.dataset.page || 1) + (tablePageButton.matches("[data-table-next]") ? 1 : -1)));
+      card.dataset.tablePage = String(Math.max(1, Number(card.dataset.tablePage || 1) + (tablePageButton.matches("[data-table-next]") ? 1 : -1)));
       paginateTables(card.parentElement || document);
       return;
     }
@@ -2075,7 +2075,7 @@
       row.dataset.filterMatch = String(matches);
       row.hidden = !matches;
     });
-    $$('[data-paginated-table]', content).forEach((card) => { card.dataset.page = "1"; });
+    $$('[data-paginated-table]', content).forEach((card) => { card.dataset.tablePage = "1"; });
     paginateTables(content);
   }
 
