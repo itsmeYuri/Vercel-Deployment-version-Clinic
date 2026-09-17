@@ -759,9 +759,12 @@ form.is-loading .register-submit::after {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  margin-top: 14px;
 }
 
 .demo-login-grid button {
+  appearance: none;
+  width: 100%;
   min-height: 44px;
   padding: 10px;
   border: 1px solid #b9dddd;
@@ -772,10 +775,18 @@ form.is-loading .register-submit::after {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .demo-login-grid button:hover {
   background: #d9f4f1;
+  border-color: #08a394;
+  box-shadow: 0 3px 10px rgba(8, 119, 110, 0.1);
+}
+
+.demo-login-grid button:active {
+  background: #c5ebe8;
+  box-shadow: none;
 }
 
 .demo-login-grid button:focus-visible {
