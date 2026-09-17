@@ -737,6 +737,52 @@ form.is-loading .register-submit::after {
   stroke-width: 2;
 }
 
+.demo-login {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--ink-200, #e2e8f0);
+}
+
+.demo-login h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.demo-login p {
+  margin: 8px 0 14px;
+  color: var(--ink-500);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.demo-login-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.demo-login-grid button {
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid #b9dddd;
+  border-radius: 10px;
+  background: #f0faf8;
+  color: #08776e;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.demo-login-grid button:hover {
+  background: #d9f4f1;
+}
+
+.demo-login-grid button:focus-visible {
+  outline: 3px solid #08a394;
+  outline-offset: 2px;
+}
+
 .form-switch {
   margin: 25px 0 0;
   color: var(--ink-500);

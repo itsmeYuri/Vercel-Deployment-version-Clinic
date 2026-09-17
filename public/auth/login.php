@@ -97,6 +97,17 @@ require __DIR__ . '/../../app/views/layouts/header.php';
             </button>
           </form>
 
+          <section class="demo-login" aria-labelledby="demo-login-title">
+            <h3 id="demo-login-title">Demo login accounts</h3>
+            <p>Select a role to fill in the credentials, then click Log in securely.</p>
+            <div class="demo-login-grid">
+              <button type="button" data-demo-account="Admin">Admin</button>
+              <button type="button" data-demo-account="Laboratory Staff">Staff</button>
+              <button type="button" data-demo-account="Doctor">Doctor</button>
+              <button type="button" data-demo-account="Patient">Patient</button>
+            </div>
+          </section>
+
           <p class="form-switch">New to the laboratory results system? <a href="register.php">Create a patient account</a></p>
         </div>
 

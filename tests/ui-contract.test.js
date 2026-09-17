@@ -40,7 +40,7 @@ assert.match(main, /role="button" tabindex="0" aria-label="Open notification/);
 assert.match(css, /\.maintenance-module-grid/);
 assert.match(css, /@media \(max-width: 620px\)/);
 assert.doesNotMatch(css, /Full Glassmorphism Theme/);
-assert.doesNotMatch(css, /\.demo-login\s*\{/);
+assert.match(css, /\.demo-login\s*\{/);
 assert.doesNotMatch(shell, /\['section' => 'My account'\]/);
 assert.doesNotMatch(register, /Secure &amp; Private|All in One Place|Stay Informed/);
 assert.doesNotMatch(footer, /vendor\/tesseract\/tesseract\.min\.js/);

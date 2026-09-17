@@ -2198,6 +2198,30 @@
       }
       return valid;
     };
+    const demoAccounts = [
+      { role: "Admin", identifier: "admin", password: "admin123" },
+      { role: "Laboratory Staff", identifier: "lab", password: "lab123" },
+      { role: "Doctor", identifier: "doctor", password: "doctor123" },
+      { role: "Patient", identifier: "patient", password: "patient123" },
+    ];
+    $$("[data-demo-account]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (loginForm.classList.contains("is-loading")) return;
+        const account = demoAccounts.find((item) => item.role === button.dataset.demoAccount);
+        if (!account) return;
+        const identifier = $("#login-identifier");
+        const password = $("#login-password");
+        identifier.value = account.identifier;
+        password.value = account.password;
+        [identifier, password].forEach((input) => {
+          setError(input, "");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        showStatus(loginForm, `${account.role} demo credentials filled. Click Log in securely to continue.`, "success");
+        loginForm.querySelector('button[type="submit"]')?.focus();
+      });
+    });
     loginForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!validate(loginForm)) return;
