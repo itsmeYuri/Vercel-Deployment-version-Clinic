@@ -1556,6 +1556,7 @@
     body.innerHTML = content ? content() : '<div class="empty-state">Nothing to show.</div>';
     hydrateTooltips(body);
     drawer.classList.add("open");
+    drawer.closest(".popup-layer")?.classList.add("open");
     drawer.setAttribute("aria-hidden", "false");
     $(".drawer-scrim").classList.add("open");
     document.body.style.overflow = "hidden";
@@ -1566,6 +1567,7 @@
     const drawer = $(".drawer");
     if (!drawer) return;
     drawer.classList.remove("open");
+    drawer.closest(".popup-layer")?.classList.remove("open");
     drawer.setAttribute("aria-hidden", "true");
     $(".drawer-scrim")?.classList.remove("open");
     document.body.style.overflow = "";

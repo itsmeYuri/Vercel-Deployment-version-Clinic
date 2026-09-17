@@ -149,15 +149,17 @@ require __DIR__ . '/../layouts/header.php';
         <main class="page-content" id="page-content" tabindex="-1"></main>
       </div>
 
+      <div class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    </div>
+
+    <div class="popup-layer">
       <div class="drawer-scrim" data-close-drawer></div>
       <aside class="drawer" id="<?= e($roleConfig['drawerId']) ?>" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="drawer-title">
         <div class="drawer-head">
           <div><p class="eyebrow"><?= e($roleConfig['drawerEyebrow']) ?></p><h2 id="drawer-title">Details</h2></div>
-          <button class="icon-button" type="button" aria-label="Close panel" data-close-drawer data-icon-button="close"></button>
+          <button class="icon-button" type="button" aria-label="Close dialog" data-close-drawer data-icon-button="close"></button>
         </div>
         <div class="drawer-body" id="drawer-body"></div>
       </aside>
-
-      <div class="toast-region" aria-live="polite" aria-atomic="true"></div>
     </div>
 <?php require __DIR__ . '/../layouts/footer.php'; ?>

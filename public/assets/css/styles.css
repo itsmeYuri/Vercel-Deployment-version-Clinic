@@ -3697,3 +3697,35 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
 }
 .reports-workspace .utilization-chart { min-width: 100%; }
 .reports-workspace .dashboard-grid .data-table { width: 100%; min-width: 0; }
+
+/* All role dialogs share a viewport-centered floating layer. */
+.popup-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  visibility: hidden;
+  pointer-events: none;
+}
+.popup-layer.open { visibility: visible; pointer-events: auto; }
+.popup-layer > .drawer {
+  position: relative;
+  inset: auto;
+  margin: 0;
+  transform: none;
+  width: min(720px, calc(100vw - 32px));
+  max-width: 100%;
+  height: auto;
+  max-height: calc(100dvh - 32px);
+  border-radius: 20px;
+}
+.popup-layer > .drawer.open { transform: none; }
+.glass-dialog-card,
+.release-modal-card {
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 20px;
+}
