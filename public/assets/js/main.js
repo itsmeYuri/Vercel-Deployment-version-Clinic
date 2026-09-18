@@ -789,7 +789,7 @@
 
   function valuesTable(values = []) {
     if (!values.length) return `<div class="clinical-note-box"><h4>${icon("file")} Structured Values</h4><p>No structured values were entered for this result.</p></div>`;
-    return `<table class="result-values"><thead><tr><th>Parameter</th><th>Result</th><th>Unit</th><th>Reference Range</th></tr></thead><tbody>${values.map((value) => `<tr><td>${h(value.parameter)}</td><td class="${value.flag === "High" || value.flag === "Low" ? "abnormal" : ""}">${h(value.value)}</td><td>${h(value.unit)}</td><td>${h(value.referenceRange)}</td></tr>`).join("")}</tbody></table>`;
+    return `<table class="result-values"><thead><tr><th>Parameter</th><th>Result</th><th>Unit</th><th>Reference Range</th><th>Validation</th></tr></thead><tbody>${values.map((value) => `<tr><td>${h(value.parameter)}</td><td class="${["High", "Low", "Critical", "Invalid Entry"].includes(value.flag) ? "abnormal" : ""}">${h(value.value)}</td><td>${h(value.unit)}</td><td>${h(value.referenceRange)}</td><td><strong>${h(value.flag || "Not evaluated")}</strong><p>${h(value.validationReason || "")}</p>${value.validationRule ? `<small>Source: ${h(value.validationRule.source)}</small>` : ""}</td></tr>`).join("")}</tbody></table>`;
   }
 
   function chartFromCounts(counts) {
@@ -1004,7 +1004,7 @@
     setTimeout(() => el.remove(), 3500);
   }
 
-  function glassDialog({ title, message, confirmText = "Confirm", danger = false, inputLabel = "", inputRequired = false }) {
+  function glassDialog({ title, message, confirmText = "Confirm", danger = false, inputLabel = "", inputRequired = false, detailHtml = "" }) {
     return new Promise((resolve) => {
       const returnFocus = document.activeElement;
       const modal = document.createElement("div");
@@ -1015,7 +1015,7 @@
       const messageId = `dialog-message-${Date.now()}`;
       modal.setAttribute("aria-labelledby", titleId);
       modal.setAttribute("aria-describedby", messageId);
-      modal.innerHTML = `<div class="glass-dialog-card"><h2 id="${titleId}">${h(title)}</h2><p id="${messageId}">${h(message)}</p>${inputLabel ? `<label>${h(inputLabel)}<textarea data-dialog-input ${inputRequired ? "required" : ""}></textarea></label>` : ""}<div class="form-actions"><button class="btn btn-secondary" type="button" data-dialog-cancel>Cancel</button><button class="btn ${danger ? "btn-danger" : "btn-primary"}" type="button" data-dialog-confirm>${h(confirmText)}</button></div></div>`;
+      modal.innerHTML = `<div class="glass-dialog-card"><h2 id="${titleId}">${h(title)}</h2><p id="${messageId}">${h(message)}</p>${detailHtml}${inputLabel ? `<label>${h(inputLabel)}<textarea data-dialog-input ${inputRequired ? "required" : ""}></textarea></label>` : ""}<div class="form-actions"><button class="btn btn-secondary" type="button" data-dialog-cancel>Cancel</button><button class="btn ${danger ? "btn-danger" : "btn-primary"}" type="button" data-dialog-confirm>${h(confirmText)}</button></div></div>`;
       const siblings = [...document.body.children];
       siblings.forEach((element) => element.setAttribute("inert", ""));
       const finish = (value) => {
@@ -1305,7 +1305,7 @@
 
   function renderLabUpload() {
     const activeResultOrderIds = new Set(state.data.results.filter((result) => result.status !== "Rejected").map((result) => String(result.orderId)));
-    const uploadStatuses = new Set(["Processing", "In Progress"]);
+    const uploadStatuses = new Set(["Pending", "Pending Sample", "Accepted", "Sample Collected", "Processing", "In Progress"]);
     const eligible = state.data.orders.filter((order) => uploadStatuses.has(order.status) && !activeResultOrderIds.has(String(order.id)));
     const orderOptions = eligible.map((order) => ({ value: order.id, label: `${order.orderNumber} - ${order.patientName} - ${order.tests}` }));
     const queueRows = eligible.map((order) => [h(order.orderNumber), h(order.patientName), h(order.tests), badge(order.priority), badge(order.status), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
@@ -1317,11 +1317,14 @@
   }
 
   function renderLabReview() {
-    const rows = state.data.results.map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), h(result.facilityName), badge(result.status), shortDateTime(result.uploadedAt), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const resultRow = (result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), h(result.facilityName), badge(result.status), shortDateTime(result.releasedAt || result.updatedAt || result.uploadedAt), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`];
+    const pendingRows = state.data.results.filter((result) => result.status === "Pending Review").map(resultRow);
+    const verifiedRows = state.data.results.filter((result) => result.status === "Verified").map(resultRow);
+    const completedRows = state.data.results.filter((result) => ["Released", "Rejected"].includes(result.status)).map(resultRow);
+    const columns = ["Result ID", "Request No.", "Patient", "Test", "Facility", "Status", "Updated/Released", "Action"];
     return `${heading(...pageMeta["Laboratory Staff"].review)}
       <div class="stats-grid">${stat("Results", state.data.results.length, "results")}${stat("Pending Review", state.data.results.filter((r) => r.status === "Pending Review").length, "clock", "-", "orange")}${stat("Verified", state.data.results.filter((r) => r.status === "Verified").length, "check", "-", "green")}${stat("Released", state.data.results.filter((r) => r.status === "Released").length, "download", "-", "blue")}</div>
-      ${filters("Search review queue", [["All statuses", Object.keys(state.data.reports.resultsByStatus || {})]])}
-      ${table(["Result ID", "Request No.", "Patient", "Test", "Facility", "Status", "Uploaded", "Action"], rows)}`;
+      <div class="result-review-sections"><section><h3>Pending Review</h3>${table(columns, pendingRows, "No results are waiting for verification.")}</section><section><h3>Verified Results</h3>${table(columns, verifiedRows, "No verified results are waiting for release.")}</section><section><h3>Released and Rejected Results</h3>${table(columns, completedRows, "No completed result records.")}</section></div>`;
   }
 
   function renderLabOperations() {
@@ -1464,6 +1467,10 @@
           .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         const changed = JSON.stringify(merged) !== JSON.stringify(previous);
         syncNotifications(merged);
+        if (changed && currentUser?.role === "Laboratory Staff") {
+          ["orders", "results", "patients"].forEach((key) => state.collectionLoadedAt.set(key, 0));
+          if (["dashboard", "orders", "upload", "review", "queue"].includes(state.page)) ensurePageData(state.page, true);
+        }
         if (changed && state.page === "notifications" && !document.activeElement?.closest("form")) setPage("notifications", false);
       }
       notificationPollDelay = 30000;
@@ -1503,7 +1510,10 @@
       ensurePageData(page);
       return;
     }
-    if (missingPageCollections(page).length || Date.now() - state.metadataLoadedAt >= PAGE_CACHE_TTL) ensurePageData(page);
+    const liveFacilityPage = (role === "Laboratory Staff" && ["dashboard", "orders", "upload", "review", "queue"].includes(page))
+      || (role === "Doctor" && ["dashboard", "patients", "create-order", "orders", "results"].includes(page));
+    if (liveFacilityPage) ensurePageData(page, true);
+    else if (missingPageCollections(page).length || Date.now() - state.metadataLoadedAt >= PAGE_CACHE_TTL) ensurePageData(page);
     const maintenance = state.data?.maintenance;
     const roleBlocked = maintenance?.scope === "all"
       || (maintenance?.scope === "roles" && (maintenance.affectedRoles || []).includes(role));
@@ -1553,8 +1563,127 @@
     return `<form data-form="facility"><input type="hidden" name="id" value="${h(facility.id || "")}"><div class="form-grid">${field("Facility Name", "name", facility.name || "")}${field("Address", "address", facility.address || "", "textarea")}${field("Phone", "phone", facility.phone || "")}${field("Email", "email", facility.email || "", "email")}<div class="form-field full"><label>Status</label>${select("status", ["Active", "Inactive"], facility.status || "Active")}</div></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Save Facility</button></div></form>`;
   }
 
+  function validationRuleEditor(rule = {}) {
+    return `<fieldset class="validation-rule"><legend>Parameter rule</legend><div class="validation-rule-grid">${field("Parameter name", "ruleParameter", rule.parameter || "", "text", "required")}${field("Unit (1 for dimensionless)", "ruleUnit", rule.unit || "")}${field("Reference minimum", "ruleMinimum", rule.minimum ?? "", "number", 'step="any"')}${field("Reference maximum", "ruleMaximum", rule.maximum ?? "", "number", 'step="any"')}<label><input name="ruleMinimumInclusive" type="checkbox" ${rule.minimumInclusive !== false ? "checked" : ""}> Include minimum boundary</label><label><input name="ruleMaximumInclusive" type="checkbox" ${rule.maximumInclusive !== false ? "checked" : ""}> Include maximum boundary</label>${field("Critical at or below (optional)", "ruleCriticalLow", rule.criticalLow ?? "", "number", 'step="any"')}${field("Critical at or above (optional)", "ruleCriticalHigh", rule.criticalHigh ?? "", "number", 'step="any"')}<label>Value type<select name="ruleType"><option value="numeric" ${rule.type !== "text" ? "selected" : ""}>Numeric</option><option value="text" ${rule.type === "text" ? "selected" : ""}>Qualitative</option></select></label>${field("Permitted qualitative values (comma separated)", "ruleAllowedValues", rule.allowedValues || "")}${field("Approved source / basis and applicability", "ruleSource", rule.source || "", "textarea", "required")}<label><input name="ruleRequired" type="checkbox" ${rule.required !== false ? "checked" : ""}> Required parameter</label></div><button class="btn btn-danger btn-sm" type="button" data-remove-validation-rule>Remove rule</button></fieldset>`;
+  }
+
+  function validationReportHtml(report) {
+    return `<section class="validation-report" role="status" aria-live="polite"><h3>Result validation</h3>${(report.issues || []).map(issue => `<p class="abnormal">${h(issue)}</p>`).join("")}${report.values.map(value => `<article><strong>${h(value.parameter)}: ${h(value.flag)}</strong><p>${h(value.value)} ${h(value.unit)} &middot; Reference: ${h(value.referenceRange || "Unconfigured")}</p><p>${h(value.validationReason)}</p>${value.validationRule ? `<small>Rule: ${h(value.validationRule.parameter)}. Source: ${h(value.validationRule.source)}${value.validationRule.criticalLow != null ? ` &middot; Critical &le; ${h(value.validationRule.criticalLow)}` : ""}${value.validationRule.criticalHigh != null ? ` &middot; Critical &ge; ${h(value.validationRule.criticalHigh)}` : ""}</small>` : ""}</article>`).join("")}</section>`;
+  }
+
+  function showResultValidationErrors(form, report) {
+    $$(".result-field-error", form).forEach((element) => element.remove());
+    $$(".parameter-input-table input", form).forEach((input) => input.removeAttribute("aria-invalid"));
+    const rows = $$(".parameter-input-table tbody tr", form);
+    (report.values || []).forEach((value, index) => {
+      if (value.flag !== "Invalid Entry" || !rows[index]) return;
+      const inputs = $$("input", rows[index]);
+      inputs.forEach((input) => input.setAttribute("aria-invalid", "true"));
+      const error = document.createElement("small");
+      error.className = "result-field-error";
+      error.textContent = value.validationReason || "This result row is invalid.";
+      rows[index].querySelector("td")?.append(error);
+    });
+  }
+
+  function validateRequiredResultFields(form, values) {
+    const report = { valid: true, issues: [], values: [] };
+    const rows = $$(".parameter-input-table tbody tr", form);
+    if (!values.length) {
+      report.valid = false;
+      report.issues.push("At least one result parameter is required.");
+      const firstRow = rows[0];
+      if (firstRow) report.values.push({ parameter: "Result row", flag: "Invalid Entry", validationReason: "Parameter and result value are required." });
+    }
+    values.forEach((value, index) => {
+      const reasons = [];
+      if (!value.parameter.trim()) reasons.push("Parameter is required.");
+      if (!value.value.trim()) reasons.push("Result value is required.");
+      if (reasons.length) report.valid = false;
+      report.values.push({ ...value, flag: reasons.length ? "Invalid Entry" : "", validationReason: reasons.join(" ") });
+      if (reasons.length && rows[index]) $$("input", rows[index]).forEach((input) => input.setAttribute("aria-invalid", "true"));
+    });
+    showResultValidationErrors(form, report);
+    return report.valid;
+  }
+
+  async function reviewResultValidation(form, payload) {
+    if (!validateRequiredResultFields(form, payload.values)) {
+      toast("Complete every required result field before validation.", "error");
+      return false;
+    }
+    const { validation } = await api("validate_result", { orderId: payload.orderId, resultId: payload.resultId, values: payload.values });
+    showResultValidationErrors(form, validation);
+    form.querySelector(".validation-report")?.remove();
+    form.querySelector(".form-actions").insertAdjacentHTML("beforebegin", validationReportHtml(validation));
+    if (!validation.valid) {
+      form.querySelector(".validation-report").scrollIntoView({ block: "nearest", behavior: "smooth" });
+      toast("Correct the validation issues shown below the result values.", "error");
+      return false;
+    }
+    const confirmed = await glassDialog({ title: "Confirm laboratory values", message: "Compare every value and unit with the source report and review the validation report. Approved reference ranges and calculated flags will be saved. Abnormal or critical values require professional review; this confirmation does not verify or release the result.", confirmText: "I reviewed the values", detailHtml: validationReportHtml(validation) });
+    if (!confirmed) return false;
+    payload.validationReviewed = true;
+    return true;
+  }
+
+  async function validateStoredResultBeforeStatus(result) {
+    if (!result) return false;
+    const { validation } = await api("validate_result", { resultId: result.id, values: result.values || [] });
+    const drawerBody = $("#drawer-body");
+    drawerBody?.querySelector(".validation-report")?.remove();
+    if (!validation.valid) {
+      drawerBody?.insertAdjacentHTML("beforeend", validationReportHtml(validation));
+      toast("This result must be corrected and saved before verification or release.", "error");
+      return false;
+    }
+    return true;
+  }
+
+  function showMfaForm(loginForm, challenge) {
+    loginForm.hidden = true;
+    document.querySelector(".demo-login")?.setAttribute("hidden", "");
+    document.querySelector("#mfa-form")?.remove();
+    loginForm.insertAdjacentHTML("afterend", `<form id="mfa-form"><h3>Verify your sign-in</h3><p>Enter the six-digit code sent to <strong>${h(challenge.destination)}</strong>. It expires in five minutes.</p><div class="field"><label for="mfa-code">Verification code</label><div class="input-wrap"><input id="mfa-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></div></div><button class="primary-button" type="submit">Verify and sign in</button><div class="mfa-actions"><button class="btn btn-secondary" type="button" data-mfa-resend>Send a new code</button><button class="btn btn-secondary" type="button" data-mfa-back>Back to sign in</button></div><p data-mfa-status role="status" aria-live="polite"></p></form>`);
+    showStatus(loginForm, "Check your email for your sign-in code.", "success");
+    const form = $("#mfa-form");
+    const status = $("[data-mfa-status]", form);
+    const resend = $("[data-mfa-resend]", form);
+    let availableAt = Date.now() + challenge.resendAfter * 1000;
+    let busy = false;
+    const timer = setInterval(() => {
+      if (!form.isConnected) { clearInterval(timer); return; }
+      const seconds = Math.max(0, Math.ceil((availableAt - Date.now()) / 1000));
+      resend.disabled = busy || seconds > 0;
+      resend.textContent = seconds ? `Resend in ${seconds}s` : "Send a new code";
+    }, 250);
+    resend.disabled = true;
+    $("#mfa-code").focus();
+    const run = async (action) => {
+      if (busy) return;
+      busy = true;
+      $$("button", form).forEach(b => b.disabled = true);
+      try {
+        const response = await api(action, { challenge: challenge.challenge, code: $("#mfa-code").value });
+        if (action === "resend_mfa") {
+          challenge = response; availableAt = Date.now() + response.resendAfter * 1000;
+          status.textContent = "A new code was sent. Earlier codes no longer work.";
+        } else location.href = destinations[response.user.role] || LOGIN_URL;
+      } catch (error) { status.textContent = error.message; }
+      finally { busy = false; $$("button", form).forEach(b => b.disabled = false); resend.disabled = Date.now() < availableAt; }
+    };
+    form.addEventListener("submit", event => { event.preventDefault(); if (form.reportValidity()) run("verify_mfa"); });
+    resend.addEventListener("click", () => run("resend_mfa"));
+    $("[data-mfa-back]", form).addEventListener("click", () => {
+      clearInterval(timer); form.remove(); loginForm.hidden = false;
+      document.querySelector(".demo-login")?.removeAttribute("hidden");
+      showStatus(loginForm, "Enter your credentials to request a new code.", "success");
+      $("#login-identifier").focus();
+    });
+  }
+
   function testForm(test = {}) {
-    return `<form data-form="test"><input type="hidden" name="id" value="${h(test.id || "")}"><div class="form-grid">${field("Code", "code", test.code || "")}${field("Name", "name", test.name || "")}${field("Category", "category", test.category || "")}${field("Sample Type", "sampleType", test.sampleType || "")}${field("Turnaround Time", "turnaroundTime", test.turnaroundTime || "")}${field("Price", "price", test.price || "0", "number", 'step="0.01"')}${field("Reference Range", "referenceRange", test.referenceRange || "")}${field("Instructions", "instructions", test.instructions || "", "textarea")}<div class="form-field full"><label>Status</label>${select("status", ["Active", "Inactive"], test.status || "Active")}</div></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Save Test</button></div></form>`;
+    return `<form data-form="test"><input type="hidden" name="id" value="${h(test.id || "")}"><div class="form-grid">${field("Code", "code", test.code || "")}${field("Name", "name", test.name || "")}${field("Category", "category", test.category || "")}${field("Sample Type", "sampleType", test.sampleType || "")}${field("Turnaround Time", "turnaroundTime", test.turnaroundTime || "")}${field("Price", "price", test.price || "0", "number", 'step="0.01"')}${field("Reference Range", "referenceRange", test.referenceRange || "")}${field("Instructions", "instructions", test.instructions || "", "textarea")}<div class="form-field full"><label>Status</label>${select("status", ["Active", "Inactive"], test.status || "Active")}</div></div><section class="validation-rule-editor"><h3>Approved validation rules</h3><p>Configure rules for the exact parameters in this test. Choose whether each reference boundary is inclusive. Leave a critical limit blank only when it does not apply. Record the approved source and patient applicability. Unconfigured tests cannot pass validation.</p><div data-validation-rules>${(test.validationRules || []).map(validationRuleEditor).join("")}</div><button type="button" class="btn btn-secondary" data-add-validation-rule>Add parameter rule</button></section><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Save Test</button></div></form>`;
   }
 
   function orderDetails(order) {
@@ -1727,6 +1856,14 @@
         await refreshAfter(result, "Facility saved successfully.");
         closeDrawer();
       } else if (kind === "test") {
+        payload.validationRules = $$(".validation-rule", form).map(row => ({
+          parameter: $('[name="ruleParameter"]', row).value, unit: $('[name="ruleUnit"]', row).value,
+          minimum: $('[name="ruleMinimum"]', row).value, maximum: $('[name="ruleMaximum"]', row).value,
+          criticalLow: $('[name="ruleCriticalLow"]', row).value, criticalHigh: $('[name="ruleCriticalHigh"]', row).value,
+          minimumInclusive: $('[name="ruleMinimumInclusive"]', row).checked, maximumInclusive: $('[name="ruleMaximumInclusive"]', row).checked,
+          type: $('[name="ruleType"]', row).value, source: $('[name="ruleSource"]', row).value,
+          allowedValues: $('[name="ruleAllowedValues"]', row).value, required: $('[name="ruleRequired"]', row).checked,
+        }));
         result = await api("save_test", payload);
         await refreshAfter(result, "Test definition saved successfully.");
         closeDrawer();
@@ -1749,6 +1886,7 @@
           referenceRange: $('input[name="referenceRange"]', row)?.value || "",
           flag: $('input[name="flag"]', row)?.value || "",
         })).filter((item) => item.parameter || item.value);
+        if (!await reviewResultValidation(form, payload)) return;
         result = await api("upload_result", payload);
         await refreshAfter(result, "Result uploaded for review.");
         setPage("review");
@@ -1761,6 +1899,7 @@
           referenceRange: $('input[name="referenceRange"]', row)?.value || "",
           flag: $('input[name="flag"]', row)?.value || "",
         })).filter((item) => item.parameter || item.value);
+        if (!await reviewResultValidation(form, payload)) return;
         result = await api("update_result_content", payload);
         await refreshAfter(result, "Result updated.");
         closeDrawer();
@@ -1787,6 +1926,11 @@
         closeDrawer();
       }
     } catch (error) {
+      if (error.response?.data?.validation) {
+        showResultValidationErrors(form, error.response.data.validation);
+        form.querySelector(".validation-report")?.remove();
+        form.querySelector(".form-actions")?.insertAdjacentHTML("beforebegin", validationReportHtml(error.response.data.validation));
+      }
       toast(error.message || "The request failed.", "error");
     } finally {
       button?.removeAttribute("disabled");
@@ -1794,6 +1938,11 @@
   }
 
   async function handleDashboardClick(event) {
+    const addRule = event.target.closest("[data-add-validation-rule]");
+    if (addRule) { addRule.closest("form").querySelector("[data-validation-rules]").insertAdjacentHTML("beforeend", validationRuleEditor()); return; }
+    const removeRule = event.target.closest("[data-remove-validation-rule]");
+    if (removeRule) { removeRule.closest(".validation-rule").remove(); return; }
+
     const retry = event.target.closest("[data-retry-page]");
     if (retry) {
       const page = retry.dataset.retryPage || state.page;
@@ -1990,12 +2139,12 @@
     const deleteUser = event.target.closest("[data-delete-user]");
     if (deleteUser) {
       const name = deleteUser.dataset.userName || "this user";
-      if (!await glassDialog({ title: `Deactivate ${name}?`, message: "This user will no longer be able to sign in. Existing laboratory requests and results will remain intact.", confirmText: "Deactivate user", danger: true })) {
+      if (!await glassDialog({ title: `Permanently delete ${name}?`, message: "This permanently removes the account, profile, facility assignments, sessions, and account notifications. This cannot be undone. Deletion is blocked when protected laboratory requests, results, or clinical notes are linked; deactivate those accounts instead.", confirmText: "Delete user permanently", danger: true })) {
         return;
       }
       try {
         const result = await api("delete_user", { id: deleteUser.dataset.deleteUser });
-        await refreshAfter(result, "User deactivated successfully.");
+        await refreshAfter(result, "User permanently deleted.");
       } catch (error) {
         toast(error.message, "error");
       }
@@ -2025,6 +2174,14 @@
     const resultStatus = event.target.closest("[data-result-status]");
     if (resultStatus) {
       const resultRecord = recordBy("results", resultStatus.dataset.id);
+      if (resultStatus.dataset.resultStatus === "Verified") {
+        try {
+          if (!await validateStoredResultBeforeStatus(resultRecord)) return;
+        } catch (error) {
+          toast(error.message, "error");
+          return;
+        }
+      }
       const previousStatus = resultRecord?.status;
       if (resultRecord) {
         resultRecord.status = resultStatus.dataset.resultStatus;
@@ -2071,7 +2228,15 @@
 
     const releaseTrigger = event.target.closest("[data-release-result]");
     if (releaseTrigger) {
-      openReleaseModal(recordBy("results", releaseTrigger.dataset.releaseResult));
+      const resultRecord = recordBy("results", releaseTrigger.dataset.releaseResult);
+      releaseTrigger.disabled = true;
+      try {
+        if (await validateStoredResultBeforeStatus(resultRecord)) openReleaseModal(resultRecord);
+      } catch (error) {
+        toast(error.message, "error");
+      } finally {
+        releaseTrigger.disabled = false;
+      }
       return;
     }
 
@@ -2320,8 +2485,11 @@
       loginForm.classList.add("is-loading");
       try {
         const data = await api("login", { identifier: $("#login-identifier").value, password: $("#login-password").value });
-        showStatus(loginForm, `Welcome, ${data.user.name}. Opening your dashboard...`, "success");
-        setTimeout(() => { location.href = destinations[data.user.role] || LOGIN_URL; }, 400);
+        if (!data.mfaRequired) throw new Error("The server did not return a verification challenge.");
+        $("#login-password").value = "";
+        loginForm.classList.remove("is-loading");
+        button?.removeAttribute("disabled");
+        showMfaForm(loginForm, data);
       } catch (error) {
         showStatus(loginForm, error.message, "error");
         button?.removeAttribute("disabled");
@@ -2336,8 +2504,8 @@
       registerForm.classList.add("is-loading");
       try {
         const data = await api("register_patient", { fullName: $("#full-name").value, email: $("#email").value, contact: $("#contact-number").value, username: $("#username").value, password: $("#register-password").value });
-        showStatus(registerForm, "Your account has been created. Opening your portal...", "success");
-        setTimeout(() => { location.href = destinations[data.user.role]; }, 500);
+        showStatus(registerForm, "Your account has been created. Sign in to verify your email.", "success");
+        setTimeout(() => { location.href = LOGIN_URL; }, 500);
       } catch (error) {
         showStatus(registerForm, error.message, "error");
         button?.removeAttribute("disabled");
@@ -2422,11 +2590,11 @@
           termsAccepted: $("#patient-terms").checked,
           privacyAcknowledged: $("#patient-privacy-ack").checked,
         });
-        status.textContent = "Your patient account has been created. Opening your secure dashboard...";
+        status.textContent = "Your patient account has been created. Sign in to verify your email.";
         status.classList.add("visible");
         status.style.color = "var(--green)";
         status.style.background = "var(--green-bg)";
-        setTimeout(() => { location.href = destinations[data.user.role]; }, 600);
+        setTimeout(() => { location.href = LOGIN_URL; }, 600);
       } catch (error) {
         status.textContent = error.message;
         status.classList.add("visible");
@@ -2496,6 +2664,7 @@
       hydrateStaticIcons();
       hydrateProfile();
       setPage(requestedPage, false);
+      startNotificationPolling();
       setTimeout(warmPanelCache, 250);
     } catch (error) {
       clearAppCache();

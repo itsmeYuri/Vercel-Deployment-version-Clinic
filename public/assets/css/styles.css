@@ -3862,3 +3862,24 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
 .result-scanner :is(.result-scan-status, .result-source-choice, .result-scan-output) { overflow-wrap: anywhere; }
 .result-scan-output pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ocr-review-note { display: block; margin-top: 6px; color: #8a541c; font-size: 12px; line-height: 1.4; }
+/* Authentication and laboratory validation controls. */
+#login-form[hidden], .demo-login[hidden] { display: none !important; }
+.mfa-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.mfa-actions > button { flex: 1 1 150px; white-space: normal; }
+#mfa-code { letter-spacing: .25em; font-size: 20px; }
+.validation-rule-editor, .validation-report { min-width: 0; margin: 20px 0; }
+.validation-rule { min-width: 0; border: 1px solid var(--border, #d6e6e8); border-radius: 12px; padding: 16px; margin: 14px 0; }
+.validation-rule-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.validation-rule-grid .form-field.full { grid-column: auto; }
+.validation-rule-grid input, .validation-rule-grid select, .validation-rule-grid textarea { max-width: 100%; min-width: 0; }
+.validation-report { padding: 16px; background: #f2f9f9; border: 1px solid #b6dada; border-radius: 12px; overflow-wrap: anywhere; }
+.validation-report article { padding: 10px 0; border-bottom: 1px solid #d6e6e8; }
+.validation-report p { margin: 6px 0; }
+.validation-report small { display: block; }
+.result-field-error { display: block; min-width: 150px; margin-top: 5px; color: var(--red, #b42336); font-size: 11px; line-height: 1.35; }
+.parameter-input-table input[aria-invalid="true"] { border-color: var(--red, #b42336); background: #fff7f7; }
+.result-review-sections { display: grid; gap: 20px; }
+.result-review-sections > section { min-width: 0; }
+.result-review-sections h3 { margin: 0 0 10px; color: var(--navy); }
+.glass-dialog-card:has(.validation-report) { max-height: calc(100dvh - 40px); overflow-y: auto; }
+@media (max-width: 600px) { .validation-rule-grid { grid-template-columns: minmax(0, 1fr); } }

@@ -10,4 +10,7 @@ return [
     'app_debug' => false,
     'app_timezone' => 'Asia/Manila',
     'db_timezone' => '+08:00',
+    // Required for login MFA when running locally. Use a verified sender address.
+    'resend_api_key' => '',
+    'mail_from' => '',
 ];

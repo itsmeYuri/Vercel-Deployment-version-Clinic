@@ -9,6 +9,8 @@ require_once __DIR__ . '/../app/core/maintenance.php';
 require_once __DIR__ . '/../app/core/session.php';
 require_once __DIR__ . '/../app/core/storage.php';
 require_once __DIR__ . '/../app/core/helpers.php';
+require_once __DIR__ . '/../app/core/mfa.php';
+require_once __DIR__ . '/../app/core/result-validation.php';
 
 clinic_start_session();
 
@@ -491,7 +493,10 @@ function lab_facility_ids($pdo, $user)
     $ids = array_map(function ($row) {
         return (int) $row['facility_id'];
     }, $rows);
-    if (!$ids && $user['assignedFacilityId']) {
+    // The default facility is authoritative too. Always union it with any
+    // additional staff_facilities rows so two staff at the same facility see
+    // the same orders and results even if one account has extra assignments.
+    if ($user['assignedFacilityId']) {
         $ids[] = (int) $user['assignedFacilityId'];
     }
     return array_values(array_unique($ids));
@@ -798,8 +803,12 @@ function fetch_tests($pdo, $user = null)
 {
     $where = ($user && $user['role'] !== 'Admin') ? 'WHERE status = "Active"' : '';
     $rows = all_rows($pdo, 'SELECT * FROM test_definitions ' . $where . ' ORDER BY name');
-    return array_map(function ($row) {
+    clinic_validation_schema($pdo);
+    $rules = [];
+    foreach (all_rows($pdo, 'SELECT * FROM laboratory_validation_rules') as $entry) $rules[(int) $entry['test_id']] = json_decode($entry['rules_json'], true);
+    return array_map(function ($row) use ($rules) {
         return [
+            'validationRules' => $rules[(int) $row['id']] ?? [],
             'id' => (int) $row['id'],
             'code' => $row['code'],
             'name' => $row['name'],
@@ -985,9 +994,16 @@ function fetch_result_values($pdo, $resultIds)
         return [];
     }
     $rows = all_rows($pdo, 'SELECT * FROM lab_result_values WHERE result_id IN (' . placeholders(count($resultIds)) . ') ORDER BY id', $resultIds);
+    clinic_validation_schema($pdo);
+    $reports = [];
+    foreach (all_rows($pdo, 'SELECT * FROM laboratory_validation_reports WHERE result_id IN (' . placeholders(count($resultIds)) . ')', $resultIds) as $entry) $reports[(int) $entry['result_id']] = json_decode($entry['report_json'], true);
     $grouped = [];
     foreach ($rows as $row) {
+        $saved = null;
+        foreach (($reports[(int) $row['result_id']]['values'] ?? []) as $v) if ($v['parameter'] === $row['parameter_name']) $saved = $v;
         $grouped[(int) $row['result_id']][] = [
+            'validationReason' => $saved['validationReason'] ?? 'Legacy result: no saved rule validation report.',
+            'validationRule' => $saved['validationRule'] ?? null,
             'parameter' => $row['parameter_name'],
             'value' => $row['value_text'],
             'unit' => $row['unit'],
@@ -1587,16 +1603,21 @@ function save_test($pdo, $data, $actor)
     if (one($pdo, 'SELECT id FROM test_definitions WHERE code = ? AND id <> ? LIMIT 1', [$values[0], $id])) {
         respond(false, 'That laboratory test code already exists.', [], 409, ['code' => 'Duplicate code']);
     }
+    clinic_validation_schema($pdo);
+    try { $rules = clinic_validate_rule_config($data['validationRules'] ?? []); }
+    catch (InvalidArgumentException $error) { respond(false, $error->getMessage(), [], 422); }
     $pdo->beginTransaction();
     if ($id > 0) {
         $stmt = $pdo->prepare('UPDATE test_definitions SET code=?, name=?, category=?, sample_type=?, turnaround_time=?, price=?, reference_range=?, instructions=?, status=? WHERE id=?');
         $stmt->execute(array_merge($values, [$id]));
         audit_log($pdo, $actor, 'UPDATE', 'Test Definition', 'Updated test ' . $values[0]);
     } else {
-        $stmt = $pdo->prepare('INSERT INTO test_definitions (code, name, category, sample_type, turnaround_time, price, reference_range, instructions, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-        $stmt->execute($values);
+        $id = db_insert_id($pdo, 'INSERT INTO test_definitions (code, name, category, sample_type, turnaround_time, price, reference_range, instructions, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', $values);
         audit_log($pdo, $actor, 'CREATE', 'Test Definition', 'Created test ' . $values[0]);
     }
+    $pdo->prepare('DELETE FROM laboratory_validation_rules WHERE test_id=?')->execute([$id]);
+    $pdo->prepare('INSERT INTO laboratory_validation_rules (test_id,rules_json) VALUES (?,?)')->execute([$id, json_encode($rules)]);
+    audit_log($pdo, $actor, 'UPDATE', 'Validation Rules', 'Configured ' . count($rules) . ' rules for test ' . $values[0] . '; SHA256 ' . hash('sha256', json_encode($rules)));
     $pdo->commit();
     respond(true, 'Test definition saved successfully.', ['tests' => fetch_tests($pdo, $actor)]);
 }
@@ -1865,8 +1886,9 @@ function upload_result($pdo, $data, $actor)
     if (in_array($order['status'], ['Result Uploaded', 'Verified', 'Released', 'Rejected', 'Cancelled'], true)) {
         respond(false, 'This laboratory request already has a result workflow or is closed.', [], 409);
     }
-    if (!in_array($order['status'], ['Processing', 'In Progress'], true)) {
-        respond(false, 'Move the laboratory request to Processing or In Progress before uploading a result.', [], 409);
+    $uploadableStatuses = ['Pending', 'Pending Sample', 'Accepted', 'Sample Collected', 'Processing', 'In Progress'];
+    if (!in_array($order['status'], $uploadableStatuses, true)) {
+        respond(false, 'Only an open laboratory request can receive a result.', [], 409);
     }
     $existing = one($pdo, 'SELECT result_number, status FROM lab_results WHERE order_id = ? AND status <> "Rejected" ORDER BY id DESC LIMIT 1', [(int) $order['id']]);
     if ($existing) {
@@ -1876,7 +1898,15 @@ function upload_result($pdo, $data, $actor)
     $findings = require_field($data, 'findings', 'Findings');
     $remarks = optional_string($data, 'remarks');
     $values = normalize_result_values($data['values'] ?? []);
+    $report = clinic_require_valid_result($pdo, (int) $order['id'], $values, $data);
+    $values = $report['values'];
     $pdo->beginTransaction();
+    $lockedOrder = one($pdo, 'SELECT status FROM lab_orders WHERE id=? FOR UPDATE', [(int) $order['id']]);
+    $duplicate = one($pdo, 'SELECT id FROM lab_results WHERE order_id=? AND status <> "Rejected" LIMIT 1', [(int) $order['id']]);
+    if ($duplicate || !in_array($lockedOrder['status'] ?? '', $uploadableStatuses, true)) {
+        $pdo->rollBack();
+        respond(false, 'This request already has a result or its status changed. Reload before continuing.', [], 409);
+    }
     $resultId = db_insert_id($pdo, 'INSERT INTO lab_results (result_number, order_id, uploaded_by, status, findings, remarks) VALUES (?, ?, ?, "Pending Review", ?, ?)', [$resultNumber, (int) $order['id'], $actor['id'], $findings, $remarks]);
     save_result_attachments($pdo, $resultId, $data['attachments'] ?? []);
     $stmt = $pdo->prepare('INSERT INTO lab_result_values (result_id, parameter_name, value_text, unit, reference_range, flag) VALUES (?, ?, ?, ?, ?, ?)');
@@ -1897,6 +1927,7 @@ function upload_result($pdo, $data, $actor)
     notify_facility_staff($pdo, (int) $order['facility_id'], ['title' => 'Result pending review', 'message' => $resultNumber . ' is waiting for laboratory review.', 'type_name' => 'results', 'related_order_id' => (int) $order['id'], 'related_result_id' => $resultId]);
     notify_user($pdo, ['user_id' => (int) $order['doctor_id'], 'title' => 'Result uploaded', 'message' => $resultNumber . ' is pending laboratory review.', 'type_name' => 'results', 'related_order_id' => (int) $order['id'], 'related_result_id' => $resultId]);
     audit_log($pdo, $actor, 'CREATE', 'Result', 'Uploaded ' . $resultNumber . ' for ' . $order['order_number']);
+    clinic_save_validation_report($pdo, $resultId, $report);
     $pdo->commit();
     respond(true, 'Result uploaded and sent for review.', ['resultNumber' => $resultNumber, 'orders' => fetch_orders($pdo, $actor), 'results' => fetch_results($pdo, $actor)]);
 }
@@ -1917,14 +1948,8 @@ function update_result_status($pdo, $data, $actor, $forcedStatus = null)
     if ($status === 'Released' && $result['status'] !== 'Verified') {
         respond(false, 'A result must be verified before it can be released.', [], 409);
     }
-    if ($status === 'Released' && (int) $result['uploaded_by'] === (int) $actor['id']) {
-        respond(false, 'The staff member who entered a result cannot release it.', [], 409);
-    }
     if ($status === 'Verified' && $result['status'] !== 'Pending Review') {
         respond(false, 'Only pending-review results can be verified.', [], 409);
-    }
-    if ($status === 'Verified' && (int) $result['uploaded_by'] === (int) $actor['id']) {
-        respond(false, 'A result must be verified by a different laboratory staff member.', [], 409);
     }
     if ($status === 'Rejected' && !in_array($result['status'], ['Pending Review', 'Verified'], true)) {
         respond(false, 'Only pending-review or verified results can be rejected.', [], 409);
@@ -1934,6 +1959,12 @@ function update_result_status($pdo, $data, $actor, $forcedStatus = null)
     }
     if ($result['status'] === 'Rejected' && $status !== 'Rejected') {
         respond(false, 'Rejected results cannot be reopened from this workflow.', [], 409);
+    }
+    if (in_array($status, ['Verified', 'Released'], true)) {
+        $stored = fetch_result_values($pdo, [(int) $result['id']])[(int) $result['id']] ?? [];
+        $validation = clinic_order_validation($pdo, (int) $result['order_id'], $stored);
+        if (!$validation['valid']) respond(false, 'The result must pass the current validation rules before verification or release.', ['validation' => $validation], 422);
+        if (!clinic_validation_snapshot_matches($validation, $stored)) respond(false, 'Validation rules changed or this is a legacy result. Edit and save it for a fresh review before release.', [], 409);
     }
     $order = one($pdo, 'SELECT * FROM lab_orders WHERE id = ? LIMIT 1', [(int) $result['order_id']]);
     ensure_result_workflow_table($pdo);
@@ -1990,6 +2021,8 @@ function update_result_content($pdo, $data, $actor)
     $findings = require_field($data, 'findings', 'Findings');
     $remarks = optional_string($data, 'remarks');
     $values = normalize_result_values($data['values'] ?? []);
+    $report = clinic_require_valid_result($pdo, (int) $result['order_id'], $values, $data);
+    $values = $report['values'];
     $pdo->beginTransaction();
     $nextStatus = $result['status'] === 'Verified' ? 'Pending Review' : $result['status'];
     $stmt = $pdo->prepare('UPDATE lab_results SET findings=?, remarks=?, status=?, reviewed_by=NULL, verified_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?');
@@ -2008,6 +2041,7 @@ function update_result_content($pdo, $data, $actor)
         $stmt->execute([(int) $result['order_id']]);
     }
     audit_log($pdo, $actor, 'UPDATE', 'Result', 'Edited ' . $result['result_number']);
+    clinic_save_validation_report($pdo, (int) $result['id'], $report);
     $pdo->commit();
     respond(true, 'Result updated.', ['results' => fetch_results($pdo, $actor)]);
 }
@@ -2115,25 +2149,38 @@ function change_password($pdo, $data, $actor)
     respond(true, 'Password changed successfully.');
 }
 
-function deactivate_user($pdo, $data, $actor)
+function delete_user($pdo, $data, $actor)
 {
     require_auth($pdo, ['Admin']);
     $id = (int) require_field($data, 'id', 'User');
     if ($id === (int) $actor['id']) {
-        respond(false, 'You cannot delete or deactivate your own Admin account.', [], 422);
+        respond(false, 'You cannot delete your own Admin account.', [], 422);
     }
     $target = one($pdo, 'SELECT u.id, u.name, u.status, r.name AS role FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ? LIMIT 1', [$id]);
     if (!$target) {
         respond(false, 'User not found.', [], 404);
     }
 
+    $clinicalLink = one($pdo, 'SELECT 1
+        FROM users u
+        LEFT JOIN patients p ON p.user_id=u.id
+        LEFT JOIN lab_orders patient_orders ON patient_orders.patient_id=p.id
+        LEFT JOIN lab_orders doctor_orders ON doctor_orders.doctor_id=u.id
+        LEFT JOIN lab_results uploaded_results ON uploaded_results.uploaded_by=u.id
+        LEFT JOIN clinical_notes doctor_notes ON doctor_notes.doctor_id=u.id
+        WHERE u.id=? AND (patient_orders.id IS NOT NULL OR doctor_orders.id IS NOT NULL OR uploaded_results.id IS NOT NULL OR doctor_notes.id IS NOT NULL)
+        LIMIT 1', [$id]);
+    if ($clinicalLink) {
+        respond(false, 'This user is linked to protected clinical records and cannot be permanently deleted. Deactivate the account instead to preserve the laboratory audit trail.', [], 409, ['user' => 'Clinical records are linked']);
+    }
+
     $pdo->beginTransaction();
-    $stmt = $pdo->prepare('UPDATE users SET status="Inactive", updated_at=CURRENT_TIMESTAMP WHERE id=?');
+    audit_log($pdo, $actor, 'DELETE', 'User', 'Permanently deleted ' . $target['role'] . ' user ' . $target['name']);
+    $stmt = $pdo->prepare('DELETE FROM users WHERE id=?');
     $stmt->execute([$id]);
-    audit_log($pdo, $actor, 'DELETE', 'User', 'Deactivated ' . $target['role'] . ' user ' . $target['name']);
     $pdo->commit();
 
-    respond(true, 'User deactivated successfully.', ['users' => fetch_users($pdo)]);
+    respond(true, 'User permanently deleted.', ['users' => fetch_users($pdo)]);
 }
 
 function notification_filter_sql($pdo, $user)
@@ -2186,10 +2233,39 @@ try {
         $action = $compatibilityActions[$requestPath] ?? '';
     }
     $data = request_data();
+    if (in_array($action, ['login', 'verify_mfa', 'resend_mfa', 'register_patient'], true) && ($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') respond(false, 'Use POST for authentication requests.', [], 405);
     validate_csrf_request($action);
+
+    if ($action === 'validate_result') {
+        $actor = require_auth($pdo, ['Laboratory Staff']);
+        $submittedValues = is_array($data['values'] ?? null) ? $data['values'] : [];
+        if (!empty($data['resultId'])) {
+            $result = result_by_identifier($pdo, $data['resultId']);
+            if (!$result || !can_access_result($pdo, $actor, $result)) respond(false, 'Result not found.', [], 404);
+            $order = one($pdo, 'SELECT * FROM lab_orders WHERE id=?', [$result['order_id']]);
+        } else $order = order_by_identifier($pdo, $data['orderId'] ?? '');
+        if (!$order || !can_access_order($pdo, $actor, $order)) respond(false, 'Laboratory request not found.', [], 404);
+        $report = clinic_order_validation($pdo, (int) $order['id'], normalize_result_values($submittedValues));
+        if (!empty($data['resultId']) && !clinic_validation_snapshot_matches($report, $submittedValues)) {
+            $report['valid'] = false;
+            $report['issues'][] = 'The approved rules changed or this result has no current validation snapshot. Edit and save the result before verification or release.';
+        }
+        respond(true, 'Validation completed.', ['validation' => $report]);
+    }
 
     if ($action === 'health') {
         respond(true, 'API is available.', ['database' => DB_DRIVER]);
+    }
+
+    if ($action === 'verify_mfa') clinic_mfa_verify($pdo, $data);
+
+    if ($action === 'resend_mfa') {
+        clinic_mfa_schema($pdo);
+        $challenge = one($pdo, 'SELECT * FROM auth_mfa_challenges WHERE token_hash=? AND session_hash=?', [hash('sha256', (string) ($data['challenge'] ?? '')), hash('sha256', $_SESSION['csrf_token'])]);
+        if (!$challenge || (int) $challenge['sent_epoch'] < time() - 900) respond(false, 'Start a new sign-in.', [], 401);
+        $user = fetch_user($pdo, (int) $challenge['user_id']);
+        if (!$user || $user['status'] !== 'Active' || $user['email'] !== $challenge['email']) respond(false, 'Start a new sign-in.', [], 401);
+        respond(true, 'A new code was sent.', clinic_mfa_start($pdo, $user));
     }
 
     if ($action === 'login') {
@@ -2215,11 +2291,10 @@ try {
             $stmt = $pdo->prepare('UPDATE users SET password_hash=? WHERE id=?');
             $stmt->execute([password_hash($password, PASSWORD_DEFAULT), (int) $row['id']]);
         }
-        audit_log($pdo, $user, 'LOGIN', 'Authentication', 'Successful login');
+        // Authentication is completed only after the email code is verified.
         $pdo->commit();
-        clinic_regenerate_session();
-        $_SESSION['user_id'] = (int) $row['id'];
-        respond(true, 'Login successful.', ['user' => $user, 'csrfToken' => rotate_csrf_token()]);
+        unset($_SESSION['user_id']);
+        respond(true, 'Verification code sent.', clinic_mfa_start($pdo, $user));
     }
 
     if ($action === 'logout') {
@@ -2302,9 +2377,8 @@ try {
         notify_user($pdo, ['role_name' => 'Admin', 'title' => 'New patient registered', 'message' => $fullName . ' created a patient portal account.', 'type_name' => 'users']);
         audit_log($pdo, $user, 'CREATE', 'Patient', 'Registered new patient account');
         $pdo->commit();
-        clinic_regenerate_session();
-        $_SESSION['user_id'] = $userId;
-        respond(true, 'Patient account created successfully.', ['user' => fetch_user($pdo, $userId), 'csrfToken' => rotate_csrf_token()]);
+        unset($_SESSION['user_id']);
+        respond(true, 'Patient account created. Sign in and verify your email to continue.', ['requiresLogin' => true]);
     }
 
     if ($action === 'maintenance_settings') {
@@ -2342,7 +2416,7 @@ try {
     }
 
     if ($action === 'delete_user') {
-        deactivate_user($pdo, $data, require_auth($pdo, ['Admin']));
+        delete_user($pdo, $data, require_auth($pdo, ['Admin']));
     }
 
     if ($action === 'toggle_user_status') {
