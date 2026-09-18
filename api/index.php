@@ -1228,7 +1228,7 @@ function reports_summary($orders, $results)
     ];
 }
 
-function app_data($pdo, $user, $page = 'dashboard')
+function app_data($pdo, $user, $page = 'dashboard', $collections = null)
 {
     $page = clinic_maintenance_page_key($page ?: 'dashboard');
     $role = $user['role'];
@@ -1236,7 +1236,7 @@ function app_data($pdo, $user, $page = 'dashboard')
     $pageNeeds = [
         'dashboard' => $role === 'Admin' ? ['users', 'facilities', 'notifications', 'audit'] : ($role === 'Doctor' ? ['patients', 'orders', 'results', 'notifications'] : ($role === 'Patient' ? ['patients', 'orders', 'results', 'notifications'] : ['orders', 'results', 'notifications'])),
         'users' => ['users', 'facilities'],
-        'facilities' => $role === 'Doctor' ? ['facilities', 'tests'] : ['facilities'],
+        'facilities' => in_array($role, ['Admin', 'Doctor'], true) ? ['facilities', 'tests'] : ['facilities'],
         'tests' => ['tests'],
         'patients' => ['patients', 'facilities'],
         'create-order' => ['patients', 'facilities', 'tests'],
@@ -1252,7 +1252,7 @@ function app_data($pdo, $user, $page = 'dashboard')
         'profile' => $role === 'Patient' ? ['patients', 'results'] : [],
     ];
     foreach ($pageNeeds[$page] ?? [] as $key) {
-        $needs[$key] = true;
+        $needs[$key] = $collections === null || in_array($key, $collections, true);
     }
     $orders = $needs['orders'] ? fetch_orders($pdo, $user) : [];
     $results = $needs['results'] ? fetch_results($pdo, $user) : [];
@@ -1285,7 +1285,11 @@ function app_data($pdo, $user, $page = 'dashboard')
             'scannerLanguage' => preg_replace('/[^a-z+_-]/i', '', (string) (getenv('CLINIC_SCANNER_LANGUAGE') ?: 'eng')) ?: 'eng',
         ],
         'loadedPages' => [$page],
+        'loadedCollections' => array_values(array_keys(array_filter($needs))),
     ];
+    if ($needs['patients']) {
+        $data['loadedCollections'][] = 'availablePatients';
+    }
     return $data;
 }
 
@@ -2323,7 +2327,9 @@ try {
                 respond(false, $decision['message'] ?: 'This page is temporarily unavailable.', ['maintenance' => $decision], 503);
             }
         }
-        respond(true, 'Application data loaded.', app_data($pdo, $user, $requestedPage));
+        $collections = $action === 'page_data' && isset($data['collections']) && is_array($data['collections'])
+            ? array_values(array_filter($data['collections'], 'is_string')) : null;
+        respond(true, 'Application data loaded.', app_data($pdo, $user, $requestedPage, $collections));
     }
 
     if (in_array($action, ['list_users'], true)) {

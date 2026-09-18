@@ -160,7 +160,7 @@
 
   let currentUser = null;
   const PAGE_CACHE_TTL = 60000;
-  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, trends: null, loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map() };
+  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, trends: null, loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map(), collectionLoadedAt: new Map(), metadataLoadedAt: 0 };
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -1374,6 +1374,9 @@
     const data = await api("app_data", { page });
     state.data = data;
     currentUser = data.currentUser || currentUser;
+    state.collectionLoadedAt.clear();
+    state.metadataLoadedAt = Date.now();
+    rememberCollections(data, page);
     (data.loadedPages || [page]).forEach((loadedPage) => state.pageLoadedAt.set(loadedPage, Date.now()));
     hydrateProfile();
   }
@@ -1382,7 +1385,7 @@
     const role = currentUser?.role;
     const map = {
       dashboard: role === "Admin" ? ["users", "facilities", "notifications", "audit"] : role === "Doctor" ? ["patients", "orders", "results", "notifications"] : role === "Patient" ? ["patients", "orders", "results", "notifications"] : ["orders", "results", "notifications"],
-      users: ["users", "facilities"], facilities: role === "Doctor" ? ["facilities", "tests"] : ["facilities"], tests: ["tests"], patients: ["patients", "facilities"],
+      users: ["users", "facilities"], facilities: ["Admin", "Doctor"].includes(role) ? ["facilities", "tests"] : ["facilities"], tests: ["tests"], patients: ["patients", "facilities"],
       "create-order": ["patients", "availablePatients", "facilities", "tests"], orders: ["orders", "facilities"], queue: ["orders", "facilities"], upload: ["orders", "results"],
       review: ["results"], results: ["results", "facilities"], operations: ["orders"], reports: ["users", "facilities", "tests", "orders", "results", "notifications"],
       audit: ["audit"], notifications: ["notifications"], profile: role === "Patient" ? ["patients", "results"] : [], settings: [], maintenance: [],
@@ -1390,29 +1393,58 @@
     return map[page] || [];
   }
 
+  function rememberCollections(data, page) {
+    const keys = data.loadedCollections || pageDataKeys(page);
+    keys.forEach((key) => { if (Array.isArray(data[key])) state.collectionLoadedAt.set(key, Date.now()); });
+    return keys;
+  }
+
+  function pageHasData(page) {
+    return pageDataKeys(page).every((key) => state.collectionLoadedAt.has(key));
+  }
+
+  function missingPageCollections(page, force = false) {
+    return pageDataKeys(page).filter((key) => force || !state.collectionLoadedAt.has(key) || Date.now() - state.collectionLoadedAt.get(key) >= PAGE_CACHE_TTL);
+  }
+
+  async function warmPanelCache() {
+    const role = currentUser?.role;
+    const pages = role === "Admin" ? ["tests", "orders", "results"] : role === "Doctor" ? ["orders", "facilities"] : ["orders"];
+    for (const page of ["dashboard", ...pages]) {
+      if (!currentUser || currentUser.role !== role || document.hidden || navigator.connection?.saveData || state.pageRequests.size) return;
+      if (!pageHasData(page)) {
+        await ensurePageData(page);
+        if (!pageHasData(page)) return; // Do not keep retrying an unavailable server.
+      }
+    }
+  }
+
   async function ensurePageData(page, force = false) {
-    const loaded = new Set(state.data?.loadedPages || []);
-    const isFresh = Date.now() - (state.pageLoadedAt.get(page) || 0) < PAGE_CACHE_TTL;
-    if (!force && loaded.has(page) && isFresh) return;
+    const collections = missingPageCollections(page, force);
+    if (!force && !collections.length && Date.now() - state.metadataLoadedAt < PAGE_CACHE_TTL) return;
     if (state.pageRequests.has(page)) return state.pageRequests.get(page);
     state.loadingPages.add(page);
+    const startedAt = Date.now();
     const request = (async () => { try {
-      const fresh = await api("page_data", { page });
-      pageDataKeys(page).forEach((key) => { state.data[key] = fresh[key] || []; });
-      if (page === "dashboard" || page === "reports" || ["orders", "results", "review", "operations", "queue", "upload"].includes(page)) {
-        state.data.dashboard = fresh.dashboard || state.data.dashboard;
-        state.data.reports = fresh.reports || state.data.reports;
-      }
+      const fresh = await api("page_data", { page, collections: [...new Set(collections.map((key) => key === "availablePatients" ? "patients" : key))] });
+      (fresh.loadedCollections || pageDataKeys(page)).forEach((key) => {
+        if (Array.isArray(fresh[key]) && (state.collectionLoadedAt.get(key) || 0) <= startedAt) {
+          state.data[key] = fresh[key];
+          state.collectionLoadedAt.set(key, Date.now());
+        }
+      });
+      state.metadataLoadedAt = Date.now();
       state.data.maintenance = fresh.maintenance || state.data.maintenance;
       state.data.uiConfig = fresh.uiConfig || state.data.uiConfig;
-      loaded.add(page);
-      state.data.loadedPages = [...loaded];
+      state.data.loadedPages = [...new Set([...(state.data.loadedPages || []), page])];
       state.pageLoadedAt.set(page, Date.now());
       rebuildDerivedData();
       if (state.page === page && !document.activeElement?.closest("form")) setPage(page, false);
     } catch (error) {
-      toast(error.message || "This page could not be loaded.", "error");
-      if ($("#page-content")) $("#page-content").innerHTML = `<section class="card"><div class="empty-state"><h3>Unable to load this page</h3><p>${h(error.message || "Check your connection and try again.")}</p><button class="btn btn-primary" type="button" data-retry-page="${h(page)}">Try again</button></div></section>`;
+      if (state.page === page) {
+        toast(error.message || "This page could not be loaded.", "error");
+        if (!pageHasData(page) && $("#page-content")) $("#page-content").innerHTML = `<section class="card"><div class="empty-state"><h3>Unable to load this page</h3><p>${h(error.message || "Check your connection and try again.")}</p><button class="btn btn-primary" type="button" data-retry-page="${h(page)}">Try again</button></div></section>`;
+      }
     } finally {
       state.loadingPages.delete(page);
       state.pageRequests.delete(page);
@@ -1462,8 +1494,7 @@
     const role = currentUser.role;
     const roleRenderers = renderers[role] || {};
     const page = roleRenderers[requested] ? requested : "dashboard";
-    const loadedPages = new Set(state.data?.loadedPages || []);
-    if (!loadedPages.has(page)) {
+    if (!pageHasData(page)) {
       state.page = page;
       if (updateHash && location.hash !== `#${page}`) history.pushState(null, "", `#${page}`);
       const meta = pageMeta[role]?.[page] || pageMeta[role]?.dashboard || ["Dashboard"];
@@ -1472,7 +1503,7 @@
       ensurePageData(page);
       return;
     }
-    if (Date.now() - (state.pageLoadedAt.get(page) || 0) >= PAGE_CACHE_TTL) ensurePageData(page, true);
+    if (missingPageCollections(page).length || Date.now() - state.metadataLoadedAt >= PAGE_CACHE_TTL) ensurePageData(page);
     const maintenance = state.data?.maintenance;
     const roleBlocked = maintenance?.scope === "all"
       || (maintenance?.scope === "roles" && (maintenance.affectedRoles || []).includes(role));
@@ -1652,12 +1683,19 @@
   }
 
   async function refreshAfter(payload, message) {
+    // Keep cached screens available, but refresh collections changed by a save.
+    state.collectionLoadedAt.forEach((_, key) => state.collectionLoadedAt.set(key, 0));
     if (payload?.app) {
       state.data = payload.app;
       currentUser = payload.app.currentUser || currentUser;
+      state.collectionLoadedAt.clear();
+      rememberCollections(payload.app, state.page);
     } else {
       ["users", "facilities", "tests", "patients", "availablePatients", "orders", "results", "notifications", "audit"].forEach((key) => {
-        if (Array.isArray(payload?.[key])) state.data[key] = payload[key];
+        if (Array.isArray(payload?.[key])) {
+          state.data[key] = payload[key];
+          state.collectionLoadedAt.set(key, Date.now());
+        }
       });
       if (payload?.maintenance) state.data.maintenance = payload.maintenance;
       if (payload?.currentUser || payload?.user) currentUser = payload.currentUser || payload.user;
@@ -2405,6 +2443,14 @@
   function bindProtectedAppEvents() {
     if (protectedEventsBound) return;
     protectedEventsBound = true;
+    const prefetchPanel = (event) => {
+      const link = event.target.closest?.(".nav-item[data-page], [data-go-page]");
+      const page = link?.dataset.page || link?.dataset.goPage;
+      if (!state.data || !renderers[currentUser?.role]?.[page] || state.pageRequests.size || navigator.connection?.saveData) return;
+      if (missingPageCollections(page).length || Date.now() - state.metadataLoadedAt >= PAGE_CACHE_TTL) ensurePageData(page);
+    };
+    document.addEventListener("pointerover", prefetchPanel);
+    document.addEventListener("focusin", prefetchPanel);
     window.matchMedia("(max-width: 620px)").addEventListener("change", () => {
       paginateTables();
     });
@@ -2450,6 +2496,7 @@
       hydrateStaticIcons();
       hydrateProfile();
       setPage(requestedPage, false);
+      setTimeout(warmPanelCache, 250);
     } catch (error) {
       clearAppCache();
       location.replace(LOGIN_URL);
