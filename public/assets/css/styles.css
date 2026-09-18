@@ -3729,3 +3729,109 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
   overscroll-behavior: contain;
   border-radius: 20px;
 }
+
+/* Responsive workspaces: shrink grid tracks instead of widening the document. */
+:is(.admin-dashboard-layout, .doctor-dashboard-grid, .lab-dashboard-grid, .patient-dashboard-grid, .upload-layout, .create-order-layout, .operations-layout, .settings-grid, .patient-profile-layout) > *,
+:is(.lab-side-stack, .patient-side-stack, .doctor-side-stack, .form-grid) > * { min-width: 0; }
+:is(.heading-actions, .toolbar-actions, .form-actions, .row-actions, .facility-card-actions, .result-download-actions) { flex-wrap: wrap; gap: 8px; }
+:is(.heading-actions, .toolbar-actions, .form-actions, .facility-card-actions) > .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.data-table tr[hidden] { display: none !important; }
+.notifications-card .notification-item { grid-template-columns: 38px minmax(0, 1fr); }
+.notifications-card .notification-actions { grid-column: 2; justify-content: flex-start; min-width: 0; }
+.donut-layout { flex-wrap: wrap; min-width: 0; }
+.chart-legend { min-width: 0; max-width: 100%; }
+.legend-row { overflow-wrap: anywhere; }
+@media (max-width: 1020px) {
+  :is(.lab-dashboard-grid, .patient-dashboard-grid, .doctor-dashboard-grid, .upload-layout, .operations-layout, .create-order-layout) { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 620px) {
+  .page-content { padding: calc(var(--topbar-height) + 14px) 12px 24px; }
+  .page-heading { gap: 12px; margin-bottom: 14px; }
+  .page-heading h2 { font-size: 24px; }
+  .page-heading p { margin-top: 5px; }
+  .heading-actions, .toolbar-actions { width: 100%; }
+  .heading-actions .btn, .toolbar-actions .btn { flex: 1 1 120px; }
+  html[data-text-size] :is(.heading-actions, .toolbar-actions, .form-actions) .btn { min-width: 0; white-space: normal; }
+  html[data-text-size] :is(.stats-grid, .stats-grid.stats-eight, .stats-grid.stats-six) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .stat-card { padding: 12px; }
+  .stat-value { margin-top: 8px; font-size: 22px; overflow-wrap: anywhere; }
+  .stat-top { gap: 5px; }
+  .stat-change { display: none; }
+  .stat-label { font-size: 12px; line-height: 1.4; }
+  .card-head, .card-body, .settings-card { padding: 14px; }
+  .card-head { gap: 10px; flex-wrap: wrap; }
+  .card-head .card-link { min-height: 40px; }
+  .filter-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 8px; }
+  .filter-group > *, .control select { min-width: 0; max-width: 100%; }
+  .control.control-search { width: 100%; grid-column: 1 / -1; }
+  .control, .form-field :is(input, select, textarea) { max-width: 100%; }
+  :is(.btn, .btn-sm, .row-action, .text-size-option) { min-height: 44px; }
+  .row-action { min-width: 44px; width: 44px; }
+  .table-footer { gap: 10px; padding: 12px; }
+  .table-pager { width: 100%; justify-content: space-between; }
+  .table-pager .btn { flex: 1; }
+  html[data-text-size] .page-content .data-table { display: block; width: 100%; min-width: 0; padding: 8px; }
+  html[data-text-size] .page-content .data-table tbody { display: grid; gap: 10px; }
+  html[data-text-size] .page-content .data-table tr { display: block; width: 100%; }
+  html[data-text-size] .page-content .data-table td {
+    display: grid; grid-template-columns: 90px minmax(0, 1fr); width: auto;
+    min-width: 0; max-width: none; min-height: 34px; padding: 6px 10px;
+    white-space: normal; overflow-wrap: anywhere; gap: 8px;
+  }
+  html[data-text-size] .page-content .data-table td::before { font-size: 10px; letter-spacing: 0; }
+  html[data-text-size] .page-content .data-table td > * { min-width: 0; max-width: 100%; white-space: normal; }
+  html[data-text-size] .page-content .data-table .table-person { min-width: 0; }
+  html[data-text-size] .page-content .data-table .badge { width: fit-content; }
+  html[data-text-size] .page-content .data-table .row-actions { display: flex; flex-wrap: wrap; }
+  html[data-text-size] .page-content .data-table td:has(.empty-state) { grid-template-columns: 1fr; }
+  .form-actions { flex-wrap: wrap; position: static; margin: 16px 0 0; padding: 12px 0 0; }
+  .form-actions .btn { flex: 1 1 110px; }
+  .drawer-body { padding: 14px; }
+  .drawer-head { padding: 14px; gap: 10px; }
+  .drawer-head > div { min-width: 0; }
+  .drawer-head .icon-button { flex-shrink: 0; }
+  .drawer-info, .info-display-grid { gap: 10px; padding: 12px; }
+  .patient-profile-card { padding: 16px; }
+  .patient-profile-avatar { width: 64px; height: 64px; margin-bottom: 10px; }
+  .patient-download-box, .attachment-card { flex-wrap: wrap; gap: 10px; }
+  .patient-download-box .btn { width: 100%; }
+  .donut-layout { min-height: 0; gap: 14px; }
+  .notification-item { grid-template-columns: 36px minmax(0, 1fr); padding: 12px; gap: 10px; }
+  .notification-actions { grid-column: 2; min-width: 0; flex-wrap: wrap; justify-content: flex-start; }
+  .notification-copy :is(strong, p) { white-space: normal; overflow-wrap: anywhere; }
+  .result-scanner-controls { display: flex; flex-wrap: wrap; }
+  .result-scanner-controls .btn { flex: 1 1 110px; min-width: 0; white-space: normal; }
+  .upload-panel { padding: 14px; }
+  .utilization-chart { min-width: 0; max-width: 100%; }
+  .utilization-axis { display: flex; justify-content: space-between; gap: 2px; height: auto; min-height: 24px; }
+  .utilization-axis span { position: static; transform: none; width: auto; font-size: 9px; }
+  .utilization-axis span:not(:first-child):not(:last-child):not(:nth-child(5n)) { display: none; }
+  .utilization-chart svg { height: 170px; }
+  .reports-workspace .trend-filter-grid { gap: 10px; padding: 10px; }
+  .reports-workspace .trend-bar-row { grid-template-columns: minmax(70px, 1fr) minmax(30px, 1fr) auto; font-size: 12px; }
+  .reports-workspace .trend-panel { padding: 12px; }
+}
+@media (max-width: 620px) {
+  .topbar .profile-button { display: flex; min-width: 36px; padding: 0; }
+  .topbar .profile-button .avatar { width: 32px; height: 32px; }
+  .topbar-actions { gap: 8px; }
+  .topbar .global-search { flex: 1 1 100px; min-width: 0; width: auto; }
+  .profile-dropdown { max-width: calc(100vw - 24px); }
+  .stat-change { display: inline-flex; min-width: 0; font-size: 10px; white-space: normal; }
+  .parameter-input-table [data-remove-result-parameter] { min-width: 44px; min-height: 44px; }
+  .drawer :is(.btn, .btn-sm), .release-modal-card .btn, .glass-dialog-card .btn { max-width: 100%; min-width: 0; white-space: normal; }
+  .drawer .drawer-info { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .drawer :is(.drawer-info strong, .attachment-link) { overflow-wrap: anywhere; }
+  .result-values { table-layout: fixed; width: 100%; }
+  .result-values :is(th, td) { overflow-wrap: anywhere; padding: 8px 5px; }
+}
+@media (max-width: 620px) {
+  .drawer .result-values { min-width: 0; }
+  .topbar { gap: 8px; }
+  .topbar .topbar-title { flex: 0 0 36px; }
+  .topbar .topbar-actions { flex: 1 1 0; flex-wrap: nowrap; }
+  .topbar .profile-menu-wrap { flex: 0 0 36px; min-width: 0; }
+  .topbar .profile-button { width: 36px; }
+  .topbar .profile-button > i { display: none; }
+  .topbar .global-search { flex: 1 1 0; width: 0; min-width: 0; }
+}

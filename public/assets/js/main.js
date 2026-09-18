@@ -206,7 +206,7 @@
   };
   const uiConfig = () => state.data?.uiConfig || {};
   const appName = () => uiConfig().appName || "Centralized Laboratory Results System";
-  const previewLimit = () => Number(uiConfig().previewLimit || 6);
+  const previewLimit = () => Math.min(Number(uiConfig().previewLimit || 6), window.matchMedia("(max-width: 620px)").matches ? 3 : Infinity);
 
   function icon(name, className = "") {
     return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" ${name === "medical" ? "" : 'fill="none"'}>${iconPaths[name] || iconPaths.file}</svg>`;
@@ -686,7 +686,7 @@
 
   function paginateTables(root = document) {
     $$('[data-paginated-table]', root).forEach((card) => {
-      const pageSize = Number(uiConfig().pageSize || 25);
+      const pageSize = Math.min(Number(uiConfig().pageSize || 25), window.matchMedia("(max-width: 620px)").matches ? 4 : Infinity);
       const rows = $$('.data-table tbody tr', card).filter((row) => !row.querySelector(".empty-state") && row.dataset.filterMatch !== "false");
       const pages = Math.max(1, Math.ceil(rows.length / pageSize));
       const page = Math.min(Math.max(1, Number(card.dataset.tablePage || 1)), pages);
@@ -2355,6 +2355,9 @@
   function bindProtectedAppEvents() {
     if (protectedEventsBound) return;
     protectedEventsBound = true;
+    window.matchMedia("(max-width: 620px)").addEventListener("change", () => {
+      paginateTables();
+    });
     document.addEventListener("click", handleDashboardClick);
     document.addEventListener("submit", handleDashboardSubmit);
     document.addEventListener("input", handleDashboardInput);
