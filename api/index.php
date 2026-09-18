@@ -1251,7 +1251,7 @@ function app_data($pdo, $user, $page = 'dashboard', $collections = null)
     $pageNeeds = [
         'dashboard' => $role === 'Admin' ? ['users', 'facilities', 'notifications', 'audit'] : ($role === 'Doctor' ? ['patients', 'orders', 'results', 'notifications'] : ($role === 'Patient' ? ['patients', 'orders', 'results', 'notifications'] : ['orders', 'results', 'notifications'])),
         'users' => ['users', 'facilities'],
-        'facilities' => in_array($role, ['Admin', 'Doctor'], true) ? ['facilities', 'tests'] : ['facilities'],
+        'facilities' => ['facilities'],
         'tests' => ['tests'],
         'patients' => ['patients', 'facilities'],
         'create-order' => ['patients', 'facilities', 'tests'],

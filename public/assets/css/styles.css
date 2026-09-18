@@ -3736,6 +3736,23 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
 :is(.heading-actions, .toolbar-actions, .form-actions, .row-actions, .facility-card-actions, .result-download-actions) { flex-wrap: wrap; gap: 8px; }
 :is(.heading-actions, .toolbar-actions, .form-actions, .facility-card-actions) > .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .data-table tr[hidden] { display: none !important; }
+.data-table .clickable-row { cursor: pointer; }
+.data-table .clickable-row:focus-visible { outline: 3px solid rgba(8, 163, 148, .35); outline-offset: -3px; }
+.data-table .clickable-row:hover { background: var(--teal-50); box-shadow: inset 3px 0 0 var(--teal-500); }
+.stacked-tables, .result-review-sections { display: grid; gap: 22px; }
+.stacked-tables > section > h3, .result-review-sections > section > h3 { margin: 0 0 10px; color: var(--navy); }
+.lab-dashboard-grid, .patient-dashboard-grid, .upload-layout { grid-template-columns: minmax(0, 1fr); }
+.lab-side-stack, .patient-side-stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 17px; }
+.control-date { gap: 7px; }
+.control-date span { color: var(--muted); font-size: 11px; font-weight: 700; }
+.control-date input { width: 132px; border: 0; outline: 0; color: var(--ink); background: transparent; font: inherit; }
+.request-form-sections { display: grid; gap: 16px; }
+.request-form-section { min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: #fbfefe; }
+.request-form-section legend { display: flex; align-items: center; gap: 9px; padding: 0 6px; color: var(--navy); font-weight: 800; }
+.request-form-section legend span { display: inline-grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; color: #fff; background: var(--teal-700); font-size: 12px; }
+.request-form-section .form-field { margin: 0; }
+.form-field :is(select, input[type="date"], input[type="datetime-local"]), .control :is(select, input[type="date"]) { color-scheme: light; accent-color: var(--teal-700); }
+.form-field select, .control select { cursor: pointer; }
 .notifications-card .notification-item { grid-template-columns: 38px minmax(0, 1fr); }
 .notifications-card .notification-actions { grid-column: 2; justify-content: flex-start; min-width: 0; }
 .donut-layout { flex-wrap: wrap; min-width: 0; }

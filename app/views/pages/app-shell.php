@@ -77,8 +77,8 @@ $configs = [
         'nav' => clinic_route_nav([
             ['page' => 'dashboard', 'file' => 'dashboard', 'icon' => 'dashboard', 'label' => 'Dashboard'],
             ['page' => 'patients', 'file' => 'patients', 'icon' => 'users', 'label' => 'Patients'],
-            ['page' => 'facilities', 'file' => 'facilities', 'icon' => 'facility', 'label' => 'Facilities & Tests'],
-            ['page' => 'create-order', 'file' => 'create-order', 'icon' => 'plus-file', 'label' => 'New Laboratory Request'],
+            ['page' => 'facilities', 'file' => 'facilities', 'icon' => 'facility', 'label' => 'Facilities'],
+            ['page' => 'tests', 'file' => 'tests', 'icon' => 'test', 'label' => 'Tests'],
             ['page' => 'orders', 'file' => 'orders', 'icon' => 'orders', 'label' => 'My Laboratory Requests', 'count' => 0],
             ['page' => 'results', 'file' => 'results', 'icon' => 'results', 'label' => 'Results', 'count' => 0],
         ]),

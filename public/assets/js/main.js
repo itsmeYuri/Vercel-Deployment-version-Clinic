@@ -93,7 +93,8 @@
     Doctor: {
       dashboard: ["Doctor Dashboard", "Monitor your patients, laboratory requests, and available results."],
       patients: ["Patients", "Search and view patients related to your laboratory work."],
-      facilities: ["Active Facilities & Tests", "View available facilities and laboratory tests."],
+      facilities: ["Facilities", "View facilities available for laboratory requests."],
+      tests: ["Tests", "Browse available laboratory tests, samples, and turnaround times."],
       "create-order": ["New Laboratory Request", "Submit a new laboratory request for one of your patients."],
       orders: ["My Laboratory Requests", "Track the laboratory requests submitted by you."],
       results: ["Laboratory Results", "View results and add clinical notes."],
@@ -704,6 +705,10 @@
     return `<div class="table-person">${avatar(av || initials(name), color)}<div><span class="cell-strong">${h(name)}</span><span class="cell-sub">${h(sub || "")}</span></div></div>`;
   }
 
+  function identity(name, code, email = "", av = "", color = "teal") {
+    return `<div class="table-person">${avatar(av || initials(name), color)}<div><span class="cell-strong">${h(name)}</span>${code ? `<span class="cell-sub">${h(code)}</span>` : ""}${email ? `<span class="cell-sub cell-email" title="${h(email)}">${h(email)}</span>` : ""}</div></div>`;
+  }
+
   function initials(name) {
     return String(name || "User").trim().split(/\s+/).slice(0, 2).map((part) => part[0] || "").join("").toUpperCase() || "U";
   }
@@ -728,10 +733,23 @@
 
   function table(headers, rows, footer = "") {
     const clean = (value) => String(value).replace(/<[^>]*>/g, "");
+    const prepared = rows.map((cells) => {
+      const last = String(cells[cells.length - 1] || "");
+      const opener = last.match(/^\s*<button[^>]*data-drawer="([^"]+)"[^>]*data-id="([^"]+)"[^>]*>.*<\/button>\s*$/s);
+      const openOnly = Boolean(opener && /^(Action|Actions)$/i.test(clean(headers[headers.length - 1] || "")) && /^(View(?: Result)?|Review|Process)$/i.test(clean(last).trim()));
+      const date = cells.join(" ").match(/<time[^>]*datetime="([^"]+)"/)?.[1] || "";
+      return { cells, opener, openOnly, date };
+    });
+    const removeOpenColumn = prepared.length > 0 && prepared.every((row) => row.openOnly);
+    const visibleHeaders = removeOpenColumn ? headers.slice(0, -1) : headers;
     const body = rows.length
-      ? rows.map((row) => `<tr>${row.map((cell, index) => `<td data-label="${h(clean(headers[index]))}">${cell}</td>`).join("")}</tr>`).join("")
-      : `<tr><td colspan="${headers.length}"><div class="empty-state">No records found.</div></td></tr>`;
-    return `<section class="card table-card" data-paginated-table data-table-page="1" data-table-label="${h(footer)}"><div class="table-responsive"><table class="data-table"><thead><tr>${headers.map((item) => `<th scope="col">${h(item)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div><div class="table-footer"><span data-table-page-summary aria-live="polite">${h(footer || `${rows.length} records`)}</span><div class="table-pager" aria-label="Table pages"><button class="btn btn-secondary btn-sm" type="button" data-table-prev>Previous</button><button class="btn btn-secondary btn-sm" type="button" data-table-next>Next</button></div></div></section>`;
+      ? prepared.map((row) => {
+        const cells = removeOpenColumn ? row.cells.slice(0, -1) : row.cells;
+        const attributes = row.opener ? ` class="clickable-row" data-drawer="${h(row.opener[1])}" data-id="${h(row.opener[2])}" role="button" tabindex="0" aria-label="Open record details"` : "";
+        return `<tr${attributes}${row.date ? ` data-table-date="${h(row.date.slice(0, 10))}"` : ""}>${cells.map((cell, index) => `<td data-label="${h(clean(visibleHeaders[index]))}">${cell}</td>`).join("")}</tr>`;
+      }).join("")
+      : `<tr><td colspan="${visibleHeaders.length}"><div class="empty-state">No records found.</div></td></tr>`;
+    return `<section class="card table-card" data-paginated-table data-table-page="1" data-table-label="${h(footer)}"><div class="table-responsive"><table class="data-table"><thead><tr>${visibleHeaders.map((item) => `<th scope="col">${h(item)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div><div class="table-footer"><span data-table-page-summary aria-live="polite">${h(footer || `${rows.length} records`)}</span><div class="table-pager" aria-label="Table pages"><button class="btn btn-secondary btn-sm" type="button" data-table-prev>Previous</button><button class="btn btn-secondary btn-sm" type="button" data-table-next>Next</button></div></div></section>`;
   }
 
   function paginateTables(root = document) {
@@ -754,8 +772,9 @@
     });
   }
 
-  function filters(placeholder, selects = [], actions = "") {
-    return `<div class="toolbar"><div class="filter-group"><label class="control control-search">${icon("search")}<input type="search" data-table-search placeholder="${h(placeholder)}"></label>${selects.map(([label, options]) => `<label class="control"><select aria-label="${h(label)}"><option>${h(label)}</option>${options.map((option) => `<option>${h(option)}</option>`).join("")}</select>${icon("chevron", "select-arrow")}</label>`).join("")}</div><div class="toolbar-actions">${actions}</div></div>`;
+  function filters(placeholder, selects = [], actions = "", options = {}) {
+    const dates = options.dates ? `<label class="control control-date"><span>From</span><input type="date" data-table-date-from aria-label="From date"></label><label class="control control-date"><span>To</span><input type="date" data-table-date-to aria-label="To date"></label>` : "";
+    return `<div class="toolbar"><div class="filter-group"><label class="control control-search">${icon("search")}<input type="search" data-table-search placeholder="${h(placeholder)}"></label>${selects.map(([label, options]) => `<label class="control"><select aria-label="${h(label)}"><option>${h(label)}</option>${options.filter(Boolean).map((option) => `<option>${h(option)}</option>`).join("")}</select>${icon("chevron", "select-arrow")}</label>`).join("")}${dates}</div><div class="toolbar-actions">${actions}<button class="btn btn-secondary btn-sm" type="button" data-clear-filters>Clear filters</button></div></div>`;
   }
 
   function toggle(checked = true, label = "", attrs = "") {
@@ -1111,46 +1130,46 @@
   }
 
   function renderUsers() {
-    const rows = state.data.users.map((user) => [person(user.name, `@${user.username}`, user.avatar), `<span class="cell-email" title="${h(user.email)}">${h(user.email)}</span>`, badge(user.role), h(user.assignedFacility || "Unassigned"), badge(user.status), `<div class="row-actions"><button class="row-action" data-drawer="user" data-id="${user.id}" aria-label="Edit user">${icon("edit")}</button><button class="row-action" data-toggle-user="${user.id}" data-status="${user.status === "Active" ? "Inactive" : "Active"}" aria-label="${user.status === "Active" ? "Deactivate user" : "Activate user"}">${icon(user.status === "Active" ? "lock" : "check")}</button><button class="row-action row-action-danger" data-delete-user="${user.id}" data-user-name="${h(user.name)}" aria-label="Delete user">${icon("trash")}</button></div>`]);
+    const rows = state.data.users.map((user) => [identity(user.name, `@${user.username}`, user.email, user.avatar), `${badge(user.role)}<span class="cell-sub">${h(user.assignedFacility || "Unassigned")}</span>`, badge(user.status), `<div class="row-actions"><button class="row-action" data-drawer="user" data-id="${user.id}" aria-label="Edit user">${icon("edit")}</button><button class="row-action" data-toggle-user="${user.id}" data-status="${user.status === "Active" ? "Inactive" : "Active"}" aria-label="${user.status === "Active" ? "Deactivate user" : "Activate user"}">${icon(user.status === "Active" ? "lock" : "check")}</button><button class="row-action row-action-danger" data-delete-user="${user.id}" data-user-name="${h(user.name)}" aria-label="Delete user">${icon("trash")}</button></div>`]);
     return `${heading(...pageMeta.Admin.users, `<button class="btn btn-primary" data-drawer="user">${icon("plus")} Add User</button>`)}
       <div class="stats-grid">${stat("Total Users", state.data.users.length, "users")}${stat("Active Users", state.data.users.filter((u) => u.status === "Active").length, "check", "-", "green")}${stat("Doctors", state.data.users.filter((u) => u.role === "Doctor").length, "doctor", "-", "blue")}${stat("Patients", state.data.users.filter((u) => u.role === "Patient").length, "user", "-", "orange")}</div>
       ${filters("Search users", [["All roles", ["Admin", "Doctor", "Laboratory Staff", "Patient"]], ["All statuses", ["Active", "Inactive"]]])}
-      ${table(["User", "Email", "Role", "Facility", "Status", "Actions"], rows)}`;
+      ${table(["User", "Role & Facility", "Status", "Actions"], rows)}`;
   }
 
   function renderFacilities() {
-    const rows = state.data.facilities.map((facility) => [`<span class="cell-strong">${h(facility.name)}</span>`, `<span class="cell-wrap">${h(facility.address)}</span>`, h(facility.phone), h(facility.activeOrders), h(facility.activeTests), badge(facility.status), `<button class="btn btn-secondary btn-sm" data-drawer="facility" data-id="${facility.id}">Edit</button>`]);
+    const rows = state.data.facilities.map((facility) => [`<span class="cell-strong">${h(facility.name)}</span><span class="cell-sub">${h(facility.address)}</span>`, `<span class="cell-strong">${h(facility.phone || "No phone")}</span><span class="cell-sub">${h(facility.email || "No email")}</span>`, `<span class="cell-strong">${h(facility.activeOrders)} open requests</span><span class="cell-sub">${h(facility.activeTests)} active tests</span>`, badge(facility.status), `<button class="btn btn-secondary btn-sm" data-drawer="facility" data-id="${facility.id}">Edit</button>`]);
     return `${heading(...pageMeta.Admin.facilities, `<button class="btn btn-primary" data-drawer="facility">${icon("plus")} Add Facility</button>`)}
       <div class="stats-grid">${stat("Facilities", state.data.facilities.length, "facility")}${stat("Active", state.data.facilities.filter((f) => f.status === "Active").length, "check", "-", "green")}${stat("Open Requests", state.data.facilities.reduce((sum, f) => sum + Number(f.activeOrders || 0), 0), "orders", "-", "blue")}${stat("Active Tests", state.data.tests.filter((t) => t.status === "Active").length, "test", "-", "purple")}</div>
       ${filters("Search facilities", [["All statuses", ["Active", "Inactive"]]])}
-      ${table(["Facility", "Address", "Phone", "Open Requests", "Active Tests", "Status", "Action"], rows)}`;
+      ${table(["Facility", "Contact", "Activity", "Status", "Action"], rows)}`;
   }
 
   function renderTests() {
-    const rows = state.data.tests.map((test) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(test.code)}</span>`, h(test.name), h(test.category), h(test.sampleType), h(test.turnaroundTime), money(test.price), badge(test.status), `<button class="btn btn-secondary btn-sm" data-drawer="test" data-id="${test.id}">Edit</button>`]);
+    const rows = state.data.tests.map((test) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(test.name)}</span><span class="cell-sub">${h(test.code)}</span>`, `<span class="cell-strong">${h(test.category)}</span><span class="cell-sub">${h(test.sampleType)}</span>`, `<span class="cell-strong">${h(test.turnaroundTime)}</span><span class="cell-sub">${money(test.price)}</span>`, badge(test.status), `<button class="btn btn-secondary btn-sm" data-drawer="test" data-id="${test.id}">Edit</button>`]);
     return `${heading(...pageMeta.Admin.tests, `<button class="btn btn-primary" data-drawer="test">${icon("plus")} Add Test</button>`)}
       <div class="stats-grid">${stat("Test Definitions", state.data.tests.length, "test")}${stat("Active Tests", state.data.tests.filter((t) => t.status === "Active").length, "check", "-", "green")}${stat("Categories", new Set(state.data.tests.map((t) => t.category)).size, "chart", "-", "blue")}${stat("Average Price", money(state.data.tests.reduce((sum, t) => sum + Number(t.price || 0), 0) / Math.max(1, state.data.tests.length)), "file", "-", "purple")}</div>
-      ${filters("Search tests", [["All categories", [...new Set(state.data.tests.map((t) => t.category))]], ["All statuses", ["Active", "Inactive"]]])}
-      ${table(["Code", "Test Name", "Category", "Sample", "Turnaround", "Price", "Status", "Action"], rows)}`;
+      ${filters("Search test name or code", [["All categories", [...new Set(state.data.tests.map((t) => t.category))]], ["All samples", [...new Set(state.data.tests.map((t) => t.sampleType))]], ["All statuses", ["Active", "Inactive"]]])}
+      ${table(["Test", "Category & Sample", "Turnaround & Price", "Status", "Action"], rows)}`;
   }
 
   function renderOrders(titleRole = currentUser.role, pageKey = "orders") {
-    const rows = state.data.orders.map((order) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(order.orderNumber)}</span>`, person(order.patientName, order.patientCode, order.patientAvatar, "teal"), h(order.doctorName), h(order.facilityName), `<span class="cell-wrap">${h(order.tests)}</span>`, badge(order.priority), badge(order.status), `<time datetime="${h(order.createdAt)}">${shortDateTime(order.createdAt)}</time>`, `<time datetime="${h(order.updatedAt || order.createdAt)}">${shortDateTime(order.updatedAt || order.createdAt)}</time>`, `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
+    const rows = state.data.orders.map((order) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(order.orderNumber)}</span><span class="cell-sub">Created <time datetime="${h(order.createdAt)}">${shortDateTime(order.createdAt)}</time></span><span class="cell-sub">Updated ${shortDateTime(order.updatedAt || order.createdAt)}</span>`, identity(order.patientName, order.patientCode, "", order.patientAvatar), `<span class="cell-strong">${h(order.doctorName)}</span><span class="cell-sub">${h(order.facilityName)}</span>`, `<span class="cell-wrap">${h(order.tests)}</span>`, `${badge(order.priority)} ${badge(order.status)}`, `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
     const meta = pageMeta[titleRole]?.[pageKey] || pageMeta[titleRole]?.orders || pageMeta.Admin.orders;
     const action = titleRole === "Doctor" ? `<button class="btn btn-primary" data-go-page="create-order">${icon("plus")} New Laboratory Request</button>` : "";
     return `${heading(...meta, action)}
       <div class="stats-grid">${stat("Requests", state.data.orders.length, "orders")}${stat("Open", state.data.orders.filter((o) => !["Released", "Rejected", "Cancelled"].includes(o.status)).length, "clock", "-", "orange")}${stat("Released", state.data.orders.filter((o) => o.status === "Released").length, "check", "-", "green")}${stat("Priority", state.data.orders.filter((o) => o.priority === "Priority").length, "alert", "-", "red")}</div>
-      ${filters("Search laboratory requests", [["All statuses", Object.keys(state.data.reports.ordersByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)]])}
-      ${table(["Request No.", "Patient", "Requesting Clinician", "Facility", "Tests", "Priority", "Status", "Created", "Updated", "Action"], rows)}`;
+      ${filters("Search request, patient, clinician, or test", [["All statuses", Object.keys(state.data.reports.ordersByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)], ["All priorities", ["Regular", "Priority"]]], "", { dates: true })}
+      ${table(["Request", "Patient", "Clinician & Facility", "Tests", "Workflow", "Action"], rows)}`;
   }
 
   function renderResults(titleRole = currentUser.role) {
-    const rows = state.data.results.map((result) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(result.resultNumber)}</span>`, h(result.orderNumber), person(result.patientName, result.patientCode), h(result.testName), h(result.facilityName), badge(result.status), `<time datetime="${h(result.createdAt || result.uploadedAt)}">${shortDateTime(result.createdAt || result.uploadedAt)}</time>`, `<time datetime="${h(result.releasedAt || result.updatedAt || result.uploadedAt)}">${shortDateTime(result.releasedAt || result.updatedAt || result.uploadedAt)}</time>`, `<span class="cell-wrap">${h(result.clinicalNote || "No clinical note yet")}</span>`, `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">View</button>`]);
+    const rows = state.data.results.map((result) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(result.resultNumber)}</span><span class="cell-sub">Request ${h(result.orderNumber)}</span><span class="cell-sub"><time datetime="${h(result.createdAt || result.uploadedAt)}">${shortDateTime(result.releasedAt || result.updatedAt || result.uploadedAt)}</time></span>`, identity(result.patientName, result.patientCode), `<span class="cell-strong">${h(result.testName)}</span><span class="cell-sub">${h(result.facilityName)}</span>`, badge(result.status), `<span class="cell-wrap">${h(result.clinicalNote || "No clinical note yet")}</span>`, `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">View</button>`]);
     const meta = pageMeta[titleRole]?.results || pageMeta.Admin.results;
     return `${heading(...meta)}
       <div class="stats-grid">${stat("Results", state.data.results.length, "results")}${stat("Pending Review", state.data.results.filter((r) => r.status === "Pending Review").length, "clock", "-", "orange")}${stat("Verified", state.data.results.filter((r) => r.status === "Verified").length, "check", "-", "green")}${stat("Released", state.data.results.filter((r) => r.status === "Released").length, "download", "-", "blue")}</div>
-      ${filters("Search results", [["All statuses", Object.keys(state.data.reports.resultsByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)]])}
-      ${table(["Result ID", "Request No.", "Patient", "Test", "Facility", "Status", "Created", "Updated/Released", "Clinical Note", "Action"], rows)}`;
+      ${filters("Search result, request, patient, or test", [["All statuses", Object.keys(state.data.reports.resultsByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)]], "", { dates: true })}
+      ${table(["Result", "Patient", "Test & Facility", "Status", "Clinical Note", "Action"], rows)}`;
   }
 
   function renderReports() {
@@ -1168,7 +1187,7 @@
   function renderAudit() {
     const rows = state.data.audit.map((item) => [shortDateTime(item.createdAt), person(item.userName, item.role), badge(item.action), h(item.module), `<span class="cell-wrap">${h(item.details)}</span>`, h(item.ipAddress)]);
     return `${heading(...pageMeta.Admin.audit)}
-      ${filters("Search audit records", [["All modules", [...new Set(state.data.audit.map((a) => a.module))]], ["All actions", [...new Set(state.data.audit.map((a) => a.action))]]])}
+      ${filters("Search user, details, module, or IP", [["All users", [...new Set(state.data.audit.map((a) => a.userName))]], ["All modules", [...new Set(state.data.audit.map((a) => a.module))]], ["All actions", [...new Set(state.data.audit.map((a) => a.action))]]], "", { dates: true })}
       ${table(["Time", "User", "Action", "Module", "Details", "IP"], rows)}`;
   }
 
@@ -1242,29 +1261,33 @@
   }
 
   function renderDoctorDashboard() {
-    const patientRows = state.data.patients.slice(0, previewLimit()).map((patient) => [h(patient.patientCode), person(patient.name, patient.email, patient.avatar), h(patient.sex || "-"), h(patient.primaryFacility || "-"), badge(patient.latestStatus || "Pending"), `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
-    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.patientName), h(result.testName), badge(result.status), h(result.facilityName), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const patientRows = state.data.patients.slice(0, previewLimit()).map((patient) => [identity(patient.name, patient.patientCode, patient.email, patient.avatar), `${h(patient.sex || "-")}<span class="cell-sub">${h(patient.dateOfBirth || "No birth date")}</span>`, h(patient.primaryFacility || "-"), badge(patient.latestStatus || "Pending"), `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
+    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [`<span class="cell-strong">${h(result.resultNumber)}</span><span class="cell-sub">${h(result.orderNumber)}</span>`, identity(result.patientName, result.patientCode), `<span class="cell-strong">${h(result.testName)}</span><span class="cell-sub">${h(result.facilityName)}</span>`, badge(result.status), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
     return `${heading(...pageMeta.Doctor.dashboard, `<button class="btn btn-secondary" data-go-page="results">${icon("results")} Results</button><button class="btn btn-primary" data-go-page="create-order">${icon("plus")} New Laboratory Request</button>`)}
       <div class="stats-grid">${dashboardStats()}</div>
       <div class="doctor-dashboard-grid"><section class="card"><div class="card-head"><div><h3 class="card-title">My Laboratory Requests</h3><p class="card-subtitle">Current status distribution</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByStatus)}</div></section>${donutCard("My Request Status", state.data.reports.ordersByStatus, "Requests")}</div>
-      <div class="dashboard-grid">${table(["Patient ID", "Patient", "Sex", "Facility", "Latest Status", "Action"], patientRows, "Patients linked to your laboratory requests")}${table(["Result ID", "Patient", "Test", "Status", "Facility", "Action"], resultRows, "Recent results")}</div>`;
+      <div class="stacked-tables"><section><h3>Patients</h3>${table(["Patient", "Demographics", "Facility", "Latest Status", "Action"], patientRows, "Patients linked to your laboratory requests")}</section><section><h3>Results</h3>${table(["Result", "Patient", "Test & Facility", "Status", "Action"], resultRows, "Recent results")}</section></div>`;
   }
 
   function renderPatients(role = currentUser.role) {
     const meta = pageMeta[role].patients;
-    const rows = state.data.patients.map((patient) => [h(patient.patientCode), person(patient.name, patient.email, patient.avatar), h(patient.dateOfBirth || "-"), h(patient.sex || "-"), h(patient.primaryFacility || "-"), h(patient.latestTests || "-"), badge(patient.latestStatus || "Pending"), `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
+    const rows = state.data.patients.map((patient) => [identity(patient.name, patient.patientCode, patient.email, patient.avatar), `<time datetime="${h(patient.dateOfBirth || "")}">${h(patient.dateOfBirth || "No birth date")}</time><span class="cell-sub">${h(patient.sex || "Not recorded")}</span>`, h(patient.primaryFacility || "-"), `<span class="cell-wrap">${h(patient.latestTests || "No tests")}</span>${badge(patient.latestStatus || "Pending")}`, `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
     return `${heading(...meta)}
       <div class="stats-grid">${stat("Patients", state.data.patients.length, "users")}${stat("With Requests", state.data.patients.filter((p) => p.orderCount > 0).length, "orders", "-", "blue")}${stat("Released Results", state.data.patients.reduce((sum, p) => sum + Number(p.resultCount || 0), 0), "results", "-", "green")}${stat("Facilities", new Set(state.data.patients.map((p) => p.primaryFacility).filter(Boolean)).size, "facility", "-", "purple")}</div>
-      ${filters("Search patients", [["All facilities", state.data.facilities.map((f) => f.name)]])}
-      ${table(["Patient ID", "Patient", "DOB", "Sex", "Facility", "Latest Tests", "Latest Status", "Action"], rows)}`;
+      ${filters("Search patient name, ID, or email", [["All genders", ["Female", "Male", "Prefer not to say"]], ["All statuses", [...new Set(state.data.patients.map((p) => p.latestStatus))]], ["All facilities", state.data.facilities.map((f) => f.name)]], "", { dates: true })}
+      ${table(["Patient", "DOB & Sex", "Facility", "Latest Activity", "Action"], rows)}`;
   }
 
-  function renderFacilitiesAndTests() {
+  function renderDoctorFacilities() {
     const facilityRows = state.data.facilities.map((facility) => [h(facility.name), h(facility.address), h(facility.phone), badge(facility.status), h(facility.activeOrders)]);
-    const testRows = state.data.tests.map((test) => [h(test.code), h(test.name), h(test.category), h(test.sampleType), h(test.turnaroundTime), money(test.price), badge(test.status)]);
     return `${heading(...pageMeta.Doctor.facilities)}
-      <div class="stats-grid">${stat("Facilities", state.data.facilities.length, "facility")}${stat("Active Tests", state.data.tests.length, "test", "-", "green")}${stat("Categories", new Set(state.data.tests.map((t) => t.category)).size, "chart", "-", "blue")}${stat("Fastest TAT", state.data.tests[0]?.turnaroundTime || "-", "clock", "-", "orange")}</div>
-      <div class="dashboard-grid">${table(["Facility", "Address", "Phone", "Status", "Open Requests"], facilityRows)}${table(["Code", "Test", "Category", "Sample", "Turnaround", "Price", "Status"], testRows)}</div>`;
+      <div class="stats-grid">${stat("Facilities", state.data.facilities.length, "facility")}${stat("Active", state.data.facilities.filter((f) => f.status === "Active").length, "check", "-", "green")}${stat("Open Requests", state.data.facilities.reduce((sum, f) => sum + Number(f.activeOrders || 0), 0), "orders", "-", "blue")}</div>
+      ${filters("Search facility name or address", [["All statuses", ["Active", "Inactive"]]])}${table(["Facility", "Address", "Phone", "Status", "Open Requests"], facilityRows)}`;
+  }
+
+  function renderDoctorTests() {
+    const testRows = state.data.tests.map((test) => [`<span class="cell-strong">${h(test.name)}</span><span class="cell-sub">${h(test.code)}</span>`, `<span class="cell-strong">${h(test.category)}</span><span class="cell-sub">${h(test.sampleType)}</span>`, `<span class="cell-strong">${h(test.turnaroundTime)}</span><span class="cell-sub">${money(test.price)}</span>`, badge(test.status)]);
+    return `${heading(...pageMeta.Doctor.tests)}<div class="stats-grid">${stat("Tests", state.data.tests.length, "test")}${stat("Active", state.data.tests.filter((t) => t.status === "Active").length, "check", "-", "green")}${stat("Categories", new Set(state.data.tests.map((t) => t.category)).size, "chart", "-", "blue")}${stat("Fastest TAT", state.data.tests[0]?.turnaroundTime || "-", "clock", "-", "orange")}</div>${filters("Search test name or code", [["All categories", [...new Set(state.data.tests.map((t) => t.category))]], ["All samples", [...new Set(state.data.tests.map((t) => t.sampleType))]], ["All statuses", ["Active", "Inactive"]]])}${table(["Test", "Category & Sample", "Turnaround & Price", "Status"], testRows)}`;
   }
 
   function renderCreateOrder() {
@@ -1283,7 +1306,7 @@
     const meta = pageMeta[currentUser.role]["create-order"] || pageMeta.Doctor["create-order"];
     return `${heading(...meta)}
       <div class="create-order-layout"><section class="card"><div class="card-head"><div><h3 class="card-title">Available Patients</h3><p class="card-subtitle">Choose from database patient records.</p></div></div><div class="recent-patient-list">${state.data.availablePatients.slice(0, previewLimit()).map((patient, index) => `<button class="recent-patient ${index === 0 ? "selected" : ""}" type="button" data-patient-pick="${patient.id}">${avatar(patient.avatar)}<div><strong>${h(patient.name)}</strong><span>${h(patient.patientCode)} - ${h(patient.sex || "No sex recorded")}</span></div></button>`).join("")}</div></section>
-      <form class="card order-compose-card" data-form="create-order"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Laboratory Request Details</h3><p class="card-subtitle">New requests are submitted as Pending for laboratory intake.</p></div>${badge("Pending")}</div>${formHint}<div class="form-grid"><div class="form-field full"><label>Patient</label>${patientSelect}</div><div class="form-field full"><label>Facility</label>${facilitySelect}</div><div class="form-field full"><label>Requested Tests</label><div class="test-choice-grid">${testsMarkup}</div></div><div class="form-field"><label>Priority</label>${select("priority", ["Regular", "Priority"], "Regular", disabled)}</div><div class="form-field"><label>Status</label><div class="readonly-pill">${badge("Pending")} Laboratory staff updates this after intake.</div></div><div class="form-field full"><label>Clinical Indication / Notes</label><textarea name="clinicalNotes" ${disabled} placeholder="Clinical indication, provisional diagnosis, or special instructions"></textarea></div></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("plus-file")} Submit Laboratory Request</button></div></form>
+      <form class="card order-compose-card" data-form="create-order"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Laboratory Request Details</h3><p class="card-subtitle">Complete the four sections in order. New requests begin as Pending.</p></div>${badge("Pending")}</div>${formHint}<div class="request-form-sections"><fieldset class="request-form-section"><legend><span>1</span> Patient</legend><div class="form-field full"><label>Search and select patient</label>${patientSelect}</div></fieldset><fieldset class="request-form-section"><legend><span>2</span> Facility</legend><div class="form-field full"><label>Search and select facility</label>${facilitySelect}</div></fieldset><fieldset class="request-form-section"><legend><span>3</span> Requested Tests</legend><div class="form-field full"><label>Select one or more laboratory tests</label><div class="test-choice-grid">${testsMarkup}</div></div></fieldset><fieldset class="request-form-section"><legend><span>4</span> Request Details</legend><div class="form-grid"><div class="form-field"><label>Priority</label>${select("priority", ["Regular", "Priority"], "Regular", disabled)}</div><div class="form-field"><label>Status</label><div class="readonly-pill">${badge("Pending")} Laboratory staff updates this after intake.</div></div><div class="form-field full"><label>Clinical Indication / Notes</label><textarea name="clinicalNotes" ${disabled} placeholder="Clinical indication, provisional diagnosis, or special instructions"></textarea></div></div></fieldset></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("plus-file")} Submit Laboratory Request</button></div></form>
       <aside class="card order-summary"><p class="eyebrow">Request Summary</p><h3 class="card-title">Clinical workflow</h3><div class="clinical-note-box"><h4>${icon("shield")} Notifications included</h4><p>Submitting creates a laboratory request, notifies laboratory staff and the patient, and writes an audit record.</p></div></aside></div>`;
   }
 
@@ -1317,13 +1340,14 @@
   }
 
   function renderLabReview() {
-    const resultRow = (result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), h(result.facilityName), badge(result.status), shortDateTime(result.releasedAt || result.updatedAt || result.uploadedAt), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`];
+    const resultRow = (result) => [`<span class="cell-strong">${h(result.resultNumber)}</span><span class="cell-sub">${h(result.orderNumber)}</span>`, identity(result.patientName, result.patientCode), `<span class="cell-strong">${h(result.testName)}</span><span class="cell-sub">${h(result.facilityName)}</span>`, badge(result.status), `<time datetime="${h(result.releasedAt || result.updatedAt || result.uploadedAt)}">${shortDateTime(result.releasedAt || result.updatedAt || result.uploadedAt)}</time>`, `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`];
     const pendingRows = state.data.results.filter((result) => result.status === "Pending Review").map(resultRow);
     const verifiedRows = state.data.results.filter((result) => result.status === "Verified").map(resultRow);
     const completedRows = state.data.results.filter((result) => ["Released", "Rejected"].includes(result.status)).map(resultRow);
-    const columns = ["Result ID", "Request No.", "Patient", "Test", "Facility", "Status", "Updated/Released", "Action"];
+    const columns = ["Result", "Patient", "Test & Facility", "Status", "Updated/Released", "Action"];
     return `${heading(...pageMeta["Laboratory Staff"].review)}
       <div class="stats-grid">${stat("Results", state.data.results.length, "results")}${stat("Pending Review", state.data.results.filter((r) => r.status === "Pending Review").length, "clock", "-", "orange")}${stat("Verified", state.data.results.filter((r) => r.status === "Verified").length, "check", "-", "green")}${stat("Released", state.data.results.filter((r) => r.status === "Released").length, "download", "-", "blue")}</div>
+      ${filters("Search result, patient, test, or facility", [["All facilities", [...new Set(state.data.results.map((r) => r.facilityName))]]], "", { dates: true })}
       <div class="result-review-sections"><section><h3>Pending Review</h3>${table(columns, pendingRows, "No results are waiting for verification.")}</section><section><h3>Verified Results</h3>${table(columns, verifiedRows, "No verified results are waiting for release.")}</section><section><h3>Released and Rejected Results</h3>${table(columns, completedRows, "No completed result records.")}</section></div>`;
   }
 
@@ -1368,7 +1392,7 @@
 
   const renderers = {
     Admin: { dashboard: renderAdminDashboard, users: renderUsers, facilities: renderFacilities, tests: renderTests, orders: () => renderOrders("Admin"), results: () => renderResults("Admin"), reports: renderReports, audit: renderAudit, notifications: () => renderNotifications("Admin"), maintenance: renderAdminMaintenance, profile: renderAdminProfile, settings: renderAdminSettings },
-    Doctor: { dashboard: renderDoctorDashboard, patients: () => renderPatients("Doctor"), facilities: renderFacilitiesAndTests, "create-order": renderCreateOrder, orders: () => renderOrders("Doctor"), results: () => renderResults("Doctor"), notifications: () => renderNotifications("Doctor"), profile: renderDoctorProfile, settings: renderDoctorSettings },
+    Doctor: { dashboard: renderDoctorDashboard, patients: () => renderPatients("Doctor"), facilities: renderDoctorFacilities, tests: renderDoctorTests, "create-order": renderCreateOrder, orders: () => renderOrders("Doctor"), results: () => renderResults("Doctor"), notifications: () => renderNotifications("Doctor"), profile: renderDoctorProfile, settings: renderDoctorSettings },
     "Laboratory Staff": { dashboard: renderLabDashboard, orders: () => renderOrders("Laboratory Staff"), upload: renderLabUpload, review: renderLabReview, operations: renderLabOperations, facilities: renderLabFacilities, queue: () => renderOrders("Laboratory Staff", "queue"), notifications: () => renderNotifications("Laboratory Staff"), profile: renderLabProfile, settings: renderLabSettings },
     Patient: { dashboard: renderPatientDashboard, orders: () => renderOrders("Patient"), results: () => renderResults("Patient"), notifications: () => renderNotifications("Patient"), profile: renderPatientProfile, settings: renderPatientSettings },
   };
@@ -1388,7 +1412,7 @@
     const role = currentUser?.role;
     const map = {
       dashboard: role === "Admin" ? ["users", "facilities", "notifications", "audit"] : role === "Doctor" ? ["patients", "orders", "results", "notifications"] : role === "Patient" ? ["patients", "orders", "results", "notifications"] : ["orders", "results", "notifications"],
-      users: ["users", "facilities"], facilities: ["Admin", "Doctor"].includes(role) ? ["facilities", "tests"] : ["facilities"], tests: ["tests"], patients: ["patients", "facilities"],
+      users: ["users", "facilities"], facilities: ["facilities"], tests: ["tests"], patients: ["patients", "facilities"],
       "create-order": ["patients", "availablePatients", "facilities", "tests"], orders: ["orders", "facilities"], queue: ["orders", "facilities"], upload: ["orders", "results"],
       review: ["results"], results: ["results", "facilities"], operations: ["orders"], reports: ["users", "facilities", "tests", "orders", "results", "notifications"],
       audit: ["audit"], notifications: ["notifications"], profile: role === "Patient" ? ["patients", "results"] : [], settings: [], maintenance: [],
@@ -1412,7 +1436,7 @@
 
   async function warmPanelCache() {
     const role = currentUser?.role;
-    const pages = role === "Admin" ? ["tests", "orders", "results"] : role === "Doctor" ? ["orders", "facilities"] : ["orders"];
+    const pages = role === "Admin" ? ["tests", "orders", "results"] : role === "Doctor" ? ["orders", "facilities", "tests"] : ["orders"];
     for (const page of ["dashboard", ...pages]) {
       if (!currentUser || currentUser.role !== role || document.hidden || navigator.connection?.saveData || state.pageRequests.size) return;
       if (!pageHasData(page)) {
@@ -1914,6 +1938,13 @@
     const pageLink = event.target.closest("a[data-page], button[data-page], a[data-go-page], button[data-go-page]");
     if (pageLink) {
       event.preventDefault();
+      if (document.body?.dataset.requiredRole === "Doctor" && pageLink.matches('a.nav-item[data-page="facilities"], a.nav-item[data-page="tests"]')) {
+        const destination = new URL(pageLink.href, location.href);
+        if (destination.pathname !== location.pathname) {
+          location.href = destination.href;
+          return;
+        }
+      }
       setPage(pageLink.dataset.page || pageLink.dataset.goPage);
       closeDrawer();
       return;
@@ -1930,6 +1961,14 @@
     if (event.target.closest("[data-close-sidebar]")) { closeSidebar(); return; }
     if (event.target.closest("[data-download]")) {
       downloadRecords().catch((error) => toast(error.message || "The export failed.", "error"));
+      return;
+    }
+
+    if (event.target.closest("[data-clear-filters]")) {
+      const toolbar = event.target.closest(".toolbar");
+      $$("input", toolbar).forEach((input) => { input.value = ""; });
+      $$("select", toolbar).forEach((control) => { control.selectedIndex = 0; });
+      applyPageFilters();
       return;
     }
 
@@ -2285,9 +2324,13 @@
       .map((control) => control.value || "")
       .filter((value) => value && !value.startsWith("All "))
       .map((value) => value.toLowerCase());
+    const from = $("[data-table-date-from]", content)?.value || "";
+    const to = $("[data-table-date-to]", content)?.value || "";
     $$(".data-table tbody tr, .notification-item, .facility-card, .task-item", content).forEach((row) => {
       const text = row.textContent.toLowerCase();
-      const matches = !searchTerms.some((term) => !text.includes(term)) && !selectedTerms.some((term) => !text.includes(term));
+      const rowDate = row.dataset.tableDate || "";
+      const dateMatches = (!from || (rowDate && rowDate >= from)) && (!to || (rowDate && rowDate <= to));
+      const matches = !searchTerms.some((term) => !text.includes(term)) && !selectedTerms.some((term) => !text.includes(term)) && dateMatches;
       row.dataset.filterMatch = String(matches);
       row.hidden = !matches;
     });
@@ -2308,7 +2351,7 @@
   }
 
   function handleDashboardInput(event) {
-    if (!event.target.matches("[data-table-search], #global-search")) return;
+    if (!event.target.matches("[data-table-search], [data-table-date-from], [data-table-date-to], #global-search")) return;
     applyPageFilters();
   }
 
