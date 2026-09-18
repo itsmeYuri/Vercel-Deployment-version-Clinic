@@ -1640,48 +1640,6 @@
     return true;
   }
 
-  function showMfaForm(loginForm, challenge) {
-    loginForm.hidden = true;
-    document.querySelector(".demo-login")?.setAttribute("hidden", "");
-    document.querySelector("#mfa-form")?.remove();
-    loginForm.insertAdjacentHTML("afterend", `<form id="mfa-form"><h3>Verify your sign-in</h3><p>Enter the six-digit code sent to <strong>${h(challenge.destination)}</strong>. It expires in five minutes.</p><div class="field"><label for="mfa-code">Verification code</label><div class="input-wrap"><input id="mfa-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></div></div><button class="primary-button" type="submit">Verify and sign in</button><div class="mfa-actions"><button class="btn btn-secondary" type="button" data-mfa-resend>Send a new code</button><button class="btn btn-secondary" type="button" data-mfa-back>Back to sign in</button></div><p data-mfa-status role="status" aria-live="polite"></p></form>`);
-    showStatus(loginForm, "Check your email for your sign-in code.", "success");
-    const form = $("#mfa-form");
-    const status = $("[data-mfa-status]", form);
-    const resend = $("[data-mfa-resend]", form);
-    let availableAt = Date.now() + challenge.resendAfter * 1000;
-    let busy = false;
-    const timer = setInterval(() => {
-      if (!form.isConnected) { clearInterval(timer); return; }
-      const seconds = Math.max(0, Math.ceil((availableAt - Date.now()) / 1000));
-      resend.disabled = busy || seconds > 0;
-      resend.textContent = seconds ? `Resend in ${seconds}s` : "Send a new code";
-    }, 250);
-    resend.disabled = true;
-    $("#mfa-code").focus();
-    const run = async (action) => {
-      if (busy) return;
-      busy = true;
-      $$("button", form).forEach(b => b.disabled = true);
-      try {
-        const response = await api(action, { challenge: challenge.challenge, code: $("#mfa-code").value });
-        if (action === "resend_mfa") {
-          challenge = response; availableAt = Date.now() + response.resendAfter * 1000;
-          status.textContent = "A new code was sent. Earlier codes no longer work.";
-        } else location.href = destinations[response.user.role] || LOGIN_URL;
-      } catch (error) { status.textContent = error.message; }
-      finally { busy = false; $$("button", form).forEach(b => b.disabled = false); resend.disabled = Date.now() < availableAt; }
-    };
-    form.addEventListener("submit", event => { event.preventDefault(); if (form.reportValidity()) run("verify_mfa"); });
-    resend.addEventListener("click", () => run("resend_mfa"));
-    $("[data-mfa-back]", form).addEventListener("click", () => {
-      clearInterval(timer); form.remove(); loginForm.hidden = false;
-      document.querySelector(".demo-login")?.removeAttribute("hidden");
-      showStatus(loginForm, "Enter your credentials to request a new code.", "success");
-      $("#login-identifier").focus();
-    });
-  }
-
   function testForm(test = {}) {
     return `<form data-form="test"><input type="hidden" name="id" value="${h(test.id || "")}"><div class="form-grid">${field("Code", "code", test.code || "")}${field("Name", "name", test.name || "")}${field("Category", "category", test.category || "")}${field("Sample Type", "sampleType", test.sampleType || "")}${field("Turnaround Time", "turnaroundTime", test.turnaroundTime || "")}${field("Price", "price", test.price || "0", "number", 'step="0.01"')}${field("Reference Range", "referenceRange", test.referenceRange || "")}${field("Instructions", "instructions", test.instructions || "", "textarea")}<div class="form-field full"><label>Status</label>${select("status", ["Active", "Inactive"], test.status || "Active")}</div></div><section class="validation-rule-editor"><h3>Approved validation rules</h3><p>Configure rules for the exact parameters in this test. Choose whether each reference boundary is inclusive. Leave a critical limit blank only when it does not apply. Record the approved source and patient applicability. Unconfigured tests cannot pass validation.</p><div data-validation-rules>${(test.validationRules || []).map(validationRuleEditor).join("")}</div><button type="button" class="btn btn-secondary" data-add-validation-rule>Add parameter rule</button></section><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Save Test</button></div></form>`;
   }
@@ -2485,11 +2443,8 @@
       loginForm.classList.add("is-loading");
       try {
         const data = await api("login", { identifier: $("#login-identifier").value, password: $("#login-password").value });
-        if (!data.mfaRequired) throw new Error("The server did not return a verification challenge.");
-        $("#login-password").value = "";
-        loginForm.classList.remove("is-loading");
-        button?.removeAttribute("disabled");
-        showMfaForm(loginForm, data);
+        showStatus(loginForm, `Welcome, ${data.user.name}. Opening your dashboard...`, "success");
+        setTimeout(() => { location.href = destinations[data.user.role] || LOGIN_URL; }, 400);
       } catch (error) {
         showStatus(loginForm, error.message, "error");
         button?.removeAttribute("disabled");
@@ -2504,8 +2459,8 @@
       registerForm.classList.add("is-loading");
       try {
         const data = await api("register_patient", { fullName: $("#full-name").value, email: $("#email").value, contact: $("#contact-number").value, username: $("#username").value, password: $("#register-password").value });
-        showStatus(registerForm, "Your account has been created. Sign in to verify your email.", "success");
-        setTimeout(() => { location.href = LOGIN_URL; }, 500);
+        showStatus(registerForm, "Your account has been created. Opening your portal...", "success");
+        setTimeout(() => { location.href = destinations[data.user.role]; }, 500);
       } catch (error) {
         showStatus(registerForm, error.message, "error");
         button?.removeAttribute("disabled");
@@ -2590,11 +2545,11 @@
           termsAccepted: $("#patient-terms").checked,
           privacyAcknowledged: $("#patient-privacy-ack").checked,
         });
-        status.textContent = "Your patient account has been created. Sign in to verify your email.";
+        status.textContent = "Your patient account has been created. Opening your secure dashboard...";
         status.classList.add("visible");
         status.style.color = "var(--green)";
         status.style.background = "var(--green-bg)";
-        setTimeout(() => { location.href = LOGIN_URL; }, 600);
+        setTimeout(() => { location.href = destinations[data.user.role]; }, 600);
       } catch (error) {
         status.textContent = error.message;
         status.classList.add("visible");

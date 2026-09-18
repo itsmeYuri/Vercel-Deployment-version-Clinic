@@ -154,20 +154,6 @@ CREATE TABLE IF NOT EXISTS laboratory_validation_reports (
 );
 ALTER TABLE laboratory_validation_reports ENABLE ROW LEVEL SECURITY;
 
-CREATE TABLE IF NOT EXISTS auth_mfa_challenges (
-  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  token_hash CHAR(64) NOT NULL UNIQUE,
-  session_hash CHAR(64) NOT NULL,
-  code_hash VARCHAR(255) NOT NULL,
-  credential_hash CHAR(64) NOT NULL,
-  email VARCHAR(255) NOT NULL,
-  expires_epoch BIGINT NOT NULL,
-  sent_epoch BIGINT NOT NULL,
-  window_epoch BIGINT NOT NULL,
-  sends INTEGER NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0
-);
-ALTER TABLE auth_mfa_challenges ENABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_results_status ON lab_results(status);
 CREATE INDEX IF NOT EXISTS idx_results_order ON lab_results(order_id);
 

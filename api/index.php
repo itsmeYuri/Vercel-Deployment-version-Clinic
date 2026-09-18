@@ -9,7 +9,6 @@ require_once __DIR__ . '/../app/core/maintenance.php';
 require_once __DIR__ . '/../app/core/session.php';
 require_once __DIR__ . '/../app/core/storage.php';
 require_once __DIR__ . '/../app/core/helpers.php';
-require_once __DIR__ . '/../app/core/mfa.php';
 require_once __DIR__ . '/../app/core/result-validation.php';
 
 clinic_start_session();
@@ -2233,7 +2232,7 @@ try {
         $action = $compatibilityActions[$requestPath] ?? '';
     }
     $data = request_data();
-    if (in_array($action, ['login', 'verify_mfa', 'resend_mfa', 'register_patient'], true) && ($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') respond(false, 'Use POST for authentication requests.', [], 405);
+    if (in_array($action, ['login', 'register_patient'], true) && ($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') respond(false, 'Use POST for authentication requests.', [], 405);
     validate_csrf_request($action);
 
     if ($action === 'validate_result') {
@@ -2255,17 +2254,6 @@ try {
 
     if ($action === 'health') {
         respond(true, 'API is available.', ['database' => DB_DRIVER]);
-    }
-
-    if ($action === 'verify_mfa') clinic_mfa_verify($pdo, $data);
-
-    if ($action === 'resend_mfa') {
-        clinic_mfa_schema($pdo);
-        $challenge = one($pdo, 'SELECT * FROM auth_mfa_challenges WHERE token_hash=? AND session_hash=?', [hash('sha256', (string) ($data['challenge'] ?? '')), hash('sha256', $_SESSION['csrf_token'])]);
-        if (!$challenge || (int) $challenge['sent_epoch'] < time() - 900) respond(false, 'Start a new sign-in.', [], 401);
-        $user = fetch_user($pdo, (int) $challenge['user_id']);
-        if (!$user || $user['status'] !== 'Active' || $user['email'] !== $challenge['email']) respond(false, 'Start a new sign-in.', [], 401);
-        respond(true, 'A new code was sent.', clinic_mfa_start($pdo, $user));
     }
 
     if ($action === 'login') {
@@ -2291,10 +2279,11 @@ try {
             $stmt = $pdo->prepare('UPDATE users SET password_hash=? WHERE id=?');
             $stmt->execute([password_hash($password, PASSWORD_DEFAULT), (int) $row['id']]);
         }
-        // Authentication is completed only after the email code is verified.
+        audit_log($pdo, $user, 'LOGIN', 'Authentication', 'Successful login');
         $pdo->commit();
-        unset($_SESSION['user_id']);
-        respond(true, 'Verification code sent.', clinic_mfa_start($pdo, $user));
+        clinic_regenerate_session();
+        $_SESSION['user_id'] = (int) $row['id'];
+        respond(true, 'Login successful.', ['user' => $user, 'csrfToken' => rotate_csrf_token()]);
     }
 
     if ($action === 'logout') {
@@ -2377,8 +2366,9 @@ try {
         notify_user($pdo, ['role_name' => 'Admin', 'title' => 'New patient registered', 'message' => $fullName . ' created a patient portal account.', 'type_name' => 'users']);
         audit_log($pdo, $user, 'CREATE', 'Patient', 'Registered new patient account');
         $pdo->commit();
-        unset($_SESSION['user_id']);
-        respond(true, 'Patient account created. Sign in and verify your email to continue.', ['requiresLogin' => true]);
+        clinic_regenerate_session();
+        $_SESSION['user_id'] = $userId;
+        respond(true, 'Patient account created successfully.', ['user' => fetch_user($pdo, $userId), 'csrfToken' => rotate_csrf_token()]);
     }
 
     if ($action === 'maintenance_settings') {

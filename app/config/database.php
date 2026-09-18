@@ -36,8 +36,6 @@ define('SUPABASE_SERVICE_ROLE_KEY', (string) clinic_env('SUPABASE_SERVICE_ROLE_K
 define('SUPABASE_STORAGE_BUCKET', (string) clinic_env('SUPABASE_STORAGE_BUCKET', 'lab-results'));
 define('CLINIC_SESSION_DRIVER', strtolower((string) clinic_env('CLINIC_SESSION_DRIVER', clinic_env('VERCEL', '') !== '' ? 'database' : 'native')));
 define('CLINIC_SESSION_TTL', max(900, (int) clinic_env('CLINIC_SESSION_TTL', '43200')));
-define('CLINIC_RESEND_API_KEY', (string) clinic_config_value('resend_api_key', 'RESEND_API_KEY', ''));
-define('CLINIC_MAIL_FROM', (string) clinic_config_value('mail_from', 'CLINIC_MAIL_FROM', ''));
 
 if ($usePostgres) {
     $GLOBALS['clinicDatabaseUrlParts'] = $databaseParts;

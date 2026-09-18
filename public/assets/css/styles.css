@@ -3862,11 +3862,7 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
 .result-scanner :is(.result-scan-status, .result-source-choice, .result-scan-output) { overflow-wrap: anywhere; }
 .result-scan-output pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ocr-review-note { display: block; margin-top: 6px; color: #8a541c; font-size: 12px; line-height: 1.4; }
-/* Authentication and laboratory validation controls. */
-#login-form[hidden], .demo-login[hidden] { display: none !important; }
-.mfa-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
-.mfa-actions > button { flex: 1 1 150px; white-space: normal; }
-#mfa-code { letter-spacing: .25em; font-size: 20px; }
+/* Laboratory validation controls. */
 .validation-rule-editor, .validation-report { min-width: 0; margin: 20px 0; }
 .validation-rule { min-width: 0; border: 1px solid var(--border, #d6e6e8); border-radius: 12px; padding: 16px; margin: 14px 0; }
 .validation-rule-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
