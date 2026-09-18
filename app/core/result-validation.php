@@ -128,19 +128,6 @@ function clinic_require_valid_result($pdo, $orderId, $values, $data)
     return $report;
 }
 
-function clinic_validation_snapshot_matches($report, $storedValues)
-{
-    if (count($report['values'] ?? []) !== count($storedValues)) return false;
-    foreach ($report['values'] as $index => $value) {
-        $stored = $storedValues[$index] ?? [];
-        if (($value['parameter'] ?? null) !== ($stored['parameter'] ?? null)
-            || ($value['referenceRange'] ?? null) !== ($stored['referenceRange'] ?? null)
-            || ($value['flag'] ?? null) !== ($stored['flag'] ?? null)
-            || ($value['validationRule'] ?? null) != ($stored['validationRule'] ?? null)) return false;
-    }
-    return true;
-}
-
 function clinic_save_validation_report($pdo, $resultId, $report)
 {
     $pdo->prepare('DELETE FROM laboratory_validation_reports WHERE result_id=?')->execute([$resultId]);

@@ -1963,7 +1963,6 @@ function update_result_status($pdo, $data, $actor, $forcedStatus = null)
         $stored = fetch_result_values($pdo, [(int) $result['id']])[(int) $result['id']] ?? [];
         $validation = clinic_order_validation($pdo, (int) $result['order_id'], $stored);
         if (!$validation['valid']) respond(false, 'The result must pass the current validation rules before verification or release.', ['validation' => $validation], 422);
-        if (!clinic_validation_snapshot_matches($validation, $stored)) respond(false, 'Validation rules changed or this is a legacy result. Edit and save it for a fresh review before release.', [], 409);
     }
     $order = one($pdo, 'SELECT * FROM lab_orders WHERE id = ? LIMIT 1', [(int) $result['order_id']]);
     ensure_result_workflow_table($pdo);
@@ -2001,6 +2000,7 @@ function update_result_status($pdo, $data, $actor, $forcedStatus = null)
         notify_user($pdo, ['user_id' => (int) $order['doctor_id'], 'title' => 'Result rejected', 'message' => $result['result_number'] . ' was rejected during laboratory review.', 'type_name' => 'results', 'related_order_id' => (int) $order['id'], 'related_result_id' => (int) $result['id']]);
     }
     audit_log($pdo, $actor, $status === 'Released' ? 'RELEASE' : ($status === 'Rejected' ? 'REJECT' : 'VERIFY'), 'Result', $status . ' ' . $result['result_number']);
+    if (isset($validation)) clinic_save_validation_report($pdo, (int) $result['id'], $validation);
     $pdo->commit();
     respond(true, 'Result status updated.', ['orders' => fetch_orders($pdo, $actor), 'results' => fetch_results($pdo, $actor)]);
 }
@@ -2245,10 +2245,6 @@ try {
         } else $order = order_by_identifier($pdo, $data['orderId'] ?? '');
         if (!$order || !can_access_order($pdo, $actor, $order)) respond(false, 'Laboratory request not found.', [], 404);
         $report = clinic_order_validation($pdo, (int) $order['id'], normalize_result_values($submittedValues));
-        if (!empty($data['resultId']) && !clinic_validation_snapshot_matches($report, $submittedValues)) {
-            $report['valid'] = false;
-            $report['issues'][] = 'The approved rules changed or this result has no current validation snapshot. Edit and save the result before verification or release.';
-        }
         respond(true, 'Validation completed.', ['validation' => $report]);
     }
 

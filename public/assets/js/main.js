@@ -1634,7 +1634,10 @@
     drawerBody?.querySelector(".validation-report")?.remove();
     if (!validation.valid) {
       drawerBody?.insertAdjacentHTML("beforeend", validationReportHtml(validation));
-      toast("This result must be corrected and saved before verification or release.", "error");
+      const invalidValue = (validation.values || []).find(value => value.flag === "Invalid Entry");
+      const reason = (validation.issues || [])[0] || invalidValue?.validationReason || "This result must be corrected before verification or release.";
+      toast(reason, "error");
+      drawerBody?.querySelector(".validation-report")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       return false;
     }
     return true;
