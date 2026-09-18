@@ -389,8 +389,10 @@
   }
 
   function resultValueInputRow(item = {}, disabled = "") {
-    const lowConfidence = Number(item.confidence || 100) < 75;
-    return `<tr class="${lowConfidence ? "ocr-low-confidence" : ""}" ${item.confidence ? `data-tooltip="OCR confidence: ${h(item.confidence)}%. Verify this row carefully."` : ""}><td><input name="parameter" aria-label="Parameter" value="${h(item.parameter || "")}" ${disabled}></td><td><input name="value" aria-label="Value" value="${h(item.value || "")}" ${disabled}></td><td><input name="unit" aria-label="Unit" value="${h(item.unit || "")}" ${disabled}></td><td><input name="referenceRange" aria-label="Reference range" value="${h(item.referenceRange || "")}" ${disabled}></td><td><input name="flag" aria-label="Flag" value="${h(item.flag || "")}" ${disabled}></td><td><button class="parameter-remove" type="button" data-remove-result-parameter aria-label="Remove parameter" data-tooltip="Remove parameter" ${disabled}>${icon("trash")}</button></td></tr>`;
+    const warnings = item.reviewWarnings || [];
+    const lowConfidence = Number(item.confidence ?? 100) < 75 || warnings.length > 0;
+    const reviewNote = warnings.length ? `<small class="ocr-review-note">${h(warnings.join(" "))}</small>` : "";
+    return `<tr class="${lowConfidence ? "ocr-low-confidence" : ""}" ${item.confidence ? `data-tooltip="OCR confidence: ${h(item.confidence)}%. Verify this row carefully."` : ""}><td><input name="parameter" aria-label="Parameter" value="${h(item.parameter || "")}" ${disabled}>${reviewNote}</td><td><input name="value" aria-label="Value" value="${h(item.value || "")}" ${disabled}></td><td><input name="unit" aria-label="Unit" value="${h(item.unit || "")}" ${disabled}></td><td><input name="referenceRange" aria-label="Reference range" value="${h(item.referenceRange || "")}" ${disabled}></td><td><input name="flag" aria-label="Flag" value="${h(item.flag || "")}" ${disabled}></td><td><button class="parameter-remove" type="button" data-remove-result-parameter aria-label="Remove parameter" data-tooltip="Remove parameter" ${disabled}>${icon("trash")}</button></td></tr>`;
   }
 
   function resultValueTable(rows, disabled = "") {
@@ -457,6 +459,51 @@
     return resultScannerWorkerPromise;
   }
 
+  function removeScanTableRules(canvas) {
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    const { width, height } = canvas;
+    const image = context.getImageData(0, 0, width, height);
+    const mask = new Uint8Array(width * height);
+    const isDark = (x, y) => {
+      const offset = (y * width + x) * 4;
+      return image.data[offset] * .299 + image.data[offset + 1] * .587 + image.data[offset + 2] * .114 < 180;
+    };
+    // Remove only long continuous rules; preserve short strokes in letters/numbers.
+    for (let y = 0; y < height; y += 1) {
+      let start = -1;
+      for (let x = 0; x <= width; x += 1) {
+        if (x < width && isDark(x, y)) { if (start < 0) start = x; }
+        else if (start >= 0) {
+          if (x - start > Math.max(80, width * .35)) {
+            for (let xx = start; xx < x; xx += 1) {
+              for (let yy = Math.max(0, y - 1); yy <= Math.min(height - 1, y + 1); yy += 1) mask[yy * width + xx] = 1;
+            }
+          }
+          start = -1;
+        }
+      }
+    }
+    for (let x = 0; x < width; x += 1) {
+      let start = -1;
+      for (let y = 0; y <= height; y += 1) {
+        if (y < height && isDark(x, y)) { if (start < 0) start = y; }
+        else if (start >= 0) {
+          if (y - start > Math.max(80, height * .07)) {
+            for (let yy = start; yy < y; yy += 1) {
+              for (let xx = Math.max(0, x - 1); xx <= Math.min(width - 1, x + 1); xx += 1) mask[yy * width + xx] = 1;
+            }
+          }
+          start = -1;
+        }
+      }
+    }
+    for (let i = 0; i < mask.length; i += 1) {
+      if (mask[i]) image.data[i * 4] = image.data[i * 4 + 1] = image.data[i * 4 + 2] = 255;
+    }
+    context.putImageData(image, 0, 0);
+    return canvas;
+  }
+
   async function prepareResultScan(file, rotation = 0) {
     if (file.type === "application/pdf") {
       const pdfScript = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
@@ -473,7 +520,7 @@
         canvas.width = Math.ceil(viewport.width);
         canvas.height = Math.ceil(viewport.height);
         await page.render({ canvasContext: canvas.getContext("2d", { willReadFrequently: true }), viewport }).promise;
-        pages.push(canvas);
+        pages.push(removeScanTableRules(canvas));
       }
       return pages;
     }
@@ -502,7 +549,7 @@
       image.data[index + 2] = contrasted;
     }
     context.putImageData(image, 0, 0);
-    return [canvas];
+    return [removeScanTableRules(canvas)];
   }
 
   async function populateScannedResultValues(form, values) {
@@ -539,6 +586,7 @@
     updateScannerStatus(form, "Preparing image scanner…", 0);
     try {
       const worker = await scannerWorker(form);
+      await worker.setParameters({ tessedit_pageseg_mode: "6" });
       const preparedPages = await prepareResultScan(file, Number(form.dataset.scanRotation || 0));
       const recognizedPages = [];
       for (let index = 0; index < preparedPages.length; index += 1) {
@@ -562,7 +610,9 @@
         return;
       }
       populateScannedResultText(form, parsed);
-      updateScannerStatus(form, `${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"} detected with ${confidence}% OCR confidence. Compare every value with the source image before uploading.`, null, confidence >= 75 ? "success" : "warning");
+      const reviewCount = parsed.values.filter((value) => value.reviewWarnings?.length).length;
+      const reviewMessage = reviewCount ? ` ${reviewCount} row(s) contain unclear fields left blank and highlighted for review.` : "";
+      updateScannerStatus(form, `${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"} detected with ${confidence}% OCR confidence.${reviewMessage} Compare every value with the source image before uploading.`, null, confidence >= 75 && !reviewCount ? "success" : "warning");
       toast(`${parsed.values.length} laboratory values filled from the scanned image.`);
     } catch (error) {
       updateScannerStatus(form, error.message || "The image could not be scanned.", null, "error");

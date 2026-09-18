@@ -76,13 +76,14 @@
       .sort((a, b) => b.length - a.length)
       .map(escapeRegExp)
       .join("|");
-    const aliasMatch = line.match(new RegExp(`(?:^|\\b)(${aliasPattern})(?=\\b|\\s|:|-)`, "i"));
+    // A result starts with its parameter, never an email suffix or narrative mention.
+    const aliasMatch = line.match(new RegExp(`^\\s*(?:[-•]\\s*)?(${aliasPattern})(?=\\b|\\s|:|-)`, "i"));
     if (!aliasMatch) return null;
 
     const remainder = line.slice((aliasMatch.index || 0) + aliasMatch[0].length).replace(/^\s*[:=-]?\s*/, "");
-    const valueMatch = remainder.match(new RegExp(numberPattern));
+    const valueMatch = remainder.match(new RegExp(`^${numberPattern}`));
     if (!valueMatch) {
-      const qualitative = remainder.match(/\b(non[- ]?reactive|not detected|positive|negative|reactive|detected|trace|present|absent)\b/i);
+      const qualitative = remainder.match(/^(non[- ]?reactive|not detected|positive|negative|reactive|detected|trace|present|absent)\b/i);
       if (!qualitative) return null;
       return {
         parameter: analyte.name,
@@ -175,12 +176,16 @@
 
   function parse(text) {
     const lines = String(text || "")
+      .replace(/[–—−]/g, "-")
+      .replace(/×/g, "x")
+      .replace(/10([⁰¹²³⁴⁵⁶⁷⁸⁹]+)/g, (_, digits) => `10^${Array.from(digits, (digit) => "⁰¹²³⁴⁵⁶⁷⁸⁹".indexOf(digit)).join("")}`)
       .replace(/[|]/g, " ")
       .split(/\r?\n/)
       .map((line) => line.replace(/\s+/g, " ").trim())
       .filter(Boolean);
     const found = new Map();
-    const resultHeadingIndex = lines.findIndex((line) => /^(?:result values?|laboratory results?|test results?)\b/i.test(line));
+    const specificHeadingIndex = lines.findIndex((line) => /^(?:result values?|test results?)\b/i.test(line));
+    const resultHeadingIndex = specificHeadingIndex >= 0 ? specificHeadingIndex : lines.findIndex((line) => /^laboratory results?\s*:?$/i.test(line));
     const resultEndIndex = resultHeadingIndex < 0 ? -1 : lines.findIndex((line, index) => index > resultHeadingIndex && /^(?:performed by|reviewed by|note|interpretation|thank you)\b/i.test(line));
 
     lines.forEach((line, index) => {
@@ -199,8 +204,22 @@
       }
     });
 
+    const values = Array.from(found.values()).map((result) => {
+      const warnings = [];
+      // A damaged exponent must not become a standalone percentage unit.
+      if (/x\s*10[^\s/]*[%°][^\s/]*\s*\//i.test(result.sourceLine)) {
+        result.unit = "";
+        warnings.push("Unit was unclear; check the source image.");
+      }
+      const inferred = inferredFlag(result.value, result.referenceRange);
+      if (result.flag === "Normal" && inferred && inferred !== "Normal") {
+        result.referenceRange = "";
+        warnings.push("Reference range conflicts with the printed flag; check the source image.");
+      }
+      return warnings.length ? { ...result, reviewWarnings: warnings } : result;
+    });
     return {
-      values: Array.from(found.values()),
+      values,
       findings: extractSection(lines, /^findings summary\b/i, [/^remarks\b/i, /^result values?\b/i, /^performed by\b/i]),
       remarks: extractSection(lines, /^remarks\b/i, [/^result values?\b/i, /^performed by\b/i, /^reviewed by\b/i]),
       lines,

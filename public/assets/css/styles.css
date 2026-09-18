@@ -3835,3 +3835,30 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
   .topbar .profile-button > i { display: none; }
   .topbar .global-search { flex: 1 1 0; width: 0; min-width: 0; }
 }
+
+/* The scanner occupies the full form row, including its controls and preview. */
+.form-grid > .result-scanner {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+}
+.result-scanner > * { min-width: 0; max-width: 100%; }
+.result-scanner .result-scanner-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 10px;
+}
+.form-grid .result-scanner .result-scanner-controls .btn {
+  flex: 1 1 150px;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  white-space: normal;
+}
+.result-scanner .result-scan-file-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.result-scanner :is(.result-scan-status, .result-source-choice, .result-scan-output) { overflow-wrap: anywhere; }
+.result-scan-output pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ocr-review-note { display: block; margin-top: 6px; color: #8a541c; font-size: 12px; line-height: 1.4; }
