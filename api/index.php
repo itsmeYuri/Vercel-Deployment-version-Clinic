@@ -2489,6 +2489,12 @@ try {
             $uploads = clinic_storage_prepare_uploads($data['files'] ?? [], $actor);
         } catch (InvalidArgumentException $e) {
             respond(false, $e->getMessage(), [], 422, ['attachments' => $e->getMessage()]);
+        } catch (ClinicStorageException $e) {
+            respond(true, 'Result values can still be submitted, but protected file storage is temporarily unavailable.', [
+                'uploads' => [],
+                'storageUnavailable' => true,
+                'warning' => $e->getMessage(),
+            ]);
         }
         respond(true, 'Signed upload URLs created.', ['uploads' => $uploads]);
     }

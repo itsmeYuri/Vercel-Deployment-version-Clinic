@@ -322,7 +322,7 @@
     return json.data || {};
   }
 
-  async function readAttachments(files) {
+  async function readAttachments(files, options = {}) {
     const allowed = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
     const maxBytes = 10 * 1024 * 1024;
     const selectedFiles = [...files];
@@ -340,6 +340,13 @@
       const prepared = await api("prepare_result_uploads", {
         files: selectedFiles.map((file) => ({ name: file.name, type: file.type, size: file.size })),
       });
+      if (prepared.storageUnavailable) {
+        if (options.optional) {
+          toast("The OCR values will be submitted, but the source image could not be attached because protected storage is unavailable.", "warning");
+          return [];
+        }
+        throw new Error(prepared.warning || "Protected file storage is unavailable. Try again later or remove the attachment.");
+      }
       const uploads = prepared.uploads || [];
       if (uploads.length !== selectedFiles.length) throw new Error("The secure upload could not be prepared.");
       for (let index = 0; index < uploads.length; index += 1) {
@@ -1859,11 +1866,10 @@
         setPage("orders");
       } else if (kind === "upload-result") {
         const includeSource = $("[data-include-result-source]", form)?.checked !== false;
-        const attachmentFiles = [
-          ...($('input[name="attachments"]', form)?.files || []),
-          ...(includeSource ? ($("[data-result-scan-input]", form)?.files || []) : []),
-        ];
-        payload.attachments = await readAttachments(attachmentFiles.filter((file, index, files) => files.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.lastModified === file.lastModified) === index));
+        const additionalFiles = [...($('input[name="attachments"]', form)?.files || [])];
+        const sourceFiles = includeSource ? [...($("[data-result-scan-input]", form)?.files || [])] : [];
+        const attachmentFiles = [...additionalFiles, ...sourceFiles];
+        payload.attachments = await readAttachments(attachmentFiles.filter((file, index, files) => files.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.lastModified === file.lastModified) === index), { optional: additionalFiles.length === 0 && sourceFiles.length > 0 });
         payload.values = $$("tbody tr", form).map((row) => ({
           parameter: $('input[name="parameter"]', row)?.value || "",
           value: $('input[name="value"]', row)?.value || "",
