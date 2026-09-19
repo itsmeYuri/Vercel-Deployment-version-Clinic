@@ -337,9 +337,22 @@
     });
 
     if (state.data?.storage?.driver === "supabase") {
-      const prepared = await api("prepare_result_uploads", {
-        files: selectedFiles.map((file) => ({ name: file.name, type: file.type, size: file.size })),
-      });
+      let prepared;
+      try {
+        prepared = await api("prepare_result_uploads", {
+          files: selectedFiles.map((file) => ({ name: file.name, type: file.type, size: file.size })),
+        });
+      } catch (error) {
+        // OCR already runs in the browser. If Vercel/Supabase cannot store the
+        // optional source image, preserve the extracted values and let the user
+        // submit them after review instead of failing the whole result entry.
+        if (options.optional) {
+          console.warn("Optional OCR source attachment was skipped:", error);
+          toast("The OCR values were kept, but the source image could not be attached.", "warning");
+          return [];
+        }
+        throw error;
+      }
       if (prepared.storageUnavailable) {
         if (options.optional) {
           toast("The OCR values will be submitted, but the source image could not be attached because protected storage is unavailable.", "warning");

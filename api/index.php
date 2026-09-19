@@ -2495,6 +2495,17 @@ try {
                 'storageUnavailable' => true,
                 'warning' => $e->getMessage(),
             ]);
+        } catch (Throwable $e) {
+            // An OCR source image is supporting evidence, not the result itself. Some
+            // Vercel PHP runtimes can fail before the storage adapter can wrap the
+            // error (for example when an extension is unavailable). Keep the result
+            // entry usable and return a normal API response instead of a generic 500.
+            error_log('prepare_result_uploads failed: ' . $e->getMessage());
+            respond(true, 'Result values can still be submitted, but protected file storage is temporarily unavailable.', [
+                'uploads' => [],
+                'storageUnavailable' => true,
+                'warning' => 'Protected file storage is unavailable on this deployment.',
+            ]);
         }
         respond(true, 'Signed upload URLs created.', ['uploads' => $uploads]);
     }
