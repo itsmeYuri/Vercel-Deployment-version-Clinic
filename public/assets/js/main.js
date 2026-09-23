@@ -77,7 +77,7 @@
 
   const pageMeta = {
     Admin: {
-      dashboard: ["Admin Dashboard", "A clear view of clinic operations and system activity."],
+      dashboard: ["Laboratory Dashboard", "Monitor laboratory requests, results, verification, and operational activity."],
       users: ["User Management", "Manage system users, roles, and access permissions."],
       facilities: ["Healthcare Facilities", "Manage clinic locations and assigned care teams."],
       tests: ["Laboratory Tests", "Manage active laboratory tests, pricing, and reference details."],
@@ -107,7 +107,6 @@
       orders: ["Laboratory Requests", "Process laboratory requests assigned to your facility."],
       upload: ["Results Upload", "Upload structured findings and result values."],
       review: ["Result Review", "Verify, release, or reject uploaded results."],
-      operations: ["Assigned Operations", "Review facility workload and active laboratory tasks."],
       facilities: ["Assigned Facilities", "View your laboratory facility assignments."],
       queue: ["Test Queue", "Track active tests by priority, status, and date."],
       notifications: ["Notifications", "Review laboratory alerts and workflow updates."],
@@ -146,6 +145,9 @@
     Routine: "teal",
     Regular: "green",
     Priority: "red",
+    Critical: "red",
+    "Pending Verification": "orange",
+    Delayed: "orange",
     Admin: "purple",
     Doctor: "blue",
     "Laboratory Staff": "teal",
@@ -161,7 +163,7 @@
 
   let currentUser = null;
   const PAGE_CACHE_TTL = 60000;
-  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, trends: null, loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map(), collectionLoadedAt: new Map(), metadataLoadedAt: 0 };
+  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, trends: null, adminTurnaroundPeriod: "week", loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map(), collectionLoadedAt: new Map(), metadataLoadedAt: 0 };
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -734,7 +736,7 @@
   }
 
   function heading(title, subtitle, actions = "") {
-    return `<div class="page-heading"><div><p class="eyebrow">${h(appName())}</p><h2>${h(title)}</h2><p>${h(subtitle)}</p></div>${actions ? `<div class="heading-actions">${actions}</div>` : ""}</div>`;
+    return actions ? `<div class="page-heading page-heading-actions-only"><div class="heading-actions">${actions}</div></div>` : "";
   }
 
   function stat(label, value, iconName, change = "-", color = "teal") {
@@ -748,7 +750,7 @@
       gray: ["#687e87", "#edf2f3"],
     };
     const [accent, tint] = palette[color] || palette.teal;
-    return `<article class="stat-card" style="--accent:${accent};--tint:${tint}"><div class="stat-top"><span class="stat-icon">${icon(iconName)}</span><span class="stat-change ${String(change).startsWith("-") ? "down" : ""}">${change === "-" ? "" : icon("trend")}${h(change)}</span></div><div class="stat-value">${h(value)}</div><div class="stat-label">${h(label)}</div></article>`;
+    return `<article class="stat-card" style="--accent:${accent};--tint:${tint}"><div class="stat-top"><span class="stat-icon">${icon(iconName)}</span>${change === "-" ? "" : `<span class="stat-change ${String(change).startsWith("-") ? "down" : ""}">${icon("trend")}${h(change)}</span>`}</div><div class="stat-value">${h(value)}</div><div class="stat-label">${h(label)}</div></article>`;
   }
 
   function table(headers, rows, footer = "") {
@@ -769,7 +771,52 @@
         return `<tr${attributes}${row.date ? ` data-table-date="${h(row.date.slice(0, 10))}"` : ""}>${cells.map((cell, index) => `<td data-label="${h(clean(visibleHeaders[index]))}">${cell}</td>`).join("")}</tr>`;
       }).join("")
       : `<tr><td colspan="${visibleHeaders.length}"><div class="empty-state">No records found.</div></td></tr>`;
-    return `<section class="card table-card" data-paginated-table data-table-page="1" data-table-label="${h(footer)}"><div class="table-responsive"><table class="data-table"><thead><tr>${visibleHeaders.map((item) => `<th scope="col">${h(item)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div><div class="table-footer"><span data-table-page-summary aria-live="polite">${h(footer || `${rows.length} records`)}</span><div class="table-pager" aria-label="Table pages"><button class="btn btn-secondary btn-sm" type="button" data-table-prev>Previous</button><button class="btn btn-secondary btn-sm" type="button" data-table-next>Next</button></div></div></section>`;
+    const headerCells = visibleHeaders.map((item, index) => {
+      const label = clean(item);
+      const sortable = !/^(Action|Actions)$/i.test(label);
+      return sortable
+        ? `<th scope="col" aria-sort="none"><button class="table-sort" type="button" data-table-sort="${index}" aria-label="Sort by ${h(label)}">${h(item)}<span class="table-sort-indicator" aria-hidden="true"></span></button></th>`
+        : `<th scope="col">${h(item)}</th>`;
+    }).join("");
+    return `<section class="card table-card" data-paginated-table data-table-page="1" data-table-label="${h(footer)}"><div class="table-responsive"><table class="data-table"><thead><tr>${headerCells}</tr></thead><tbody>${body}</tbody></table></div><div class="table-footer"><span data-table-page-summary aria-live="polite">${h(footer || `${rows.length} records`)}</span><div class="table-pager" aria-label="Table pages"><button class="btn btn-secondary btn-sm" type="button" data-table-prev>Previous</button><button class="btn btn-secondary btn-sm" type="button" data-table-next>Next</button></div></div></section>`;
+  }
+
+  function sortTable(sortButton) {
+    const tableElement = sortButton.closest("table");
+    const card = sortButton.closest("[data-paginated-table]");
+    const tbody = tableElement?.tBodies?.[0];
+    if (!tableElement || !card || !tbody) return;
+
+    const column = Number(sortButton.dataset.tableSort);
+    const header = sortButton.closest("th");
+    const nextDirection = header.getAttribute("aria-sort") === "ascending" ? "descending" : "ascending";
+    const rows = [...tbody.rows].filter((row) => !row.querySelector(".empty-state"));
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+    const valueFor = (row) => {
+      const cell = row.cells[column];
+      const dateValue = cell?.querySelector("time[datetime]")?.getAttribute("datetime");
+      return dateValue || cell?.dataset.sortValue || cell?.textContent?.trim() || "";
+    };
+    const comparable = (value) => {
+      const normalized = String(value).trim();
+      const date = /[-/:]|\b(?:am|pm)\b/i.test(normalized) ? Date.parse(normalized) : NaN;
+      if (Number.isFinite(date)) return { kind: "number", value: date };
+      const numeric = normalized.replace(/[^\d.+-]/g, "");
+      if (numeric && /^[-+]?\d*\.?\d+$/.test(numeric)) return { kind: "number", value: Number(numeric) };
+      return { kind: "text", value: normalized };
+    };
+
+    rows.forEach((row, index) => { if (!row.dataset.sortIndex) row.dataset.sortIndex = String(index); });
+    rows.sort((first, second) => {
+      const a = comparable(valueFor(first));
+      const b = comparable(valueFor(second));
+      const comparison = a.kind === "number" && b.kind === "number" ? a.value - b.value : collator.compare(String(a.value), String(b.value));
+      return (comparison || Number(first.dataset.sortIndex) - Number(second.dataset.sortIndex)) * (nextDirection === "ascending" ? 1 : -1);
+    });
+    rows.forEach((row) => tbody.appendChild(row));
+    $$('th[aria-sort]', tableElement).forEach((item) => item.setAttribute("aria-sort", item === header ? nextDirection : "none"));
+    card.dataset.tablePage = "1";
+    paginateTables(card.parentElement || document);
   }
 
   function paginateTables(root = document) {
@@ -841,23 +888,7 @@
   }
 
   function utilizationTrendChart(analytics) {
-    const series = [
-      { key: "patients", label: "Patients", color: "#078f88" },
-      { key: "requests", label: "Requests", color: "#347fb7" },
-      { key: "tests", label: "Tests", color: "#795db0" },
-    ];
-    const buckets = analytics.buckets || [];
-    const width = Math.max(700, buckets.length * 30);
-    const max = Math.max(1, ...buckets.flatMap((bucket) => series.map((item) => bucket[item.key])));
-    const x = (index) => buckets.length < 2 ? width / 2 : 34 + (index * (width - 68) / (buckets.length - 1));
-    const y = (value) => 196 - (Number(value || 0) / max) * 156;
-    const paths = series.map((item) => {
-      const points = buckets.map((bucket, index) => `${x(index)},${y(bucket[item.key])}`).join(" ");
-      const dots = buckets.map((bucket, index) => `<circle cx="${x(index)}" cy="${y(bucket[item.key])}" r="3" tabindex="0" style="--series-color:${item.color}"><title>${h(bucket.label)}: ${h(bucket[item.key])} ${h(item.label.toLowerCase())}</title></circle>`).join("");
-      return `<polyline points="${points}" style="--series-color:${item.color}"/>${dots}`;
-    }).join("");
-    const labels = buckets.map((bucket, index) => `<span style="left:${(x(index) / width) * 100}%">${h(bucket.label)}</span>`).join("");
-    return `<div class="utilization-legend">${series.map((item) => `<span><i style="--series-color:${item.color}"></i>${h(item.label)}</span>`).join("")}</div><div class="utilization-chart-scroll"><div class="utilization-chart" style="width:${width}px"><svg viewBox="0 0 ${width} 215" preserveAspectRatio="none" role="img" aria-label="Laboratory utilization trend"><path class="utilization-grid" d="M34 40H${width - 34}M34 92H${width - 34}M34 144H${width - 34}M34 196H${width - 34}"/>${paths}</svg><div class="utilization-axis" aria-hidden="true">${labels}</div></div></div>`;
+    return window.ClinicReportCharts.timeline(analytics.buckets || [], [{key: "patients", label: "Patients"}, {key: "requests", label: "Requests"}, {key: "tests", label: "Tests"}], {title: "Laboratory utilization over time"});
   }
 
   function utilizationAnalyticsSection() {
@@ -878,7 +909,7 @@
       : `<label>${selection.period === "day" ? "Date" : "Period containing"}<input class="control" type="date" value="${h(selection.anchor)}" data-utilization-anchor></label>`;
     const totals = analytics.totals;
     const busiest = analytics.buckets.reduce((best, bucket) => bucket.requests > (best?.requests || 0) ? bucket : best, null);
-    return `<section class="card utilization-card"><div class="card-head"><div><h3 class="card-title">Laboratory Utilization</h3><p class="card-subtitle">Unique patients and laboratory activity for ${h(rangeLabel)}. A patient is counted once in the selected period.</p></div>${icon("trend")}</div><div class="utilization-toolbar"><div class="utilization-periods" role="group" aria-label="Analytics period">${controls}</div><div class="utilization-dates">${dateControls}</div></div><div class="stats-grid utilization-stats">${stat("Patients Served", totals.patients, "users", "-", "teal")}${stat("Laboratory Requests", totals.requests, "orders", "-", "blue")}${stat("Tests Requested", totals.tests, "test", "-", "purple")}${stat("Average Requests / Day", totals.averageRequestsPerDay.toFixed(1), "activity", "-", "orange")}</div><div class="card-body utilization-chart-body">${utilizationTrendChart(analytics)}<p class="utilization-note">Counts use each request's creation date.${busiest?.requests ? ` Busiest displayed interval: ${h(busiest.label)} with ${h(busiest.requests)} request${busiest.requests === 1 ? "" : "s"}.` : " No laboratory activity was recorded for this period."} Hover or focus on a point to see its value.</p></div></section>`;
+    return `<section class="card utilization-card"><div class="card-head"><div><h3 class="card-title">Laboratory Utilization</h3><p class="card-subtitle">Unique patients and laboratory activity for ${h(rangeLabel)}. A patient is counted once in the selected period.</p></div>${icon("trend")}</div><div class="utilization-toolbar"><div class="utilization-periods" role="group" aria-label="Analytics period">${controls}</div><div class="utilization-dates">${dateControls}</div></div><div class="stats-grid utilization-stats">${stat("Patients Served", totals.patients, "users", "-", "teal")}${stat("Laboratory Requests", totals.requests, "orders", "-", "blue")}${stat("Tests Requested", totals.tests, "test", "-", "purple")}${stat("Average Requests / Day", totals.averageRequestsPerDay.toFixed(1), "activity", "-", "orange")}</div><div class="card-body utilization-chart-body">${utilizationTrendChart(analytics)}<p class="utilization-note">Counts use each request's creation date.${busiest?.requests ? ` Busiest displayed interval: ${h(busiest.label)} with ${h(busiest.requests)} request${busiest.requests === 1 ? "" : "s"}.` : " No laboratory activity was recorded for this period."} Open chart data for exact values.</p></div></section>`;
   }
 
   function forecastTrendChart(analysis) {
@@ -888,7 +919,7 @@
       requests: Number(day.requests.toFixed(1)),
       tests: Number(day.tests.toFixed(1)),
     }));
-    return utilizationTrendChart({ buckets }).replace("Laboratory utilization trend", "Forecast laboratory demand trend");
+    return analysis.historicalRequests ? window.ClinicReportCharts.timeline(buckets, [{key: "requests", label: "Projected requests"}, {key: "tests", label: "Projected tests"}, {key: "patients", label: "Projected patient visits"}], {forecast: true, area: true, title: "Projected laboratory demand", unit: "Expected daily count"}) : '<div class="empty-state">A demand forecast needs laboratory request history. No requests are available yet.</div>';
   }
 
   function forecastingAnalysisSection() {
@@ -925,13 +956,6 @@
     return (state.data?.[collection] || []).find((item) => String(item.id) === String(id));
   }
 
-  function trendBarRows(rows, labelKey, valueKey, suffix = "") {
-    const max = Math.max(1, ...rows.map((row) => Number(row[valueKey]) || 0));
-    return rows.length
-      ? `<div class="trend-bars">${rows.map((row) => `<div class="trend-bar-row"><span title="${h(row[labelKey])}">${h(row[labelKey])}</span><div><i style="width:${Math.max(2, ((Number(row[valueKey]) || 0) / max) * 100)}%"></i></div><strong>${h(row[valueKey])}${h(suffix)}</strong></div>`).join("")}</div>`
-      : '<div class="empty-state">No records match the selected filters.</div>';
-  }
-
   function trendAnalysisSection() {
     const service = window.LabTrendAnalysis;
     if (!service) return "";
@@ -942,8 +966,7 @@
     }
     const analysis = service.build(state.data.orders, state.data.results, state.trends);
     const turnaround = analysis.totals.averageTurnaroundMinutes === null ? "No data" : analysis.totals.averageTurnaroundMinutes < 120 ? `${analysis.totals.averageTurnaroundMinutes} min` : `${(analysis.totals.averageTurnaroundMinutes / 60).toFixed(1)} hr`;
-    const timeRows = analysis.buckets.filter((row) => row.averageTurnaroundMinutes !== null);
-    return `<section class="trend-analysis" aria-labelledby="trend-analysis-title"><div class="trend-analysis-head"><div><span class="eyebrow">Operational intelligence</span><h2 id="trend-analysis-title">Trend Analysis</h2><p>Descriptive and diagnostic views for laboratory volume, turnaround, validation flags, and facility workload.</p></div>${icon("trend")}</div><div class="trend-filter-grid"><label>From<input class="control" type="date" value="${h(analysis.filters.from)}" data-trend-from></label><label>To<input class="control" type="date" value="${h(analysis.filters.to)}" data-trend-to></label><label>Group by${select("trendGroup", [{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], analysis.filters.group, "data-trend-group")}</label><label>Facility${select("trendFacility", [{ value: "", label: "All facilities" }, ...analysis.facilities.map((value) => ({ value, label: value }))], analysis.filters.facility, "data-trend-facility")}</label><label>Test type${select("trendTest", [{ value: "", label: "All test types" }, ...analysis.tests.map((value) => ({ value, label: value }))], analysis.filters.test, "data-trend-test")}</label></div><div class="stats-grid utilization-stats trend-summary">${stat("Tests Processed", analysis.totals.tests, "test", "-", "purple")}${stat("Results Encoded", analysis.totals.results, "results", "-", "blue")}${stat("Average Turnaround", turnaround, "clock", "-", "teal")}${stat("Validation Flags", analysis.totals.flaggedValues, "alert", "-", "orange")}</div><div class="trend-analysis-grid"><section class="trend-panel"><h3>Test Volume Trends</h3><p>Requested tests over the selected period.</p>${trendBarRows(analysis.buckets, "label", "tests")}</section><section class="trend-panel"><h3>Turnaround Time Trends</h3><p>Average time from result encoding to release.</p>${trendBarRows(timeRows, "label", "averageTurnaroundMinutes", " min")}</section><section class="trend-panel"><h3>Flagged-result Trends</h3><p>Flags produced during rule-based result validation.</p>${trendBarRows(analysis.flags, "category", "count")}</section><section class="trend-panel"><h3>Workload Distribution</h3><p>Requested test volume by facility.</p>${trendBarRows(analysis.workload, "facility", "tests")}</section></div><p class="utilization-note">Turnaround uses released results with valid encoding and release timestamps. Workload is grouped by facility because staff-shift data is not currently stored.</p></section>`;
+    return `<section class="trend-analysis" aria-labelledby="trend-analysis-title"><div class="trend-analysis-head"><div><h2 id="trend-analysis-title">Trend Analysis</h2><p>Descriptive and diagnostic views for laboratory volume, turnaround, validation flags, and facility workload.</p></div>${icon("trend")}</div><div class="trend-filter-grid"><label>From<input class="control" type="date" value="${h(analysis.filters.from)}" data-trend-from></label><label>To<input class="control" type="date" value="${h(analysis.filters.to)}" data-trend-to></label><label>Group by${select("trendGroup", [{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], analysis.filters.group, "data-trend-group")}</label><label>Facility${select("trendFacility", [{ value: "", label: "All facilities" }, ...analysis.facilities.map((value) => ({ value, label: value }))], analysis.filters.facility, "data-trend-facility")}</label><label>Test type${select("trendTest", [{ value: "", label: "All test types" }, ...analysis.tests.map((value) => ({ value, label: value }))], analysis.filters.test, "data-trend-test")}</label></div><div class="stats-grid utilization-stats trend-summary">${stat("Tests Processed", analysis.totals.tests, "test", "-", "purple")}${stat("Results Encoded", analysis.totals.results, "results", "-", "blue")}${stat("Average Turnaround", turnaround, "clock", "-", "teal")}${stat("Validation Flags", analysis.totals.flaggedValues, "alert", "-", "orange")}</div><div class="trend-analysis-grid"><section class="trend-panel"><h3>Test Volume by Period</h3><p>Requested tests in each selected time interval.</p>${window.ClinicReportCharts.bars(analysis.buckets, [{key: "tests", label: "Requested tests"}], {title: "Test volume by period", unit: "Tests"})}</section><section class="trend-panel"><h3>Turnaround Time Trends</h3><p>Average time from result encoding to release.</p>${window.ClinicReportCharts.timeline(analysis.buckets, [{key: "averageTurnaroundMinutes", label: "Average turnaround"}], {title: "Turnaround time over time", unit: "Minutes"})}</section><section class="trend-panel"><h3>Flagged-result Trends</h3><p>Flags produced during rule-based result validation.</p>${window.ClinicReportCharts.distribution(analysis.flags, "category", "count")}</section><section class="trend-panel"><h3>Workload Distribution</h3><p>Requested test volume by facility.</p>${window.ClinicReportCharts.pie(analysis.workload, "facility", "tests")}</section></div><p class="utilization-note">Turnaround uses released results with valid encoding and release timestamps. Workload is grouped by facility because staff-shift data is not currently stored.</p></section>`;
   }
 
   function syncNotifications(notifications) {
@@ -1142,11 +1165,100 @@
   }
 
   function renderAdminDashboard() {
-    const auditRows = state.data.audit.slice(0, previewLimit()).map((item) => [shortDateTime(item.createdAt), person(item.userName, item.role, initials(item.userName)), badge(item.action), item.module, `<span class="cell-wrap">${h(item.details)}</span>`]);
+    const orders = state.data.orders || [];
+    const results = state.data.results || [];
+    const tests = state.data.tests || [];
+    const todayKey = new Date().toLocaleDateString("en-CA");
+    const dateKey = (value) => value && !Number.isNaN(new Date(value).getTime()) ? new Date(value).toLocaleDateString("en-CA") : "";
+    const finalOrderStatuses = ["Released", "Rejected", "Cancelled"];
+    const resultsByOrder = new Map(results.map((result) => [String(result.orderId), result]));
+    const criticalValues = (result) => (result.values || []).filter((value) => String(value.flag).toLowerCase() === "critical");
+    const criticalResults = results.filter((result) => criticalValues(result).length);
+    const awaitingVerification = results.filter((result) => result.status === "Pending Review");
+    const pendingResults = orders.filter((order) => !finalOrderStatuses.includes(order.status) && !resultsByOrder.has(String(order.id)));
+    const completedResults = results.filter((result) => ["Verified", "Released"].includes(result.status));
+    const todaysOrders = orders.filter((order) => dateKey(order.createdAt) === todayKey);
+    const turnaroundMinutes = results.map((result) => {
+      const order = orders.find((item) => String(item.id) === String(result.orderId));
+      const start = new Date(order?.createdAt || result.createdAt);
+      const end = new Date(result.releasedAt || result.verifiedAt || "");
+      return !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && end >= start ? Math.round((end - start) / 60000) : null;
+    }).filter((value) => value !== null);
+    const averageMinutes = turnaroundMinutes.length ? Math.round(turnaroundMinutes.reduce((sum, value) => sum + value, 0) / turnaroundMinutes.length) : null;
+    const durationLabel = (minutes) => minutes === null ? "No data" : `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+    const firstValue = (result) => criticalValues(result)[0] || (result.values || [])[0] || null;
+    const resultTime = (result) => result.releasedAt || result.verifiedAt || result.updatedAt || result.createdAt;
+    const departmentFor = (testName) => {
+      const names = String(testName || "").split(",").map((name) => name.trim());
+      const matched = tests.find((test) => names.some((name) => String(test.name).toLowerCase() === name.toLowerCase()));
+      if (matched?.category) return matched.category;
+      const value = names.join(" ").toLowerCase();
+      if (/cbc|blood count|hemoglobin|hematocrit|esr/.test(value)) return "Hematology";
+      if (/culture|bacteria|microb/.test(value)) return "Microbiology";
+      if (/antigen|antibody|thyroid|immun|crp/.test(value)) return "Immunology";
+      if (/blood bank|crossmatch|typing/.test(value)) return "Blood Bank";
+      if (/urinal|stool|microscop/.test(value)) return "Clinical Microscopy";
+      return "Clinical Chemistry";
+    };
+    const criticalRows = criticalResults.slice(0, previewLimit()).map((result) => {
+      const value = firstValue(result) || {};
+      const measured = [value.value, value.unit].filter(Boolean).join(" ") || "Flagged value";
+      return [h(result.patientName), h(result.patientCode), h(value.parameter || result.testName), `<strong class="critical-value">${h(measured)}</strong>`, h(value.referenceRange || "Not provided"), badge("Critical"), shortDateTime(resultTime(result)), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">View Result</button>`];
+    });
+    const recentRows = results.slice(0, Math.max(previewLimit(), 6)).map((result) => {
+      const value = firstValue(result);
+      const isCritical = criticalValues(result).length > 0;
+      const displayStatus = isCritical ? "Critical" : result.status === "Pending Review" ? "Pending Verification" : result.status;
+      const measured = value ? [value.value, value.unit].filter(Boolean).join(" ") : (result.findings || "Available");
+      return [shortDateTime(resultTime(result)), `<span class="cell-strong">${h(result.patientName)}</span><span class="cell-sub">${h(result.patientCode)}</span>`, h(result.testName), h(departmentFor(result.testName)), `<span class="cell-wrap">${h(measured)}</span>`, badge(displayStatus), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">${result.status === "Pending Review" ? "Review" : "View"}</button>`];
+    });
+    const now = new Date();
+    const periodDays = state.adminTurnaroundPeriod === "today" ? 1 : state.adminTurnaroundPeriod === "month" ? 30 : 7;
+    const turnaroundBuckets = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label, weekday) => {
+      const values = results.map((result) => {
+        const end = new Date(result.releasedAt || result.verifiedAt || "");
+        const order = orders.find((item) => String(item.id) === String(result.orderId));
+        const start = new Date(order?.createdAt || result.createdAt);
+        const age = (now - end) / 86400000;
+        const mondayIndex = end.getDay() === 0 ? 6 : end.getDay() - 1;
+        return !Number.isNaN(end.getTime()) && !Number.isNaN(start.getTime()) && end >= start && age >= 0 && age < periodDays && mondayIndex === weekday ? (end - start) / 60000 : null;
+      }).filter((value) => value !== null);
+      return [label, values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0];
+    });
+    const maxTurnaround = Math.max(...turnaroundBuckets.map(([, value]) => value), 1);
+    const turnaroundChart = `<div class="turnaround-bars" role="img" aria-label="Average laboratory turnaround time by weekday">${turnaroundBuckets.map(([label, value]) => `<div class="turnaround-column"><span class="turnaround-value">${value ? durationLabel(value) : "—"}</span><div class="turnaround-track"><i style="height:${value ? Math.max(12, (value / maxTurnaround) * 100) : 3}%"></i></div><small>${label}</small></div>`).join("")}</div>`;
+    const departmentMap = new Map();
+    orders.forEach((order) => {
+      const orderTests = String(order.tests || "").split(",").map((name) => name.trim()).filter(Boolean);
+      (orderTests.length ? orderTests : ["Laboratory Test"]).forEach((testName) => {
+        const department = departmentFor(testName);
+        const item = departmentMap.get(department) || { total: 0, completed: 0, processing: 0, pending: 0 };
+        item.total += 1;
+        if (["Verified", "Released"].includes(order.status)) item.completed += 1;
+        else if (["Accepted", "Sample Collected", "Processing", "In Progress", "Result Uploaded", "Pending Review"].includes(order.status)) item.processing += 1;
+        else item.pending += 1;
+        departmentMap.set(department, item);
+      });
+    });
+    const departments = [...departmentMap.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 5);
+    const departmentHtml = departments.length ? departments.map(([name, item]) => `<div class="department-row"><div class="department-copy"><strong>${h(name)}</strong><span>${h(item.total)} request${item.total === 1 ? "" : "s"}</span></div><div class="department-progress" aria-label="${h(item.completed)} of ${h(item.total)} completed"><i style="width:${Math.round((item.completed / Math.max(1, item.total)) * 100)}%"></i></div><div class="department-counts"><span><b>${h(item.completed)}</b> completed</span><span><b>${h(item.processing)}</b> processing</span><span><b>${h(item.pending)}</b> pending</span></div></div>`).join("") : '<div class="empty-state">Department activity will appear when laboratory requests are available.</div>';
+    const delayedOrders = orders.filter((order) => !finalOrderStatuses.includes(order.status) && (now - new Date(order.createdAt)) > 48 * 3600000);
+    const rejectedResults = results.filter((result) => result.status === "Rejected");
+    const rejectedSamples = orders.filter((order) => order.status === "Rejected");
+    const recollectionOrders = orders.filter((order) => /recollect|new sample|repeat sample/i.test(String(order.latestUpdate || "")));
+    const attentionItems = [
+      [criticalResults.length, "Critical Results", "results", "red", "alert"],
+      [awaitingVerification.length, "Results Awaiting Verification", "results", "orange", "clock"],
+      [delayedOrders.length, "Delayed Laboratory Requests", "orders", "orange", "activity"],
+      [rejectedSamples.length || rejectedResults.length, "Rejected Samples", rejectedSamples.length ? "orders" : "results", "gray", "close"],
+      [recollectionOrders.length, "Samples Requiring Recollection", "orders", "gray", "test"],
+    ];
     return `${heading(...pageMeta.Admin.dashboard, `<button class="btn btn-secondary" data-go-page="audit">${icon("audit")} Audit Trail</button><button class="btn btn-primary" data-drawer="user">${icon("plus")} New User</button>`)}
-      <div class="stats-grid">${stat("Users", state.data.users.length, "users")}${stat("Active Users", state.data.users.filter((u) => u.status === "Active").length, "check", "-", "green")}${stat("Facilities", state.data.facilities.length, "facility", "-", "blue")}${stat("Audit Records", state.data.audit.length, "audit", "-", "purple")}</div>
-      <div class="admin-dashboard-layout"><div class="admin-dashboard-main"><section class="card order-activity-card"><div class="card-head"><div><h3 class="card-title">Account Overview</h3><p class="card-subtitle">Active users grouped by role</p></div></div><div class="card-body">${chartFromCounts(Object.fromEntries((uiConfig().roles || ["Admin", "Doctor", "Laboratory Staff", "Patient"]).map((role) => [role, state.data.users.filter((u) => u.role === role).length])))}</div></section></div><section class="card notifications-card"><div class="card-head"><div><h3 class="card-title">Latest Notifications</h3><p class="card-subtitle">Recent clinic activity requiring attention</p></div><button class="card-link" data-go-page="notifications">View all</button></div><div class="card-body notification-list">${notificationArticles(state.data.notifications.slice(0, previewLimit()))}</div></section></div>
-      ${table(["Time", "User", "Action", "Module", "Details"], auditRows, "Latest audit records")}`;
+      <div class="stats-grid admin-lab-stats">${stat("Laboratory Requests Today", todaysOrders.length, "orders", "-", "teal")}${stat("Pending Results", pendingResults.length, "clock", "-", "orange")}${stat("Awaiting Verification", awaitingVerification.length, "review", "-", "orange")}${stat("Completed Results", completedResults.length, "check", "-", "green")}${stat("Critical Results", criticalResults.length, "alert", "-", "red")}${stat("Average Turnaround Time", durationLabel(averageMinutes), "activity", "-", "blue")}</div>
+      <section class="dashboard-section critical-results-section"><div class="section-heading"><div><h3>${icon("alert")} Critical Results</h3><p>Structured result values flagged as critical and requiring prompt review.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${table(["Patient", "Patient ID", "Laboratory Test", "Result", "Reference Range", "Status", "Time", "Action"], criticalRows, "Critical laboratory results")}</section>
+      <section class="dashboard-section"><div class="section-heading"><div><h3>Recent Laboratory Results</h3><p>Latest result activity across all connected facilities.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${table(["Time", "Patient", "Laboratory Test", "Department", "Result", "Status", "Action"], recentRows, "Recent laboratory results")}</section>
+      <div class="laboratory-analytics-grid"><section class="card turnaround-card"><div class="card-head"><div><h3 class="card-title">Laboratory Turnaround Time</h3><p class="card-subtitle">Average request-to-verification time by weekday.</p></div><label class="compact-select"><span class="sr-only">Turnaround period</span>${select("turnaroundPeriod", [{ value: "today", label: "Today" }, { value: "week", label: "This Week" }, { value: "month", label: "This Month" }], state.adminTurnaroundPeriod, "data-admin-turnaround-period")}</label></div><div class="card-body">${turnaroundChart}</div></section><section class="card department-card"><div class="card-head"><div><h3 class="card-title">Laboratory Department Activity</h3><p class="card-subtitle">Workload derived from current laboratory requests.</p></div>${icon("test")}</div><div class="card-body department-list">${departmentHtml}</div></section></div>
+      <section class="card attention-card dashboard-attention-full"><div class="card-head"><div><h3 class="card-title">Requires Attention</h3><p class="card-subtitle">Items that may need administrator or laboratory staff action.</p></div>${icon("alert")}</div><div class="card-body attention-list">${attentionItems.map(([count, label, page, tone, iconName]) => `<button type="button" class="attention-item attention-${tone}" data-go-page="${page}"><span>${icon(iconName)}</span><strong>${h(count)}</strong><small>${h(label)}</small>${icon("arrow")}</button>`).join("")}</div></section>`;
   }
 
   function renderUsers() {
@@ -1192,16 +1304,15 @@
       ${table(["Result", "Patient", "Test & Facility", "Status", "Clinical Note", "Action"], rows)}`;
   }
 
+  const reportViews = [["trends", "Trend Analysis"], ["utilization", "Laboratory Utilization"], ["forecast", "Laboratory Demand Forecast"], ["overview", "Activity Summary"]];
   function renderReports() {
     const facilityRows = Object.entries(state.data.reports.ordersByFacility || {}).map(([facility, count]) => [h(facility), h(count), `${Math.round((count / Math.max(1, state.data.orders.length)) * 100)}%`]);
     const testRows = Object.entries(state.data.reports.topTests || {}).map(([test, count]) => [h(test), h(count), badge(count > 1 ? "Active" : "Pending")]);
-    return `<div class="reports-workspace">${heading(...pageMeta.Admin.reports, `<button class="btn btn-secondary" data-download>${icon("download")} Export report</button>`)}
-      ${trendAnalysisSection()}
-      ${utilizationAnalyticsSection()}
-      ${forecastingAnalysisSection()}
-      <div class="stats-grid stats-eight">${dashboardStats()}</div>
-      <div class="charts-pair">${donutCard("Requests by Status", state.data.reports.ordersByStatus, "Requests")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div>
-      <div class="dashboard-grid">${table(["Facility", "Requests", "Share"], facilityRows, "Requests per facility")}${table(["Requested Test", "Count", "Status"], testRows, "Most requested tests")}</div></div>`;
+    const requestedView = new URLSearchParams(location.search).get("report");
+    const activeView = reportViews.some(([key]) => key === requestedView) ? requestedView : "trends";
+    const navigation = `<nav class="report-navigation" aria-label="Statistics reports">${reportViews.map(([key, label]) => `<button type="button" data-report-view="${key}" aria-current="${key === activeView ? 'page' : 'false'}">${h(label)}</button>`).join("")}</nav>`;
+    const reportBody = activeView === "trends" ? trendAnalysisSection() : activeView === "utilization" ? utilizationAnalyticsSection() : activeView === "forecast" ? forecastingAnalysisSection() : `<div class="report-overview"><h2>Activity Summary</h2><p>Current request and result status across the clinic.</p><div class="stats-grid stats-eight">${dashboardStats()}</div><div class="charts-pair">${donutCard("Requests by Status", state.data.reports.ordersByStatus, "Requests")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div><div class="dashboard-grid">${table(["Facility", "Requests", "Share"], facilityRows, "Requests per facility")}${table(["Requested Test", "Count", "Status"], testRows, "Most requested tests")}</div></div>`;
+    return `<div class="reports-workspace"><div class="reports-toolbar">${navigation}<button class="btn btn-secondary report-export" type="button" data-download>${icon("download")} Export report</button></div><div id="report-view">${reportBody}</div></div>`;
   }
 
   function renderAudit() {
@@ -1281,12 +1392,23 @@
   }
 
   function renderDoctorDashboard() {
-    const patientRows = state.data.patients.slice(0, previewLimit()).map((patient) => [identity(patient.name, patient.patientCode, patient.email, patient.avatar), `${h(patient.sex || "-")}<span class="cell-sub">${h(patient.dateOfBirth || "No birth date")}</span>`, h(patient.primaryFacility || "-"), badge(patient.latestStatus || "Pending"), `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
-    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [`<span class="cell-strong">${h(result.resultNumber)}</span><span class="cell-sub">${h(result.orderNumber)}</span>`, identity(result.patientName, result.patientCode), `<span class="cell-strong">${h(result.testName)}</span><span class="cell-sub">${h(result.facilityName)}</span>`, badge(result.status), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const orders = state.data.orders || [];
+    const results = state.data.results || [];
+    const activeOrders = orders.filter((order) => !["Released", "Rejected", "Cancelled"].includes(order.status));
+    const criticalResults = results.filter((result) => (result.values || []).some((value) => String(value.flag).toLowerCase() === "critical"));
+    const startOfWeek = new Date();
+    startOfWeek.setHours(0, 0, 0, 0);
+    startOfWeek.setDate(startOfWeek.getDate() - ((startOfWeek.getDay() + 6) % 7));
+    const releasedThisWeek = results.filter((result) => result.releasedAt && new Date(result.releasedAt) >= startOfWeek);
+    const criticalRows = criticalResults.slice(0, previewLimit()).map((result) => {
+      const value = (result.values || []).find((item) => String(item.flag).toLowerCase() === "critical") || {};
+      return [identity(result.patientName, result.patientCode), h(value.parameter || result.testName), `<strong class="critical-value">${h([value.value, value.unit].filter(Boolean).join(" ") || "Flagged")}</strong>`, h(value.referenceRange || "Not provided"), shortDateTime(result.releasedAt || result.verifiedAt || result.updatedAt), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`];
+    });
+    const resultRows = results.slice(0, previewLimit()).map((result) => [`<span class="cell-strong">${h(result.resultNumber)}</span><span class="cell-sub">${h(result.orderNumber)}</span>`, identity(result.patientName, result.patientCode), `<span class="cell-strong">${h(result.testName)}</span><span class="cell-sub">${h(result.facilityName)}</span>`, badge(result.status), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
     return `${heading(...pageMeta.Doctor.dashboard, `<button class="btn btn-secondary" data-go-page="results">${icon("results")} Results</button><button class="btn btn-primary" data-go-page="create-order">${icon("plus")} New Laboratory Request</button>`)}
-      <div class="stats-grid">${dashboardStats()}</div>
-      <div class="doctor-dashboard-grid"><section class="card"><div class="card-head"><div><h3 class="card-title">My Laboratory Requests</h3><p class="card-subtitle">Current status distribution</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByStatus)}</div></section>${donutCard("My Request Status", state.data.reports.ordersByStatus, "Requests")}</div>
-      <div class="stacked-tables"><section><h3>Patients</h3>${table(["Patient", "Demographics", "Facility", "Latest Status", "Action"], patientRows, "Patients linked to your laboratory requests")}</section><section><h3>Results</h3>${table(["Result", "Patient", "Test & Facility", "Status", "Action"], resultRows, "Recent results")}</section></div>`;
+      <div class="stats-grid role-dashboard-stats">${stat("Active Requests", activeOrders.length, "orders")}${stat("Awaiting Sample", orders.filter((order) => ["Pending", "Pending Sample"].includes(order.status)).length, "clock", "-", "orange")}${stat("Results Available", results.length, "results", "-", "green")}${stat("Critical Results", criticalResults.length, "alert", "-", "red")}${stat("Patients With Activity", state.data.patients.length, "users", "-", "blue")}${stat("Released This Week", releasedThisWeek.length, "check", "-", "teal")}</div>
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Critical Results</h3><p>Verified or released results containing structured critical values.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${table(["Patient", "Laboratory Test", "Result", "Reference Range", "Released", "Action"], criticalRows, "Critical results")}</section>
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Recent Patient Results</h3><p>Latest verified and released results available for clinical review.</p></div></div>${table(["Result", "Patient", "Test & Facility", "Status", "Action"], resultRows, "Recent results")}</section>`;
   }
 
   function renderPatients(role = currentUser.role) {
@@ -1339,11 +1461,25 @@
   }
 
   function renderLabDashboard() {
-    const orderRows = state.data.orders.slice(0, previewLimit()).map((order) => [h(order.orderNumber), h(order.patientName), h(order.tests), badge(order.priority), badge(order.status), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">Process</button>`]);
-    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.patientName), h(result.testName), badge(result.status), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const orders = state.data.orders || [];
+    const results = state.data.results || [];
+    const now = new Date();
+    const todayKey = now.toLocaleDateString("en-CA");
+    const delayed = orders.filter((order) => !["Released", "Rejected", "Cancelled"].includes(order.status) && now - new Date(order.createdAt) > 48 * 3600000);
+    const critical = results.filter((result) => (result.values || []).some((value) => String(value.flag).toLowerCase() === "critical"));
+    const priorityOrders = [...orders].filter((order) => !["Released", "Rejected", "Cancelled"].includes(order.status)).sort((a, b) => {
+      const score = (order) => (order.priority === "Priority" || order.priority === "Urgent" ? 2 : 0) + (delayed.includes(order) ? 1 : 0);
+      return score(b) - score(a) || new Date(a.createdAt) - new Date(b.createdAt);
+    });
+    const orderRows = priorityOrders.slice(0, Math.max(previewLimit(), 6)).map((order) => [h(order.orderNumber), `<span class="cell-strong">${h(order.patientName)}</span><span class="cell-sub">${h(order.patientCode)}</span>`, h(order.tests), badge(order.priority), badge(delayed.includes(order) ? "Delayed" : order.status), shortDateTime(order.createdAt), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">Process</button>`]);
+    const pendingResults = results.filter((result) => result.status === "Pending Review");
+    const resultRows = pendingResults.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.orderNumber), `<span class="cell-strong">${h(result.patientName)}</span><span class="cell-sub">${h(result.patientCode)}</span>`, h(result.testName), shortDateTime(result.updatedAt || result.createdAt), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const issueRows = orders.filter((order) => order.status === "Rejected" || /recollect|new sample|repeat sample/i.test(String(order.latestUpdate || ""))).slice(0, previewLimit()).map((order) => [h(order.orderNumber), h(order.patientCode), h(order.tests), badge(order.status === "Rejected" ? "Rejected" : "Pending Sample"), h(order.latestUpdate || "Specimen requires attention"), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
     return `${heading(...pageMeta["Laboratory Staff"].dashboard)}
-      <div class="stats-grid">${dashboardStats()}</div>
-      <div class="lab-dashboard-grid"><section>${table(["Request No.", "Patient", "Tests", "Priority", "Status", "Action"], orderRows, "Assigned laboratory requests")}</section><div class="lab-side-stack">${donutCard("Assigned Request Status", state.data.reports.ordersByStatus, "Requests")}${table(["Result", "Request", "Patient", "Test", "Status", "Action"], resultRows, "Recent result records")}</div></div>`;
+      <div class="stats-grid role-dashboard-stats">${stat("Assigned Today", orders.filter((order) => new Date(order.createdAt).toLocaleDateString("en-CA") === todayKey).length, "orders")}${stat("Awaiting Collection", orders.filter((order) => ["Pending", "Pending Sample", "Accepted"].includes(order.status)).length, "clock", "-", "orange")}${stat("Processing", orders.filter((order) => ["Sample Collected", "Processing", "In Progress"].includes(order.status)).length, "activity", "-", "blue")}${stat("Awaiting Verification", pendingResults.length, "review", "-", "orange")}${stat("Critical Results", critical.length, "alert", "-", "red")}${stat("Delayed Requests", delayed.length, "clock", "-", "red")}</div>
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Priority Work Queue</h3><p>Urgent and delayed requests are listed first.</p></div><button class="card-link" type="button" data-go-page="queue">Open full queue</button></div>${table(["Request No.", "Patient", "Tests", "Priority", "Status", "Received", "Action"], orderRows, "Assigned laboratory requests")}</section>
+      <div class="role-dashboard-split"><section class="role-dashboard-section"><div class="section-heading"><div><h3>Awaiting Verification</h3><p>Uploaded results ready for laboratory review.</p></div></div>${table(["Result", "Request", "Patient", "Test", "Updated", "Action"], resultRows, "Results awaiting verification")}</section><section class="card attention-card"><div class="card-head"><div><h3 class="card-title">Current Workload</h3><p class="card-subtitle">Open requests by assigned facility.</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByFacility)}</div></section></div>
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Specimen Issues</h3><p>Rejected samples and requests that mention recollection.</p></div></div>${table(["Request", "Patient ID", "Tests", "Status", "Latest Update", "Action"], issueRows, "Specimen issues")}</section>`;
   }
 
   function renderLabUpload() {
@@ -1371,11 +1507,6 @@
       <div class="result-review-sections"><section><h3>Pending Review</h3>${table(columns, pendingRows, "No results are waiting for verification.")}</section><section><h3>Verified Results</h3>${table(columns, verifiedRows, "No verified results are waiting for release.")}</section><section><h3>Released and Rejected Results</h3>${table(columns, completedRows, "No completed result records.")}</section></div>`;
   }
 
-  function renderLabOperations() {
-    return `${heading(...pageMeta["Laboratory Staff"].operations)}
-      <div class="operations-layout"><section class="card"><div class="card-head"><div><h3 class="card-title">Facility Workload</h3><p class="card-subtitle">Open work by assigned facility.</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByFacility)}</div></section><section class="card"><div class="card-head"><div><h3 class="card-title">Operational Tasks</h3><p class="card-subtitle">Generated from current database queue</p></div></div><div class="card-body task-list">${state.data.orders.slice(0, previewLimit()).map((order) => `<div class="task-item"><span class="check">${icon("check")}</span><div><strong>${h(order.orderNumber)} - ${h(order.tests)}</strong><span>${h(order.patientName)} at ${h(order.facilityName)}</span></div><time>${h(order.status)}</time></div>`).join("") || '<div class="empty-state">No active tasks.</div>'}</div></section></div>`;
-  }
-
   function renderLabFacilities() {
     const cards = state.data.facilities.map((facility) => `<article class="card facility-card"><div class="facility-card-cover"><span class="facility-mini-icon">${icon("facility")}</span></div><div class="facility-card-body"><h3>${h(facility.name)}</h3><p class="facility-address">${h(facility.address)}</p><div class="facility-contact"><span>${icon("phone")} ${h(facility.phone)}</span><span>${icon("mail")} ${h(facility.email || "-")}</span></div><div class="facility-metrics"><div class="facility-metric"><strong>${h(facility.activeOrders)}</strong><span>Open requests</span></div><div class="facility-metric"><strong>${h(facility.activeTests)}</strong><span>Active tests</span></div></div>${badge(facility.status)}</div></article>`).join("");
     return `${heading(...pageMeta["Laboratory Staff"].facilities)}<div class="facilities-card-grid">${cards || '<section class="card"><div class="empty-state">No assigned facilities.</div></section>'}</div>`;
@@ -1390,12 +1521,23 @@
   }
 
   function renderPatientDashboard() {
-    const orderRows = state.data.orders.slice(0, previewLimit()).map((order) => [h(order.orderNumber), h(order.tests), h(order.facilityName), badge(order.status), shortDate(order.createdAt), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
-    const resultRows = state.data.results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.orderNumber), h(result.testName), badge(result.status), shortDateTime(result.releasedAt), `<button class="btn btn-primary btn-sm" data-drawer="result" data-id="${result.id}">View Result</button>`]);
+    const orders = state.data.orders || [];
+    const results = state.data.results || [];
+    const activeOrders = orders.filter((order) => !["Released", "Rejected", "Cancelled"].includes(order.status));
+    const currentOrder = activeOrders[0] || orders[0] || null;
+    const stages = ["Requested", "Sample Collected", "Processing", "Verification", "Available"];
+    const stageForStatus = { Pending: 0, "Pending Sample": 0, Accepted: 0, "Sample Collected": 1, Processing: 2, "In Progress": 2, "Result Uploaded": 3, "Pending Review": 3, Verified: 3, Released: 4 };
+    const currentStage = currentOrder ? (stageForStatus[currentOrder.status] ?? 0) : -1;
+    const progress = currentOrder ? `<div class="patient-request-summary"><div><span>Current request</span><strong>${h(currentOrder.orderNumber)}</strong><small>${h(currentOrder.tests)} · ${h(currentOrder.facilityName)}</small></div>${badge(currentOrder.status)}</div><div class="patient-progress" aria-label="Current laboratory request progress">${stages.map((label, index) => `<div class="patient-progress-step ${index < currentStage ? "complete" : index === currentStage ? "current" : ""}"><i></i><span>${h(label)}</span></div>`).join("")}</div><p class="patient-latest-update">${h(currentOrder.latestUpdate || "Your laboratory request is being processed.")}</p>` : '<div class="empty-state">You do not have any laboratory requests yet.</div>';
+    const actionItems = activeOrders.filter((order) => ["Pending", "Pending Sample", "Rejected"].includes(order.status) || /recollect|new sample|repeat sample/i.test(String(order.latestUpdate || ""))).slice(0, 4);
+    const orderRows = orders.slice(0, previewLimit()).map((order) => [h(order.orderNumber), h(order.tests), h(order.facilityName), badge(order.status), shortDate(order.createdAt), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
+    const resultRows = results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.testName), h(result.facilityName), shortDateTime(result.releasedAt), `<button class="btn btn-primary btn-sm" data-drawer="result" data-id="${result.id}">View Result</button>`]);
     return `${heading(...pageMeta.Patient.dashboard)}
-      <div class="privacy-banner">${icon("shield")} You are viewing only records linked to patient ID ${h(currentUser.patientProfileId)}.</div>
-      <div class="stats-grid">${dashboardStats()}</div>
-      <div class="patient-dashboard-grid"><section>${table(["Request No.", "Tests", "Facility", "Status", "Date", "Action"], orderRows, "Your recent laboratory requests")}</section><div class="patient-side-stack">${donutCard("My Request Status", state.data.reports.ordersByStatus, "Requests")}<section>${table(["Result ID", "Request No.", "Test", "Status", "Released", "Action"], resultRows, "Released results only")}</section></div></div>`;
+      <div class="stats-grid patient-summary-stats">${stat("Active Requests", activeOrders.length, "orders")}${stat("Processing", orders.filter((order) => ["Sample Collected", "Processing", "In Progress", "Result Uploaded", "Pending Review"].includes(order.status)).length, "activity", "-", "blue")}${stat("Results Available", results.length, "results", "-", "green")}${stat("Completed Requests", orders.filter((order) => order.status === "Released").length, "check", "-", "teal")}</div>
+      <section class="card patient-current-request"><div class="card-head"><div><h3 class="card-title">Current Request Status</h3><p class="card-subtitle">Follow your latest laboratory request from submission to availability.</p></div></div><div class="card-body">${progress}</div></section>
+      <div class="patient-dashboard-priority"><section class="role-dashboard-section"><div class="section-heading"><div><h3>Available Results</h3><p>Only verified and released results linked to your patient profile are shown.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${table(["Result ID", "Test", "Facility", "Released", "Action"], resultRows, "Available laboratory results")}</section><section class="card patient-action-card"><div class="card-head"><div><h3 class="card-title">Required Actions</h3><p class="card-subtitle">Steps needed to keep your requests moving.</p></div></div><div class="card-body patient-action-list">${actionItems.length ? actionItems.map((order) => `<button type="button" data-drawer="order" data-id="${order.id}"><strong>${h(order.status === "Rejected" ? "Contact the laboratory" : "Sample collection required")}</strong><span>${h(order.orderNumber)} · ${h(order.latestUpdate || order.tests)}</span></button>`).join("") : '<div class="empty-state">No action is required from you right now.</div>'}</div></section></div>
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Recent Laboratory Requests</h3><p>Your latest requests and their current status.</p></div></div>${table(["Request No.", "Tests", "Facility", "Status", "Date", "Action"], orderRows, "Recent laboratory requests")}</section>
+      <div class="privacy-banner privacy-banner-compact">${icon("shield")} Only records linked to patient ID ${h(currentUser.patientProfileId)} are visible in this portal.</div>`;
   }
 
   function renderPatientProfile() {
@@ -1413,7 +1555,7 @@
   const renderers = {
     Admin: { dashboard: renderAdminDashboard, users: renderUsers, facilities: renderFacilities, tests: renderTests, orders: () => renderOrders("Admin"), results: () => renderResults("Admin"), reports: renderReports, audit: renderAudit, notifications: () => renderNotifications("Admin"), maintenance: renderAdminMaintenance, profile: renderAdminProfile, settings: renderAdminSettings },
     Doctor: { dashboard: renderDoctorDashboard, patients: () => renderPatients("Doctor"), facilities: renderDoctorFacilities, tests: renderDoctorTests, "create-order": renderCreateOrder, orders: () => renderOrders("Doctor"), results: () => renderResults("Doctor"), notifications: () => renderNotifications("Doctor"), profile: renderDoctorProfile, settings: renderDoctorSettings },
-    "Laboratory Staff": { dashboard: renderLabDashboard, orders: () => renderOrders("Laboratory Staff"), upload: renderLabUpload, review: renderLabReview, operations: renderLabOperations, facilities: renderLabFacilities, queue: () => renderOrders("Laboratory Staff", "queue"), notifications: () => renderNotifications("Laboratory Staff"), profile: renderLabProfile, settings: renderLabSettings },
+    "Laboratory Staff": { dashboard: renderLabDashboard, orders: () => renderOrders("Laboratory Staff"), upload: renderLabUpload, review: renderLabReview, facilities: renderLabFacilities, queue: () => renderOrders("Laboratory Staff", "queue"), notifications: () => renderNotifications("Laboratory Staff"), profile: renderLabProfile, settings: renderLabSettings },
     Patient: { dashboard: renderPatientDashboard, orders: () => renderOrders("Patient"), results: () => renderResults("Patient"), notifications: () => renderNotifications("Patient"), profile: renderPatientProfile, settings: renderPatientSettings },
   };
 
@@ -1431,10 +1573,10 @@
   function pageDataKeys(page) {
     const role = currentUser?.role;
     const map = {
-      dashboard: role === "Admin" ? ["users", "facilities", "notifications", "audit"] : role === "Doctor" ? ["patients", "orders", "results", "notifications"] : role === "Patient" ? ["patients", "orders", "results", "notifications"] : ["orders", "results", "notifications"],
+      dashboard: role === "Admin" ? ["users", "facilities", "tests", "orders", "results", "notifications", "audit"] : role === "Doctor" ? ["patients", "orders", "results", "notifications"] : role === "Patient" ? ["patients", "orders", "results", "notifications"] : ["orders", "results", "notifications"],
       users: ["users", "facilities"], facilities: ["facilities"], tests: ["tests"], patients: ["patients", "facilities"],
       "create-order": ["patients", "availablePatients", "facilities", "tests"], orders: ["orders", "facilities"], queue: ["orders", "facilities"], upload: ["orders", "results"],
-      review: ["results"], results: ["results", "facilities"], operations: ["orders"], reports: ["users", "facilities", "tests", "orders", "results", "notifications"],
+      review: ["results"], results: ["results", "facilities"], reports: ["users", "facilities", "tests", "orders", "results", "notifications"],
       audit: ["audit"], notifications: ["notifications"], profile: role === "Patient" ? ["patients", "results"] : [], settings: [], maintenance: [],
     };
     return map[page] || [];
@@ -1612,7 +1754,7 @@
   }
 
   function validationReportHtml(report) {
-    return `<section class="validation-report" role="status" aria-live="polite"><h3>Result validation</h3>${(report.issues || []).map(issue => `<p class="abnormal">${h(issue)}</p>`).join("")}${report.values.map(value => `<article><strong>${h(value.parameter)}: ${h(value.flag)}</strong><p>${h(value.value)} ${h(value.unit)} &middot; Reference: ${h(value.referenceRange || "Unconfigured")}</p><p>${h(value.validationReason)}</p>${value.validationRule ? `<small>Rule: ${h(value.validationRule.parameter)}. Source: ${h(value.validationRule.source)}${value.validationRule.criticalLow != null ? ` &middot; Critical &le; ${h(value.validationRule.criticalLow)}` : ""}${value.validationRule.criticalHigh != null ? ` &middot; Critical &ge; ${h(value.validationRule.criticalHigh)}` : ""}</small>` : ""}</article>`).join("")}</section>`;
+    return `<section class="validation-report" role="status" aria-live="polite"><h3>Result validation</h3>${(report.issues || []).map(issue => `<p class="abnormal">${h(issue)}</p>`).join("")}${(report.warnings || []).map(warning => `<p class="validation-warning">${h(warning)} The entered values will use strict format checks.</p>`).join("")}${report.values.map(value => `<article><strong>${h(value.parameter)}: ${h(value.flag)}</strong><p>${h(value.value)} ${h(value.unit)} &middot; Reference: ${h(value.referenceRange || "Unconfigured")}</p><p>${h(value.validationReason)}</p>${value.validationRule ? `<small>Rule: ${h(value.validationRule.parameter)}. Source: ${h(value.validationRule.source)}${value.validationRule.criticalLow != null ? ` &middot; Critical &le; ${h(value.validationRule.criticalLow)}` : ""}${value.validationRule.criticalHigh != null ? ` &middot; Critical &ge; ${h(value.validationRule.criticalHigh)}` : ""}</small>` : ""}</article>`).join("")}</section>`;
   }
 
   function showResultValidationErrors(form, report) {
@@ -1991,6 +2133,12 @@
       return;
     }
 
+    const tableSortButton = event.target.closest("[data-table-sort]");
+    if (tableSortButton) {
+      sortTable(tableSortButton);
+      return;
+    }
+
     const tablePageButton = event.target.closest("[data-table-prev], [data-table-next]");
     if (tablePageButton) {
       const card = tablePageButton.closest("[data-paginated-table]");
@@ -2044,6 +2192,17 @@
       $$('[data-rotate-result-image], [data-remove-result-source]', form).forEach((button) => { button.disabled = true; });
       form.dataset.scanRotation = "0";
       updateScannerStatus(form, "Source removed. Choose another file or enter values manually.", null, "idle");
+      return;
+    }
+
+    const reportView = event.target.closest("[data-report-view]");
+    if (reportView) {
+      const url = new URL(location.href);
+      url.searchParams.set("report", reportView.dataset.reportView);
+      url.hash = "reports";
+      history.pushState(null, "", url);
+      setPage("reports", false);
+      $(`[data-report-view="${reportView.dataset.reportView}"]`)?.focus({ preventScroll: true });
       return;
     }
 
@@ -2375,6 +2534,11 @@
   }
 
   async function handleDashboardChange(event) {
+    if (event.target.matches("[data-admin-turnaround-period]")) {
+      state.adminTurnaroundPeriod = event.target.value;
+      setPage("dashboard", false);
+      return;
+    }
     if (event.target.matches('form[data-form="maintenance"] select[name="scope"]')) {
       const form = event.target.closest('form[data-form="maintenance"]');
       $$('[data-maintenance-options]', form).forEach((group) => {
@@ -2663,6 +2827,7 @@
         closeSidebar();
       }
     });
+    window.addEventListener("popstate", () => { if (state.data && currentUser) setPage(location.hash.slice(1), false); });
     window.addEventListener("hashchange", () => {
       if (state.data && currentUser) setPage(location.hash.slice(1), false);
     });

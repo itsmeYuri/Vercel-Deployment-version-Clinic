@@ -1249,7 +1249,7 @@ function app_data($pdo, $user, $page = 'dashboard', $collections = null)
     $role = $user['role'];
     $needs = ['users' => false, 'facilities' => false, 'tests' => false, 'patients' => false, 'orders' => false, 'results' => false, 'notifications' => false, 'audit' => false];
     $pageNeeds = [
-        'dashboard' => $role === 'Admin' ? ['users', 'facilities', 'notifications', 'audit'] : ($role === 'Doctor' ? ['patients', 'orders', 'results', 'notifications'] : ($role === 'Patient' ? ['patients', 'orders', 'results', 'notifications'] : ['orders', 'results', 'notifications'])),
+        'dashboard' => $role === 'Admin' ? ['users', 'facilities', 'tests', 'orders', 'results', 'notifications', 'audit'] : ($role === 'Doctor' ? ['patients', 'orders', 'results', 'notifications'] : ($role === 'Patient' ? ['patients', 'orders', 'results', 'notifications'] : ['orders', 'results', 'notifications'])),
         'users' => ['users', 'facilities'],
         'facilities' => ['facilities'],
         'tests' => ['tests'],

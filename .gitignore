@@ -19,3 +19,5 @@ app/config/local.php
 .test-*.log
 public/uploads/results/*
 !public/uploads/results/.gitkeep
+.vercel
+.env*

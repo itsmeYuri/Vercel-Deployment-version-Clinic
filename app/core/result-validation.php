@@ -62,6 +62,29 @@ function clinic_rule_range($rule)
     return $rule['minimum'] . ' - ' . $rule['maximum'];
 }
 
+function clinic_validate_unconfigured_value($value)
+{
+    $errors = [];
+    $rawValue = trim((string) ($value['value'] ?? ''));
+    $unit = trim((string) ($value['unit'] ?? ''));
+    $range = trim((string) ($value['referenceRange'] ?? ''));
+    $qualitative = ['positive', 'negative', 'detected', 'not detected', 'reactive', 'non-reactive', 'normal', 'abnormal', 'trace'];
+
+    if (!clinic_number($rawValue) && !in_array(strtolower($rawValue), $qualitative, true)) {
+        $errors[] = 'Enter a finite number or an approved qualitative value.';
+    }
+    if ($unit === '' || !preg_match('/^[A-Za-z0-9µμ%°×x^\.\/\-*]+$/u', $unit) || (strlen($unit) === 1 && !in_array($unit, ['%', '1'], true))) {
+        $errors[] = 'Enter a recognized laboratory unit.';
+    }
+    $normalizedRange = preg_replace('/[\x{2012}\x{2013}\x{2014}\x{2212}]/u', '-', $range);
+    $numericRange = preg_match('/^\s*(?:[<>]=?\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)|[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s+-\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)|[+-]?(?:\d+(?:\.\d*)?|\.\d+)-[+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*$/', $normalizedRange);
+    $textRange = in_array(strtolower($range), $qualitative, true);
+    if (!$numericRange && !$textRange) {
+        $errors[] = 'Use a numeric interval such as 4.0–11.0, a limit such as <5.0, or an approved qualitative reference.';
+    }
+    return $errors;
+}
+
 function clinic_evaluate_values($values, $rules)
 {
     $rows = []; $issues = []; $seen = []; $byName = [];
@@ -74,7 +97,10 @@ function clinic_evaluate_values($values, $rules)
         $seen[$name] = true;
         $matches = $byName[$name] ?? [];
         $rule = count($matches) === 1 ? $matches[0] : null;
-        if (!$rule) $reasons[] = count($matches) > 1 ? 'Multiple ordered tests define this parameter. Resolve the conflicting rules before submission.' : 'No approved rule for this parameter in the ordered tests.';
+        if (!$rule) {
+            if (count($matches) > 1) $reasons[] = 'Multiple ordered tests define this parameter. Resolve the conflicting rules before submission.';
+            else $reasons = array_merge($reasons, clinic_validate_unconfigured_value($value));
+        }
         if ($rule) {
             if (trim($value['unit']) !== $rule['unit']) $reasons[] = 'Expected unit: ' . ($rule['unit'] ?: '(none)') . '.';
             if ($rule['type'] === 'numeric') {
@@ -94,7 +120,7 @@ function clinic_evaluate_values($values, $rules)
         }
         if ($reasons) $flag = 'Invalid Entry';
         $value['flag'] = $flag;
-        $value['validationReason'] = $reasons ? implode(' ', $reasons) : ($flag === 'Critical' ? 'Meets an inclusive critical threshold; professional review is required.' : ($flag === 'Low' ? 'Below the approved reference interval.' : ($flag === 'High' ? 'Above the approved reference interval.' : 'Meets the configured rule.')));
+        $value['validationReason'] = $reasons ? implode(' ', $reasons) : (!$rule ? 'Format checks passed. No approved parameter rule is configured for this ordered request; compare it with the source report before confirmation.' : ($flag === 'Critical' ? 'Meets an inclusive critical threshold; professional review is required.' : ($flag === 'Low' ? 'Below the approved reference interval.' : ($flag === 'High' ? 'Above the approved reference interval.' : 'Meets the configured rule.'))));
         $value['validationRule'] = $rule;
         $rows[] = $value;
     }
@@ -112,10 +138,12 @@ function clinic_order_validation($pdo, $orderId, $values)
         if (!$testRules) $missing[] = 'Administrator must configure approved rules for ' . $test['test_name'] . '.';
         $rules = array_merge($rules, $testRules);
     }
-    if (!$tests) $missing[] = 'The request has no test definitions.';
     $report = clinic_evaluate_values($values, $rules);
-    $report['issues'] = array_merge($missing, $report['issues']);
-    $report['valid'] = $report['valid'] && !$missing;
+    if (!$tests) {
+        $report['issues'][] = 'The request has no test definitions.';
+        $report['valid'] = false;
+    }
+    $report['warnings'] = $missing;
     $report['validatedAt'] = date(DATE_ATOM);
     return $report;
 }

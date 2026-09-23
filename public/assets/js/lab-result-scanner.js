@@ -43,7 +43,7 @@
   ];
 
   const numberPattern = "[<>]?\\s*[-+]?(?:\\d+(?:[.,]\\d+)?|[.,]\\d+)";
-  const unitPattern = /(?:x?\s*10\s*[\^"']?\s*\d+\s*\/\s*[a-zµμ]+|g\/dL|g\/L|mg\/dL|mg\/L|mmol\/L|µmol\/L|umol\/L|mEq\/L|mIU\/L|U\/L|IU\/L|ng\/mL|pg\/mL|cells\/µL|cells\/uL|\/µL|\/uL|mm\/hr|fL|pg|%)/i;
+  const unitPattern = /(?:x?\s*10\s*[\^"']?\s*\d+\s*\/\s*[a-zµμ]+|g\/dL|g\/L|mg\/dL|mg\/L|mmol\/L|µmol\/L|umol\/L|mEq\/L|mIU\/L|U\/L|IU\/L|ng\/mL|pg\/mL|cells\/µL|cells\/uL|\/µL|\/uL|mm\/hr|fL|pH|pg|%)/i;
 
   function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -210,11 +210,6 @@
       if (/x\s*10[^\s/]*[%°][^\s/]*\s*\//i.test(result.sourceLine)) {
         result.unit = "";
         warnings.push("Unit was unclear; check the source image.");
-      }
-      const inferred = inferredFlag(result.value, result.referenceRange);
-      if (result.flag === "Normal" && inferred && inferred !== "Normal") {
-        result.referenceRange = "";
-        warnings.push("Reference range conflicts with the printed flag; check the source image.");
       }
       return warnings.length ? { ...result, reviewWarnings: warnings } : result;
     });

@@ -42,6 +42,14 @@ assert.equal(scanner.inferredFlag("3.2", "4.0-5.5"), "Low");
 const ocrPunctuation = scanner.parse('WBC 7.1 x10"9/L 4.5-11.0');
 assert.equal(ocrPunctuation.values[0].unit, "x10^9/L");
 
+const requestedPanel = scanner.parse(`
+Hemoglobin A1c 5.4 % 4.0 - 5.6 Normal
+Urine pH 6.0 pH 4.5 - 8.0 Normal
+CRP 2.6 mg/L < 10.0 Normal
+`);
+assert.equal(requestedPanel.values.length, 3);
+assert.ok(requestedPanel.values.every((row) => !row.reviewWarnings?.includes("Reference range conflicts with the printed flag; check the source image.")));
+
 const reportLayout = scanner.parse(`
 FINDINGS SUMMARY
 Complete blood count values are within the expected ranges.
