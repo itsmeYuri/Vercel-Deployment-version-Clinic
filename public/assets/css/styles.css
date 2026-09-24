@@ -3762,6 +3762,8 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
 .data-table .clickable-row { cursor: pointer; }
 .data-table .clickable-row:focus-visible { outline: 3px solid rgba(8, 163, 148, .35); outline-offset: -3px; }
 .data-table .clickable-row:hover { background: var(--teal-50); box-shadow: inset 3px 0 0 var(--teal-500); }
+.lab-app .role-dashboard-split,
+.reports-workspace .report-overview .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
 .stacked-tables, .result-review-sections { display: grid; gap: 22px; }
 .stacked-tables > section > h3, .result-review-sections > section > h3 { margin: 0 0 10px; color: var(--navy); }
 .lab-dashboard-grid, .patient-dashboard-grid, .upload-layout { grid-template-columns: minmax(0, 1fr); }

@@ -755,19 +755,22 @@
 
   function table(headers, rows, footer = "") {
     const clean = (value) => String(value).replace(/<[^>]*>/g, "");
-    const prepared = rows.map((cells) => {
+    const prepared = rows.map((entry) => {
+      const cells = Array.isArray(entry) ? entry : entry.cells;
       const last = String(cells[cells.length - 1] || "");
-      const opener = last.match(/^\s*<button[^>]*data-drawer="([^"]+)"[^>]*data-id="([^"]+)"[^>]*>.*<\/button>\s*$/s);
+      const opener = last.match(/data-drawer="([^"]+)"[^>]*data-id="([^"]+)"/s);
       const openOnly = Boolean(opener && /^(Action|Actions)$/i.test(clean(headers[headers.length - 1] || "")) && /^(View(?: Result)?|Review|Process)$/i.test(clean(last).trim()));
       const date = cells.join(" ").match(/<time[^>]*datetime="([^"]+)"/)?.[1] || "";
-      return { cells, opener, openOnly, date };
+      return { cells, opener, openOnly, date, goPage: Array.isArray(entry) ? "" : entry.goPage || "" };
     });
     const removeOpenColumn = prepared.length > 0 && prepared.every((row) => row.openOnly);
     const visibleHeaders = removeOpenColumn ? headers.slice(0, -1) : headers;
     const body = rows.length
       ? prepared.map((row) => {
         const cells = removeOpenColumn ? row.cells.slice(0, -1) : row.cells;
-        const attributes = row.opener ? ` class="clickable-row" data-drawer="${h(row.opener[1])}" data-id="${h(row.opener[2])}" role="button" tabindex="0" aria-label="Open record details"` : "";
+        const attributes = row.opener
+          ? ` class="clickable-row" data-drawer="${h(row.opener[1])}" data-id="${h(row.opener[2])}" role="button" tabindex="0" aria-label="Open record details"`
+          : row.goPage ? ` class="clickable-row" data-go-page="${h(row.goPage)}" role="link" tabindex="0" aria-label="Open ${h(row.goPage)} page"` : "";
         return `<tr${attributes}${row.date ? ` data-table-date="${h(row.date.slice(0, 10))}"` : ""}>${cells.map((cell, index) => `<td data-label="${h(clean(visibleHeaders[index]))}">${cell}</td>`).join("")}</tr>`;
       }).join("")
       : `<tr><td colspan="${visibleHeaders.length}"><div class="empty-state">No records found.</div></td></tr>`;
@@ -889,6 +892,10 @@
 
   function utilizationTrendChart(analytics) {
     return window.ClinicReportCharts.timeline(analytics.buckets || [], [{key: "patients", label: "Patients"}, {key: "requests", label: "Requests"}, {key: "tests", label: "Tests"}], {title: "Laboratory utilization over time"});
+  }
+
+  function filteredTable(headers, rows, footer, placeholder, selects = [], options = {}) {
+    return `<div class="table-filter-scope">${filters(placeholder, selects, "", options)}${table(headers, rows, footer)}</div>`;
   }
 
   function utilizationAnalyticsSection() {
@@ -1203,14 +1210,14 @@
     const criticalRows = criticalResults.slice(0, previewLimit()).map((result) => {
       const value = firstValue(result) || {};
       const measured = [value.value, value.unit].filter(Boolean).join(" ") || "Flagged value";
-      return [h(result.patientName), h(result.patientCode), h(value.parameter || result.testName), `<strong class="critical-value">${h(measured)}</strong>`, h(value.referenceRange || "Not provided"), badge("Critical"), shortDateTime(resultTime(result)), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">View Result</button>`];
+      return [identity(result.patientName, result.patientCode), h(value.parameter || result.testName), `<strong class="critical-value">${h(measured)}</strong>`, h(value.referenceRange || "Not provided"), badge("Critical"), `<time datetime="${h(resultTime(result))}">${shortDateTime(resultTime(result))}</time>`, `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">View Result</button>`];
     });
     const recentRows = results.slice(0, Math.max(previewLimit(), 6)).map((result) => {
       const value = firstValue(result);
       const isCritical = criticalValues(result).length > 0;
       const displayStatus = isCritical ? "Critical" : result.status === "Pending Review" ? "Pending Verification" : result.status;
       const measured = value ? [value.value, value.unit].filter(Boolean).join(" ") : (result.findings || "Available");
-      return [shortDateTime(resultTime(result)), `<span class="cell-strong">${h(result.patientName)}</span><span class="cell-sub">${h(result.patientCode)}</span>`, h(result.testName), h(departmentFor(result.testName)), `<span class="cell-wrap">${h(measured)}</span>`, badge(displayStatus), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">${result.status === "Pending Review" ? "Review" : "View"}</button>`];
+      return [`<time datetime="${h(resultTime(result))}">${shortDateTime(resultTime(result))}</time>`, `<span class="cell-strong">${h(result.patientName)}</span><span class="cell-sub">${h(result.patientCode)}</span>`, h(result.testName), h(departmentFor(result.testName)), `<span class="cell-wrap">${h(measured)}</span>`, badge(displayStatus), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">${result.status === "Pending Review" ? "Review" : "View"}</button>`];
     });
     const now = new Date();
     const periodDays = state.adminTurnaroundPeriod === "today" ? 1 : state.adminTurnaroundPeriod === "month" ? 30 : 7;
@@ -1255,8 +1262,8 @@
     ];
     return `${heading(...pageMeta.Admin.dashboard, `<button class="btn btn-secondary" data-go-page="audit">${icon("audit")} Audit Trail</button><button class="btn btn-primary" data-drawer="user">${icon("plus")} New User</button>`)}
       <div class="stats-grid admin-lab-stats">${stat("Laboratory Requests Today", todaysOrders.length, "orders", "-", "teal")}${stat("Pending Results", pendingResults.length, "clock", "-", "orange")}${stat("Awaiting Verification", awaitingVerification.length, "review", "-", "orange")}${stat("Completed Results", completedResults.length, "check", "-", "green")}${stat("Critical Results", criticalResults.length, "alert", "-", "red")}${stat("Average Turnaround Time", durationLabel(averageMinutes), "activity", "-", "blue")}</div>
-      <section class="dashboard-section critical-results-section"><div class="section-heading"><div><h3>${icon("alert")} Critical Results</h3><p>Structured result values flagged as critical and requiring prompt review.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${table(["Patient", "Patient ID", "Laboratory Test", "Result", "Reference Range", "Status", "Time", "Action"], criticalRows, "Critical laboratory results")}</section>
-      <section class="dashboard-section"><div class="section-heading"><div><h3>Recent Laboratory Results</h3><p>Latest result activity across all connected facilities.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${table(["Time", "Patient", "Laboratory Test", "Department", "Result", "Status", "Action"], recentRows, "Recent laboratory results")}</section>
+      <section class="dashboard-section critical-results-section"><div class="section-heading"><div><h3>${icon("alert")} Critical Results</h3><p>Structured result values flagged as critical and requiring prompt review.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${filteredTable(["Patient", "Laboratory Test", "Result", "Reference Range", "Status", "Time", "Action"], criticalRows, "Critical laboratory results", "Search patient, test, or result", [["All statuses", ["Critical"]]], { dates: true })}</section>
+      <section class="dashboard-section"><div class="section-heading"><div><h3>Recent Laboratory Results</h3><p>Latest result activity across all connected facilities.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${filteredTable(["Time", "Patient", "Laboratory Test", "Department", "Result", "Status", "Action"], recentRows, "Recent laboratory results", "Search patient, test, or department", [["All statuses", [...new Set(results.map((result) => result.status))]]], { dates: true })}</section>
       <div class="laboratory-analytics-grid"><section class="card turnaround-card"><div class="card-head"><div><h3 class="card-title">Laboratory Turnaround Time</h3><p class="card-subtitle">Average request-to-verification time by weekday.</p></div><label class="compact-select"><span class="sr-only">Turnaround period</span>${select("turnaroundPeriod", [{ value: "today", label: "Today" }, { value: "week", label: "This Week" }, { value: "month", label: "This Month" }], state.adminTurnaroundPeriod, "data-admin-turnaround-period")}</label></div><div class="card-body">${turnaroundChart}</div></section><section class="card department-card"><div class="card-head"><div><h3 class="card-title">Laboratory Department Activity</h3><p class="card-subtitle">Workload derived from current laboratory requests.</p></div>${icon("test")}</div><div class="card-body department-list">${departmentHtml}</div></section></div>
       <section class="card attention-card dashboard-attention-full"><div class="card-head"><div><h3 class="card-title">Requires Attention</h3><p class="card-subtitle">Items that may need administrator or laboratory staff action.</p></div>${icon("alert")}</div><div class="card-body attention-list">${attentionItems.map(([count, label, page, tone, iconName]) => `<button type="button" class="attention-item attention-${tone}" data-go-page="${page}"><span>${icon(iconName)}</span><strong>${h(count)}</strong><small>${h(label)}</small>${icon("arrow")}</button>`).join("")}</div></section>`;
   }
@@ -1306,17 +1313,17 @@
 
   const reportViews = [["trends", "Trend Analysis"], ["utilization", "Laboratory Utilization"], ["forecast", "Laboratory Demand Forecast"], ["overview", "Activity Summary"]];
   function renderReports() {
-    const facilityRows = Object.entries(state.data.reports.ordersByFacility || {}).map(([facility, count]) => [h(facility), h(count), `${Math.round((count / Math.max(1, state.data.orders.length)) * 100)}%`]);
-    const testRows = Object.entries(state.data.reports.topTests || {}).map(([test, count]) => [h(test), h(count), badge(count > 1 ? "Active" : "Pending")]);
+    const facilityRows = Object.entries(state.data.reports.ordersByFacility || {}).map(([facility, count]) => ({ cells: [h(facility), h(count), `${Math.round((count / Math.max(1, state.data.orders.length)) * 100)}%`], goPage: "facilities" }));
+    const testRows = Object.entries(state.data.reports.topTests || {}).map(([test, count]) => ({ cells: [h(test), h(count), badge(count > 1 ? "Active" : "Pending")], goPage: "tests" }));
     const requestedView = new URLSearchParams(location.search).get("report");
     const activeView = reportViews.some(([key]) => key === requestedView) ? requestedView : "trends";
     const navigation = `<nav class="report-navigation" aria-label="Statistics reports">${reportViews.map(([key, label]) => `<button type="button" data-report-view="${key}" aria-current="${key === activeView ? 'page' : 'false'}">${h(label)}</button>`).join("")}</nav>`;
-    const reportBody = activeView === "trends" ? trendAnalysisSection() : activeView === "utilization" ? utilizationAnalyticsSection() : activeView === "forecast" ? forecastingAnalysisSection() : `<div class="report-overview"><h2>Activity Summary</h2><p>Current request and result status across the clinic.</p><div class="stats-grid stats-eight">${dashboardStats()}</div><div class="charts-pair">${donutCard("Requests by Status", state.data.reports.ordersByStatus, "Requests")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div><div class="dashboard-grid">${table(["Facility", "Requests", "Share"], facilityRows, "Requests per facility")}${table(["Requested Test", "Count", "Status"], testRows, "Most requested tests")}</div></div>`;
+    const reportBody = activeView === "trends" ? trendAnalysisSection() : activeView === "utilization" ? utilizationAnalyticsSection() : activeView === "forecast" ? forecastingAnalysisSection() : `<div class="report-overview"><h2>Activity Summary</h2><p>Current request and result status across the clinic.</p><div class="stats-grid stats-eight">${dashboardStats()}</div><div class="charts-pair">${donutCard("Requests by Status", state.data.reports.ordersByStatus, "Requests")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div><div class="dashboard-grid">${filteredTable(["Facility", "Requests", "Share"], facilityRows, "Requests per facility", "Search facility")}${filteredTable(["Requested Test", "Count", "Status"], testRows, "Most requested tests", "Search laboratory test", [["All statuses", ["Active", "Pending"]]])}</div></div>`;
     return `<div class="reports-workspace"><div class="reports-toolbar">${navigation}<button class="btn btn-secondary report-export" type="button" data-download>${icon("download")} Export report</button></div><div id="report-view">${reportBody}</div></div>`;
   }
 
   function renderAudit() {
-    const rows = state.data.audit.map((item) => [shortDateTime(item.createdAt), person(item.userName, item.role), badge(item.action), h(item.module), `<span class="cell-wrap">${h(item.details)}</span>`, h(item.ipAddress)]);
+    const rows = state.data.audit.map((item) => [`<time datetime="${h(item.createdAt)}">${shortDateTime(item.createdAt)}</time>`, person(item.userName, item.role), badge(item.action), h(item.module), `<span class="cell-wrap">${h(item.details)}</span>`, h(item.ipAddress)]);
     return `${heading(...pageMeta.Admin.audit)}
       ${filters("Search user, details, module, or IP", [["All users", [...new Set(state.data.audit.map((a) => a.userName))]], ["All modules", [...new Set(state.data.audit.map((a) => a.module))]], ["All actions", [...new Set(state.data.audit.map((a) => a.action))]]], "", { dates: true })}
       ${table(["Time", "User", "Action", "Module", "Details", "IP"], rows)}`;
@@ -1400,6 +1407,7 @@
     startOfWeek.setHours(0, 0, 0, 0);
     startOfWeek.setDate(startOfWeek.getDate() - ((startOfWeek.getDay() + 6) % 7));
     const releasedThisWeek = results.filter((result) => result.releasedAt && new Date(result.releasedAt) >= startOfWeek);
+    const patientRows = state.data.patients.slice(0, Math.max(previewLimit(), 6)).map((patient) => [identity(patient.name, patient.patientCode, patient.email, patient.avatar), `<time datetime="${h(patient.dateOfBirth || "")}">${h(patient.dateOfBirth || "No birth date")}</time><span class="cell-sub">${h(patient.sex || "Not recorded")}</span>`, h(patient.primaryFacility || "-"), badge(patient.latestStatus || "Pending"), `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
     const criticalRows = criticalResults.slice(0, previewLimit()).map((result) => {
       const value = (result.values || []).find((item) => String(item.flag).toLowerCase() === "critical") || {};
       return [identity(result.patientName, result.patientCode), h(value.parameter || result.testName), `<strong class="critical-value">${h([value.value, value.unit].filter(Boolean).join(" ") || "Flagged")}</strong>`, h(value.referenceRange || "Not provided"), shortDateTime(result.releasedAt || result.verifiedAt || result.updatedAt), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`];
@@ -1407,8 +1415,9 @@
     const resultRows = results.slice(0, previewLimit()).map((result) => [`<span class="cell-strong">${h(result.resultNumber)}</span><span class="cell-sub">${h(result.orderNumber)}</span>`, identity(result.patientName, result.patientCode), `<span class="cell-strong">${h(result.testName)}</span><span class="cell-sub">${h(result.facilityName)}</span>`, badge(result.status), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
     return `${heading(...pageMeta.Doctor.dashboard, `<button class="btn btn-secondary" data-go-page="results">${icon("results")} Results</button><button class="btn btn-primary" data-go-page="create-order">${icon("plus")} New Laboratory Request</button>`)}
       <div class="stats-grid role-dashboard-stats">${stat("Active Requests", activeOrders.length, "orders")}${stat("Awaiting Sample", orders.filter((order) => ["Pending", "Pending Sample"].includes(order.status)).length, "clock", "-", "orange")}${stat("Results Available", results.length, "results", "-", "green")}${stat("Critical Results", criticalResults.length, "alert", "-", "red")}${stat("Patients With Activity", state.data.patients.length, "users", "-", "blue")}${stat("Released This Week", releasedThisWeek.length, "check", "-", "teal")}</div>
-      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Critical Results</h3><p>Verified or released results containing structured critical values.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${table(["Patient", "Laboratory Test", "Result", "Reference Range", "Released", "Action"], criticalRows, "Critical results")}</section>
-      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Recent Patient Results</h3><p>Latest verified and released results available for clinical review.</p></div></div>${table(["Result", "Patient", "Test & Facility", "Status", "Action"], resultRows, "Recent results")}</section>`;
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Patients</h3><p>Patients with laboratory activity, shown before their results.</p></div><button class="card-link" type="button" data-go-page="patients">View all patients</button></div>${filteredTable(["Patient", "DOB & Sex", "Facility", "Status", "Action"], patientRows, "Patients", "Search patient name, ID, or email", [["All genders", ["Female", "Male", "Prefer not to say"]], ["All statuses", [...new Set(state.data.patients.map((patient) => patient.latestStatus))]]], { dates: true })}</section>
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Critical Results</h3><p>Verified or released results containing structured critical values.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${filteredTable(["Patient", "Laboratory Test", "Result", "Reference Range", "Released", "Action"], criticalRows, "Critical results", "Search patient, test, or result", [], { dates: true })}</section>
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Recent Patient Results</h3><p>Latest verified and released results available for clinical review.</p></div></div>${filteredTable(["Result", "Patient", "Test & Facility", "Status", "Action"], resultRows, "Recent results", "Search result, patient, test, or facility", [["All statuses", [...new Set(results.map((result) => result.status))]]])}</section>`;
   }
 
   function renderPatients(role = currentUser.role) {
@@ -1421,15 +1430,15 @@
   }
 
   function renderDoctorFacilities() {
-    const facilityRows = state.data.facilities.map((facility) => [h(facility.name), h(facility.address), h(facility.phone), badge(facility.status), h(facility.activeOrders)]);
+    const facilityRows = state.data.facilities.map((facility) => [h(facility.name), h(facility.address), h(facility.phone), badge(facility.status), h(facility.activeOrders), `<button class="btn btn-secondary btn-sm" data-drawer="facility" data-id="${facility.id}">View</button>`]);
     return `${heading(...pageMeta.Doctor.facilities)}
       <div class="stats-grid">${stat("Facilities", state.data.facilities.length, "facility")}${stat("Active", state.data.facilities.filter((f) => f.status === "Active").length, "check", "-", "green")}${stat("Open Requests", state.data.facilities.reduce((sum, f) => sum + Number(f.activeOrders || 0), 0), "orders", "-", "blue")}</div>
-      ${filters("Search facility name or address", [["All statuses", ["Active", "Inactive"]]])}${table(["Facility", "Address", "Phone", "Status", "Open Requests"], facilityRows)}`;
+      ${filters("Search facility name or address", [["All statuses", ["Active", "Inactive"]]])}${table(["Facility", "Address", "Phone", "Status", "Open Requests", "Action"], facilityRows)}`;
   }
 
   function renderDoctorTests() {
-    const testRows = state.data.tests.map((test) => [`<span class="cell-strong">${h(test.name)}</span><span class="cell-sub">${h(test.code)}</span>`, `<span class="cell-strong">${h(test.category)}</span><span class="cell-sub">${h(test.sampleType)}</span>`, `<span class="cell-strong">${h(test.turnaroundTime)}</span><span class="cell-sub">${money(test.price)}</span>`, badge(test.status)]);
-    return `${heading(...pageMeta.Doctor.tests)}<div class="stats-grid">${stat("Tests", state.data.tests.length, "test")}${stat("Active", state.data.tests.filter((t) => t.status === "Active").length, "check", "-", "green")}${stat("Categories", new Set(state.data.tests.map((t) => t.category)).size, "chart", "-", "blue")}${stat("Fastest TAT", state.data.tests[0]?.turnaroundTime || "-", "clock", "-", "orange")}</div>${filters("Search test name or code", [["All categories", [...new Set(state.data.tests.map((t) => t.category))]], ["All samples", [...new Set(state.data.tests.map((t) => t.sampleType))]], ["All statuses", ["Active", "Inactive"]]])}${table(["Test", "Category & Sample", "Turnaround & Price", "Status"], testRows)}`;
+    const testRows = state.data.tests.map((test) => [`<span class="cell-strong">${h(test.name)}</span><span class="cell-sub">${h(test.code)}</span>`, `<span class="cell-strong">${h(test.category)}</span><span class="cell-sub">${h(test.sampleType)}</span>`, `<span class="cell-strong">${h(test.turnaroundTime)}</span><span class="cell-sub">${money(test.price)}</span>`, badge(test.status), `<button class="btn btn-secondary btn-sm" data-drawer="test" data-id="${test.id}">View</button>`]);
+    return `${heading(...pageMeta.Doctor.tests)}<div class="stats-grid">${stat("Tests", state.data.tests.length, "test")}${stat("Active", state.data.tests.filter((t) => t.status === "Active").length, "check", "-", "green")}${stat("Categories", new Set(state.data.tests.map((t) => t.category)).size, "chart", "-", "blue")}${stat("Fastest TAT", state.data.tests[0]?.turnaroundTime || "-", "clock", "-", "orange")}</div>${filters("Search test name or code", [["All categories", [...new Set(state.data.tests.map((t) => t.category))]], ["All samples", [...new Set(state.data.tests.map((t) => t.sampleType))]], ["All statuses", ["Active", "Inactive"]]])}${table(["Test", "Category & Sample", "Turnaround & Price", "Status", "Action"], testRows)}`;
   }
 
   function renderCreateOrder() {
@@ -1471,15 +1480,15 @@
       const score = (order) => (order.priority === "Priority" || order.priority === "Urgent" ? 2 : 0) + (delayed.includes(order) ? 1 : 0);
       return score(b) - score(a) || new Date(a.createdAt) - new Date(b.createdAt);
     });
-    const orderRows = priorityOrders.slice(0, Math.max(previewLimit(), 6)).map((order) => [h(order.orderNumber), `<span class="cell-strong">${h(order.patientName)}</span><span class="cell-sub">${h(order.patientCode)}</span>`, h(order.tests), badge(order.priority), badge(delayed.includes(order) ? "Delayed" : order.status), shortDateTime(order.createdAt), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">Process</button>`]);
+    const orderRows = priorityOrders.slice(0, Math.max(previewLimit(), 6)).map((order) => [h(order.orderNumber), `<span class="cell-strong">${h(order.patientName)}</span><span class="cell-sub">${h(order.patientCode)}</span>`, h(order.tests), badge(order.priority), badge(delayed.includes(order) ? "Delayed" : order.status), `<time datetime="${h(order.createdAt)}">${shortDateTime(order.createdAt)}</time>`, `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">Process</button>`]);
     const pendingResults = results.filter((result) => result.status === "Pending Review");
-    const resultRows = pendingResults.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.orderNumber), `<span class="cell-strong">${h(result.patientName)}</span><span class="cell-sub">${h(result.patientCode)}</span>`, h(result.testName), shortDateTime(result.updatedAt || result.createdAt), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
+    const resultRows = pendingResults.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.orderNumber), `<span class="cell-strong">${h(result.patientName)}</span><span class="cell-sub">${h(result.patientCode)}</span>`, h(result.testName), `<time datetime="${h(result.updatedAt || result.createdAt)}">${shortDateTime(result.updatedAt || result.createdAt)}</time>`, `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result" data-id="${result.id}">Review</button>`]);
     const issueRows = orders.filter((order) => order.status === "Rejected" || /recollect|new sample|repeat sample/i.test(String(order.latestUpdate || ""))).slice(0, previewLimit()).map((order) => [h(order.orderNumber), h(order.patientCode), h(order.tests), badge(order.status === "Rejected" ? "Rejected" : "Pending Sample"), h(order.latestUpdate || "Specimen requires attention"), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
     return `${heading(...pageMeta["Laboratory Staff"].dashboard)}
       <div class="stats-grid role-dashboard-stats">${stat("Assigned Today", orders.filter((order) => new Date(order.createdAt).toLocaleDateString("en-CA") === todayKey).length, "orders")}${stat("Awaiting Collection", orders.filter((order) => ["Pending", "Pending Sample", "Accepted"].includes(order.status)).length, "clock", "-", "orange")}${stat("Processing", orders.filter((order) => ["Sample Collected", "Processing", "In Progress"].includes(order.status)).length, "activity", "-", "blue")}${stat("Awaiting Verification", pendingResults.length, "review", "-", "orange")}${stat("Critical Results", critical.length, "alert", "-", "red")}${stat("Delayed Requests", delayed.length, "clock", "-", "red")}</div>
-      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Priority Work Queue</h3><p>Urgent and delayed requests are listed first.</p></div><button class="card-link" type="button" data-go-page="queue">Open full queue</button></div>${table(["Request No.", "Patient", "Tests", "Priority", "Status", "Received", "Action"], orderRows, "Assigned laboratory requests")}</section>
-      <div class="role-dashboard-split"><section class="role-dashboard-section"><div class="section-heading"><div><h3>Awaiting Verification</h3><p>Uploaded results ready for laboratory review.</p></div></div>${table(["Result", "Request", "Patient", "Test", "Updated", "Action"], resultRows, "Results awaiting verification")}</section><section class="card attention-card"><div class="card-head"><div><h3 class="card-title">Current Workload</h3><p class="card-subtitle">Open requests by assigned facility.</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByFacility)}</div></section></div>
-      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Specimen Issues</h3><p>Rejected samples and requests that mention recollection.</p></div></div>${table(["Request", "Patient ID", "Tests", "Status", "Latest Update", "Action"], issueRows, "Specimen issues")}</section>`;
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Priority Work Queue</h3><p>Urgent and delayed requests are listed first.</p></div><button class="card-link" type="button" data-go-page="queue">Open full queue</button></div>${filteredTable(["Request No.", "Patient", "Tests", "Priority", "Status", "Received", "Action"], orderRows, "Assigned laboratory requests", "Search request, patient, or test", [["All priorities", ["Regular", "Priority", "Urgent"]], ["All statuses", [...new Set(priorityOrders.map((order) => delayed.includes(order) ? "Delayed" : order.status))]]], { dates: true })}</section>
+      <div class="role-dashboard-split"><section class="role-dashboard-section"><div class="section-heading"><div><h3>Awaiting Verification</h3><p>Uploaded results ready for laboratory review.</p></div></div>${filteredTable(["Result", "Request", "Patient", "Test", "Updated", "Action"], resultRows, "Results awaiting verification", "Search result, request, patient, or test", [], { dates: true })}</section><section class="card attention-card"><div class="card-head"><div><h3 class="card-title">Current Workload</h3><p class="card-subtitle">Open requests by assigned facility.</p></div></div><div class="card-body">${chartFromCounts(state.data.reports.ordersByFacility)}</div></section></div>
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Specimen Issues</h3><p>Rejected samples and requests that mention recollection.</p></div></div>${filteredTable(["Request", "Patient ID", "Tests", "Status", "Latest Update", "Action"], issueRows, "Specimen issues", "Search request, patient, or test", [["All statuses", ["Rejected", "Pending Sample"]]])}</section>`;
   }
 
   function renderLabUpload() {
@@ -1492,7 +1501,7 @@
     const orderSelect = eligible.length ? select("orderId", orderOptions, orderOptions[0]?.value || "", "required") : '<select name="orderId" required disabled><option>No eligible laboratory requests</option></select>';
     const defaultValueRows = resultValueInputRow({}, disabled);
     return `${heading(...pageMeta["Laboratory Staff"].upload)}
-      <div class="upload-layout"><form class="card upload-panel" data-form="upload-result"><div class="card-head form-card-head"><div><h3 class="card-title">Structured Result Entry</h3><p class="card-subtitle">Saved as a pending-review result.</p></div>${icon("upload")}</div><div class="form-grid"><div class="form-field full"><label>Laboratory Request</label>${orderSelect}</div><section class="result-scanner full" aria-labelledby="result-scanner-title"><div class="result-scanner-copy"><span class="result-scanner-icon">${icon("scan")}</span><div><h3 id="result-scanner-title">Scan Laboratory Result</h3><p>PDF, JPG, PNG, or WEBP up to 10 MB. PDFs scan the first five pages. OCR fills the form but never submits it.</p></div></div><div class="result-scanner-controls"><button class="btn btn-secondary" type="button" data-open-result-camera ${disabled}>${icon("camera")} Take Photo</button><button class="btn btn-secondary" type="button" data-choose-result-image ${disabled}>${icon("file")} Choose File</button><button class="btn btn-primary" type="button" data-scan-result ${disabled}>${icon("scan")} Scan and Fill Values</button><input class="result-scan-file-input" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" data-result-scan-input ${disabled}></div><div class="result-camera-panel" data-result-camera-panel hidden><video data-result-camera-video autoplay playsinline muted></video><canvas data-result-camera-canvas hidden></canvas><div class="result-camera-actions"><button class="btn btn-primary" type="button" data-capture-result-photo>${icon("camera")} Capture Photo</button><button class="btn btn-secondary" type="button" data-close-result-camera>Cancel Camera</button></div></div><img class="result-scan-preview" alt="Selected laboratory result preview" data-result-scan-preview hidden><div class="result-scan-file-actions"><button class="btn btn-secondary btn-sm" type="button" data-rotate-result-image disabled>${icon("activity")} Rotate 90°</button><button class="btn btn-secondary btn-sm" type="button" data-remove-result-source disabled>${icon("trash")} Remove source</button></div><label class="register-check result-source-choice"><input type="checkbox" data-include-result-source checked><span>Keep the selected source report as a protected result attachment.</span></label><progress class="result-scan-progress" max="100" value="0" data-result-scan-progress hidden></progress><p class="result-scan-status" role="status" aria-live="polite" data-result-scan-status>Select a sharp, straight-on image with the complete result table visible.</p><details class="result-scan-output" data-result-scan-output hidden><summary>Review text detected in file</summary><pre data-result-scan-text></pre></details><div class="result-scan-warning">${icon("alert")} OCR can misread decimal points, units, or flags. Rows below 75% confidence are highlighted. Compare every field with the source before uploading.</div></section><div class="form-field full"><label>Findings Summary</label><textarea name="findings" required ${disabled} placeholder="Enter laboratory findings"></textarea></div><div class="form-field full"><label>Remarks</label><textarea name="remarks" ${disabled} placeholder="Specimen notes, QC notes, or review comments"></textarea></div><div class="form-field full"><label>Additional Result Attachments</label><input name="attachments" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple ${disabled}><small>Add up to five protected reports or images, maximum 10 MB each.</small></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3>${resultValueTable(defaultValueRows, disabled)}<div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("upload")} Upload Result</button></div></form><section>${table(["Request No.", "Patient", "Tests", "Priority", "Status", "Action"], queueRows, "Requests available for result upload")}</section></div>`;
+      <div class="upload-layout"><form class="card upload-panel" data-form="upload-result"><div class="card-head form-card-head"><div><h3 class="card-title">Structured Result Entry</h3><p class="card-subtitle">Saved as a pending-review result.</p></div>${icon("upload")}</div><div class="form-grid"><div class="form-field full"><label>Laboratory Request</label>${orderSelect}</div><section class="result-scanner full" aria-labelledby="result-scanner-title"><div class="result-scanner-copy"><span class="result-scanner-icon">${icon("scan")}</span><div><h3 id="result-scanner-title">Scan Laboratory Result</h3><p>PDF, JPG, PNG, or WEBP up to 10 MB. PDFs scan the first five pages. OCR fills the form but never submits it.</p></div></div><div class="result-scanner-controls"><button class="btn btn-secondary" type="button" data-open-result-camera ${disabled}>${icon("camera")} Take Photo</button><button class="btn btn-secondary" type="button" data-choose-result-image ${disabled}>${icon("file")} Choose File</button><button class="btn btn-primary" type="button" data-scan-result ${disabled}>${icon("scan")} Scan and Fill Values</button><input class="result-scan-file-input" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" data-result-scan-input ${disabled}></div><div class="result-camera-panel" data-result-camera-panel hidden><video data-result-camera-video autoplay playsinline muted></video><canvas data-result-camera-canvas hidden></canvas><div class="result-camera-actions"><button class="btn btn-primary" type="button" data-capture-result-photo>${icon("camera")} Capture Photo</button><button class="btn btn-secondary" type="button" data-close-result-camera>Cancel Camera</button></div></div><img class="result-scan-preview" alt="Selected laboratory result preview" data-result-scan-preview hidden><div class="result-scan-file-actions"><button class="btn btn-secondary btn-sm" type="button" data-rotate-result-image disabled>${icon("activity")} Rotate 90°</button><button class="btn btn-secondary btn-sm" type="button" data-remove-result-source disabled>${icon("trash")} Remove source</button></div><label class="register-check result-source-choice"><input type="checkbox" data-include-result-source checked><span>Keep the selected source report as a protected result attachment.</span></label><progress class="result-scan-progress" max="100" value="0" data-result-scan-progress hidden></progress><p class="result-scan-status" role="status" aria-live="polite" data-result-scan-status>Select a sharp, straight-on image with the complete result table visible.</p><details class="result-scan-output" data-result-scan-output hidden><summary>Review text detected in file</summary><pre data-result-scan-text></pre></details><div class="result-scan-warning">${icon("alert")} OCR can misread decimal points, units, or flags. Rows below 75% confidence are highlighted. Compare every field with the source before uploading.</div></section><div class="form-field full"><label>Findings Summary</label><textarea name="findings" required ${disabled} placeholder="Enter laboratory findings"></textarea></div><div class="form-field full"><label>Remarks</label><textarea name="remarks" ${disabled} placeholder="Specimen notes, QC notes, or review comments"></textarea></div><div class="form-field full"><label>Additional Result Attachments</label><input name="attachments" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" multiple ${disabled}><small>Add up to five protected reports or images, maximum 10 MB each.</small></div></div><h3 class="form-section-title">${icon("activity")} Result Values</h3>${resultValueTable(defaultValueRows, disabled)}<div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("upload")} Upload Result</button></div></form><section>${filteredTable(["Request No.", "Patient", "Tests", "Priority", "Status", "Action"], queueRows, "Requests available for result upload", "Search request, patient, or test", [["All priorities", ["Regular", "Priority", "Urgent"]], ["All statuses", [...uploadStatuses]]])}</section></div>`;
   }
 
   function renderLabReview() {
@@ -1530,13 +1539,13 @@
     const currentStage = currentOrder ? (stageForStatus[currentOrder.status] ?? 0) : -1;
     const progress = currentOrder ? `<div class="patient-request-summary"><div><span>Current request</span><strong>${h(currentOrder.orderNumber)}</strong><small>${h(currentOrder.tests)} · ${h(currentOrder.facilityName)}</small></div>${badge(currentOrder.status)}</div><div class="patient-progress" aria-label="Current laboratory request progress">${stages.map((label, index) => `<div class="patient-progress-step ${index < currentStage ? "complete" : index === currentStage ? "current" : ""}"><i></i><span>${h(label)}</span></div>`).join("")}</div><p class="patient-latest-update">${h(currentOrder.latestUpdate || "Your laboratory request is being processed.")}</p>` : '<div class="empty-state">You do not have any laboratory requests yet.</div>';
     const actionItems = activeOrders.filter((order) => ["Pending", "Pending Sample", "Rejected"].includes(order.status) || /recollect|new sample|repeat sample/i.test(String(order.latestUpdate || ""))).slice(0, 4);
-    const orderRows = orders.slice(0, previewLimit()).map((order) => [h(order.orderNumber), h(order.tests), h(order.facilityName), badge(order.status), shortDate(order.createdAt), `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
-    const resultRows = results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.testName), h(result.facilityName), shortDateTime(result.releasedAt), `<button class="btn btn-primary btn-sm" data-drawer="result" data-id="${result.id}">View Result</button>`]);
+    const orderRows = orders.slice(0, previewLimit()).map((order) => [h(order.orderNumber), h(order.tests), h(order.facilityName), badge(order.status), `<time datetime="${h(order.createdAt)}">${shortDate(order.createdAt)}</time>`, `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
+    const resultRows = results.slice(0, previewLimit()).map((result) => [h(result.resultNumber), h(result.testName), h(result.facilityName), `<time datetime="${h(result.releasedAt)}">${shortDateTime(result.releasedAt)}</time>`, `<button class="btn btn-primary btn-sm" data-drawer="result" data-id="${result.id}">View Result</button>`]);
     return `${heading(...pageMeta.Patient.dashboard)}
       <div class="stats-grid patient-summary-stats">${stat("Active Requests", activeOrders.length, "orders")}${stat("Processing", orders.filter((order) => ["Sample Collected", "Processing", "In Progress", "Result Uploaded", "Pending Review"].includes(order.status)).length, "activity", "-", "blue")}${stat("Results Available", results.length, "results", "-", "green")}${stat("Completed Requests", orders.filter((order) => order.status === "Released").length, "check", "-", "teal")}</div>
       <section class="card patient-current-request"><div class="card-head"><div><h3 class="card-title">Current Request Status</h3><p class="card-subtitle">Follow your latest laboratory request from submission to availability.</p></div></div><div class="card-body">${progress}</div></section>
-      <div class="patient-dashboard-priority"><section class="role-dashboard-section"><div class="section-heading"><div><h3>Available Results</h3><p>Only verified and released results linked to your patient profile are shown.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${table(["Result ID", "Test", "Facility", "Released", "Action"], resultRows, "Available laboratory results")}</section><section class="card patient-action-card"><div class="card-head"><div><h3 class="card-title">Required Actions</h3><p class="card-subtitle">Steps needed to keep your requests moving.</p></div></div><div class="card-body patient-action-list">${actionItems.length ? actionItems.map((order) => `<button type="button" data-drawer="order" data-id="${order.id}"><strong>${h(order.status === "Rejected" ? "Contact the laboratory" : "Sample collection required")}</strong><span>${h(order.orderNumber)} · ${h(order.latestUpdate || order.tests)}</span></button>`).join("") : '<div class="empty-state">No action is required from you right now.</div>'}</div></section></div>
-      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Recent Laboratory Requests</h3><p>Your latest requests and their current status.</p></div></div>${table(["Request No.", "Tests", "Facility", "Status", "Date", "Action"], orderRows, "Recent laboratory requests")}</section>
+      <div class="patient-dashboard-priority"><section class="role-dashboard-section"><div class="section-heading"><div><h3>Available Results</h3><p>Only verified and released results linked to your patient profile are shown.</p></div><button class="card-link" type="button" data-go-page="results">View all results</button></div>${filteredTable(["Result ID", "Test", "Facility", "Released", "Action"], resultRows, "Available laboratory results", "Search result, test, or facility", [["All facilities", [...new Set(results.map((result) => result.facilityName))]]], { dates: true })}</section><section class="card patient-action-card"><div class="card-head"><div><h3 class="card-title">Required Actions</h3><p class="card-subtitle">Steps needed to keep your requests moving.</p></div></div><div class="card-body patient-action-list">${actionItems.length ? actionItems.map((order) => `<button type="button" data-drawer="order" data-id="${order.id}"><strong>${h(order.status === "Rejected" ? "Contact the laboratory" : "Sample collection required")}</strong><span>${h(order.orderNumber)} · ${h(order.latestUpdate || order.tests)}</span></button>`).join("") : '<div class="empty-state">No action is required from you right now.</div>'}</div></section></div>
+      <section class="role-dashboard-section"><div class="section-heading"><div><h3>Recent Laboratory Requests</h3><p>Your latest requests and their current status.</p></div></div>${filteredTable(["Request No.", "Tests", "Facility", "Status", "Date", "Action"], orderRows, "Recent laboratory requests", "Search request, test, or facility", [["All statuses", [...new Set(orders.map((order) => order.status))]], ["All facilities", [...new Set(orders.map((order) => order.facilityName))]]], { dates: true })}</section>
       <div class="privacy-banner privacy-banner-compact">${icon("shield")} Only records linked to patient ID ${h(currentUser.patientProfileId)} are visible in this portal.</div>`;
   }
 
@@ -1833,6 +1842,16 @@
     return `<form data-form="test"><input type="hidden" name="id" value="${h(test.id || "")}"><div class="form-grid">${field("Code", "code", test.code || "")}${field("Name", "name", test.name || "")}${field("Category", "category", test.category || "")}${field("Sample Type", "sampleType", test.sampleType || "")}${field("Turnaround Time", "turnaroundTime", test.turnaroundTime || "")}${field("Price", "price", test.price || "0", "number", 'step="0.01"')}${field("Reference Range", "referenceRange", test.referenceRange || "")}${field("Instructions", "instructions", test.instructions || "", "textarea")}<div class="form-field full"><label>Status</label>${select("status", ["Active", "Inactive"], test.status || "Active")}</div></div><section class="validation-rule-editor"><h3>Approved validation rules</h3><p>Configure rules for the exact parameters in this test. Choose whether each reference boundary is inclusive. Leave a critical limit blank only when it does not apply. Record the approved source and patient applicability. Unconfigured tests cannot pass validation.</p><div data-validation-rules>${(test.validationRules || []).map(validationRuleEditor).join("")}</div><button type="button" class="btn btn-secondary" data-add-validation-rule>Add parameter rule</button></section><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Save Test</button></div></form>`;
   }
 
+  function facilityDetails(facility) {
+    if (!facility) return '<div class="empty-state">Facility not found.</div>';
+    return `${drawerInfo([["Facility", h(facility.name)], ["Address", h(facility.address || "-")], ["Phone", h(facility.phone || "-")], ["Email", h(facility.email || "-")], ["Open requests", h(facility.activeOrders || 0)], ["Active tests", h(facility.activeTests || 0)], ["Status", badge(facility.status)]])}`;
+  }
+
+  function testDetails(test) {
+    if (!test) return '<div class="empty-state">Laboratory test not found.</div>';
+    return `${drawerInfo([["Code", h(test.code)], ["Test", h(test.name)], ["Category", h(test.category || "-")], ["Sample type", h(test.sampleType || "-")], ["Turnaround time", h(test.turnaroundTime || "-")], ["Price", h(money(test.price))], ["Reference range", h(test.referenceRange || "-")], ["Status", badge(test.status)]])}<div class="clinical-note-box"><h4>${icon("note")} Instructions</h4><p>${h(test.instructions || "No special instructions.")}</p></div>`;
+  }
+
   function orderDetails(order) {
     if (!order) return '<div class="empty-state">Laboratory request not found.</div>';
     const canUpdateOrder = !["Result Uploaded", "Verified", "Released", "Rejected", "Cancelled"].includes(order.status);
@@ -1901,8 +1920,8 @@
     $("#drawer-title").textContent = drawerTitle(type);
     const content = {
       user: () => userForm(recordBy("users", id)),
-      facility: () => facilityForm(recordBy("facilities", id)),
-      test: () => testForm(recordBy("tests", id)),
+      facility: () => currentUser.role === "Admin" ? facilityForm(recordBy("facilities", id)) : facilityDetails(recordBy("facilities", id)),
+      test: () => currentUser.role === "Admin" ? testForm(recordBy("tests", id)) : testDetails(recordBy("tests", id)),
       order: () => orderDetails(recordBy("orders", id)),
       result: () => resultDetails(recordBy("results", id)),
       "result-edit": () => resultEditForm(recordBy("results", id)),
@@ -2096,8 +2115,9 @@
       ensurePageData(page, true);
       return;
     }
-    const pageLink = event.target.closest("a[data-page], button[data-page], a[data-go-page], button[data-go-page]");
-    if (pageLink) {
+    const pageLink = event.target.closest("a[data-page], button[data-page], [data-go-page]");
+    const nestedPageControl = pageLink?.matches("tr") && event.target.closest("button, a, input, select, textarea, label");
+    if (pageLink && !nestedPageControl) {
       event.preventDefault();
       if (document.body?.dataset.requiredRole === "Doctor" && pageLink.matches('a.nav-item[data-page="facilities"], a.nav-item[data-page="tests"]')) {
         const destination = new URL(pageLink.href, location.href);
@@ -2111,7 +2131,9 @@
       return;
     }
     const drawerTrigger = event.target.closest("[data-drawer]");
-    if (drawerTrigger) {
+    const interactiveTarget = event.target.closest("button, a, input, select, textarea, label");
+    const rowActionHandledElsewhere = drawerTrigger?.matches("tr") && interactiveTarget && interactiveTarget !== drawerTrigger;
+    if (drawerTrigger && !rowActionHandledElsewhere) {
       event.preventDefault();
       openDrawer(drawerTrigger.dataset.drawer, drawerTrigger.dataset.id || drawerTrigger.dataset.record || null);
       return;
@@ -2494,24 +2516,27 @@
   function applyPageFilters() {
     const content = $("#page-content");
     if (!content) return;
-    const searchTerms = [
-      $("#global-search")?.value || "",
-      ...$$("[data-table-search]", content).map((input) => input.value || ""),
-    ].map((value) => value.toLowerCase().trim()).filter(Boolean);
-    const selectedTerms = $$(".toolbar select", content)
-      .map((control) => control.value || "")
-      .filter((value) => value && !value.startsWith("All "))
-      .map((value) => value.toLowerCase());
-    const from = $("[data-table-date-from]", content)?.value || "";
-    const to = $("[data-table-date-to]", content)?.value || "";
-    $$(".data-table tbody tr, .notification-item, .facility-card, .task-item", content).forEach((row) => {
-      const text = row.textContent.toLowerCase();
-      const rowDate = row.dataset.tableDate || "";
-      const dateMatches = (!from || (rowDate && rowDate >= from)) && (!to || (rowDate && rowDate <= to));
-      const matches = !searchTerms.some((term) => !text.includes(term)) && !selectedTerms.some((term) => !text.includes(term)) && dateMatches;
-      row.dataset.filterMatch = String(matches);
-      row.hidden = !matches;
-    });
+    const globalTerm = ($("#global-search")?.value || "").toLowerCase().trim();
+    const applyRows = (rows, toolbar = null) => {
+      const searchTerms = [globalTerm, ...(toolbar ? $$("[data-table-search]", toolbar).map((input) => input.value || "") : [])]
+        .map((value) => value.toLowerCase().trim()).filter(Boolean);
+      const selectedTerms = toolbar ? $$("select", toolbar).map((control) => control.value || "")
+        .filter((value) => value && !value.startsWith("All ")).map((value) => value.toLowerCase()) : [];
+      const from = toolbar ? $("[data-table-date-from]", toolbar)?.value || "" : "";
+      const to = toolbar ? $("[data-table-date-to]", toolbar)?.value || "" : "";
+      rows.forEach((row) => {
+        const text = row.textContent.toLowerCase();
+        const rowDate = row.dataset.tableDate || "";
+        const dateMatches = (!from || (rowDate && rowDate >= from)) && (!to || (rowDate && rowDate <= to));
+        const matches = !searchTerms.some((term) => !text.includes(term)) && !selectedTerms.some((term) => !text.includes(term)) && dateMatches;
+        row.dataset.filterMatch = String(matches);
+        row.hidden = !matches;
+      });
+    };
+    $$(".table-filter-scope", content).forEach((scope) => applyRows($$(".data-table tbody tr", scope), $(".toolbar", scope)));
+    const unscopedToolbar = $$(".toolbar", content).find((toolbar) => !toolbar.closest(".table-filter-scope")) || null;
+    const unscopedRows = $$(".data-table tbody tr, .notification-item, .facility-card, .task-item", content).filter((row) => !row.closest(".table-filter-scope"));
+    applyRows(unscopedRows, unscopedToolbar);
     $$('[data-paginated-table]', content).forEach((card) => { card.dataset.tablePage = "1"; });
     paginateTables(content);
   }
@@ -2816,6 +2841,12 @@
       if (keyboardDrawer && (event.key === "Enter" || event.key === " ")) {
         event.preventDefault();
         openDrawer(keyboardDrawer.dataset.drawer, keyboardDrawer.dataset.id || null);
+        return;
+      }
+      const keyboardPage = event.target.closest?.("[data-go-page][role='link']");
+      if (keyboardPage && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        setPage(keyboardPage.dataset.goPage);
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {

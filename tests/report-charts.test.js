@@ -29,7 +29,7 @@ for (const root of ['', 'Main-Clinic-system/']) {
     URLSearchParams, location: { search:'' },
     state:{ data: {reports:{},orders:[]} },
     pageMeta:{Admin:{reports:['Statistics']}},
-    h:String, heading:()=>'', icon:()=>'', badge:()=>'', table:()=>'', dashboardStats:()=>'', donutCard:()=>'',
+    h:String, heading:()=>'', icon:()=>'', badge:()=>'', table:()=>'', filteredTable:()=>'', dashboardStats:()=>'', donutCard:()=>'',
     trendAnalysisSection:()=>{calls.push('trends');return 'TREND_CONTENT';},
     utilizationAnalyticsSection:()=>{calls.push('utilization');return 'UTIL_CONTENT';},
     forecastingAnalysisSection:()=>{calls.push('forecast');return 'FORECAST_CONTENT';},

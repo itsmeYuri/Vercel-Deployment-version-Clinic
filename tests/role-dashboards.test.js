@@ -38,6 +38,12 @@ assert.equal(fs.existsSync(path.join(root, "public/laboratory/facilities.php")),
 assert.match(main, /function renderDoctorDashboard/);
 assert.match(main, /function renderLabDashboard/);
 assert.match(main, /function renderPatientDashboard/);
+assert.match(main, /function filteredTable/);
+assert.match(main, /Patients with laboratory activity, shown before their results/);
+assert.match(main, /Requests available for result upload", "Search request, patient, or test"/);
+assert.match(main, /goPage: "facilities"/);
+assert.match(main, /goPage: "tests"/);
+assert.match(main, /table-filter-scope/);
 assert.match(main, /function sortTable/);
 assert.match(main, /data-table-sort/);
 assert.match(main, /aria-sort="none"/);
