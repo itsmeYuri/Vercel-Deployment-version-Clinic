@@ -77,7 +77,7 @@
 
   const pageMeta = {
     Admin: {
-      dashboard: ["Laboratory Dashboard", "Monitor laboratory requests, results, verification, and operational activity."],
+      dashboard: ["Administration Overview", "Manage user access, facilities, system availability, and administrative activity."],
       users: ["User Management", "Manage system users, roles, and access permissions."],
       facilities: ["Healthcare Facilities", "Manage clinic locations and assigned care teams."],
       tests: ["Laboratory Tests", "Manage active laboratory tests, pricing, and reference details."],
@@ -868,7 +868,9 @@
     const id = `${name}-${Math.random().toString(16).slice(2)}`;
     const control = type === "textarea"
       ? `<textarea id="${id}" name="${h(name)}" ${extra}>${h(value)}</textarea>`
-      : `<input id="${id}" name="${h(name)}" type="${h(type)}" value="${h(value)}" ${extra}>`;
+      : type === "password"
+        ? `<div class="drawer-password-wrap"><input id="${id}" name="${h(name)}" type="password" value="${h(value)}" ${extra}><button class="password-toggle" type="button" data-drawer-password-toggle="${id}" aria-label="Show password" aria-pressed="false">${icon("eye", "eye-open")}<svg class="eye-closed" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 6.1A10 10 0 0 1 12 6c6.5 0 10 6 10 6a16 16 0 0 1-3 3.6M6.1 6.1C3.4 7.8 2 12 2 12s3.5 6 10 6a10 10 0 0 0 3.1-.5"/></svg></button></div>`
+        : `<input id="${id}" name="${h(name)}" type="${h(type)}" value="${h(value)}" ${extra}>`;
     return `<div class="form-field full"><label for="${id}">${h(label)}</label>${control}</div>`;
   }
 
@@ -892,6 +894,15 @@
 
   function utilizationTrendChart(analytics) {
     return window.ClinicReportCharts.timeline(analytics.buckets || [], [{key: "patients", label: "Patients"}, {key: "requests", label: "Requests"}, {key: "tests", label: "Tests"}], {title: "Laboratory utilization over time"});
+  }
+
+  function formatPhilippineMobile(value = "") {
+    let digits = String(value).replace(/\D/g, "");
+    if (digits.startsWith("63") && digits.length >= 12) digits = `0${digits.slice(2)}`;
+    digits = digits.slice(0, 11);
+    if (digits.length <= 4) return digits;
+    if (digits.length <= 7) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+    return `${digits.slice(0, 4)}-${digits.slice(4, 7)}-${digits.slice(7)}`;
   }
 
   function filteredTable(headers, rows, footer, placeholder, selects = [], options = {}) {
@@ -1284,6 +1295,35 @@
       ${table(["Facility", "Contact", "Activity", "Status", "Action"], rows)}`;
   }
 
+  function renderAdminManagementDashboard() {
+    const users = state.data.users || [];
+    const facilities = state.data.facilities || [];
+    const audit = state.data.audit || [];
+    const notifications = state.data.notifications || [];
+    const maintenance = state.data.maintenance || {};
+    const activeUsers = users.filter((user) => user.status === "Active");
+    const inactiveUsers = users.filter((user) => user.status !== "Active");
+    const activeFacilities = facilities.filter((facility) => facility.status === "Active");
+    const inactiveFacilities = facilities.filter((facility) => facility.status !== "Active");
+    const unassignedUsers = users.filter((user) => ["Doctor", "Laboratory Staff"].includes(user.role) && !user.assignedFacilityId && !user.assignedFacility);
+    const unreadNotifications = notifications.filter((notification) => !notification.isRead);
+    const recentUsers = users.slice(0, Math.max(5, previewLimit())).map((user) => [identity(user.name, `@${user.username}`, user.email, user.avatar), badge(user.role), h(user.assignedFacility || "Unassigned"), badge(user.status), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="user" data-id="${user.id}">Manage</button>`]);
+    const facilityRows = facilities.slice(0, Math.max(5, previewLimit())).map((facility) => [`<span class="cell-strong">${h(facility.name)}</span><span class="cell-sub">${h(facility.address || "No address")}</span>`, `<span class="cell-strong">${h(facility.phone || "No phone")}</span><span class="cell-sub">${h(facility.email || "No email")}</span>`, badge(facility.status), `<button class="btn btn-secondary btn-sm" type="button" data-drawer="facility" data-id="${facility.id}">Manage</button>`]);
+    const auditRows = audit.slice(0, Math.max(6, previewLimit())).map((item) => [`<time datetime="${h(item.createdAt)}">${shortDateTime(item.createdAt)}</time>`, person(item.userName, item.role), badge(item.action), h(item.module), `<span class="cell-wrap">${h(item.details)}</span>`]);
+    const governanceItems = [
+      [inactiveUsers.length, "Inactive user accounts", "Review who should retain access.", "users", "lock"],
+      [unassignedUsers.length, "Users without a facility", "Assign doctors and laboratory staff to a facility.", "users", "facility"],
+      [inactiveFacilities.length, "Inactive facilities", "Review facilities that are unavailable to users.", "facilities", "facility"],
+      [unreadNotifications.length, "Unread system notifications", "Review recent system and account updates.", "notifications", "bell"],
+      [maintenance.isEnabled ? 1 : 0, "Maintenance restrictions active", maintenance.isEnabled ? "Review the current access restrictions." : "No access restrictions are currently enabled.", "maintenance", "maintenance"],
+    ];
+    return `${heading("Administration Overview", "Manage user access, facilities, system availability, and administrative activity.", `<button class="btn btn-secondary" data-go-page="audit">${icon("audit")} Audit Trail</button><button class="btn btn-primary" data-drawer="user">${icon("plus")} New User</button>`)}
+      <div class="stats-grid admin-management-stats">${stat("Total Users", users.length, "users", "-", "teal")}${stat("Active Users", activeUsers.length, "check", "-", "green")}${stat("Active Facilities", activeFacilities.length, "facility", "-", "blue")}${stat("Audit Events", audit.length, "audit", "-", "purple")}</div>
+      <div class="admin-management-grid"><section class="dashboard-section"><div class="section-heading"><div><h3>User Administration</h3><p>Recently added accounts, roles, facility assignments, and access status.</p></div><button class="card-link" type="button" data-go-page="users">Manage all users</button></div>${table(["User", "Role", "Facility", "Status", "Action"], recentUsers)}</section><section class="card admin-governance-card"><div class="card-head"><div><h3 class="card-title">Governance Review</h3><p class="card-subtitle">Administrative items that may require attention.</p></div></div><div class="card-body admin-governance-list">${governanceItems.map(([count, label, copy, page, iconName]) => `<button type="button" class="admin-governance-item" data-go-page="${page}"><span class="admin-governance-icon">${icon(iconName)}</span><span class="admin-governance-copy"><strong>${h(label)}</strong><small>${h(copy)}</small></span><b>${h(count)}</b>${icon("arrow")}</button>`).join("")}</div></section></div>
+      <section class="dashboard-section"><div class="section-heading"><div><h3>Facility Administration</h3><p>Manage registered facilities, contact information, and availability.</p></div><button class="card-link" type="button" data-go-page="facilities">Manage all facilities</button></div>${table(["Facility", "Contact", "Status", "Action"], facilityRows)}</section>
+      <section class="dashboard-section"><div class="section-heading"><div><h3>Recent Administrative Activity</h3><p>Latest account, facility, security, and configuration events.</p></div><button class="card-link" type="button" data-go-page="audit">View complete audit trail</button></div>${table(["Time", "Administrator", "Action", "Module", "Details"], auditRows)}</section>`;
+  }
+
   function renderTests() {
     const rows = state.data.tests.map((test) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(test.name)}</span><span class="cell-sub">${h(test.code)}</span>`, `<span class="cell-strong">${h(test.category)}</span><span class="cell-sub">${h(test.sampleType)}</span>`, `<span class="cell-strong">${h(test.turnaroundTime)}</span><span class="cell-sub">${money(test.price)}</span>`, badge(test.status), `<button class="btn btn-secondary btn-sm" data-drawer="test" data-id="${test.id}">Edit</button>`]);
     return `${heading(...pageMeta.Admin.tests, `<button class="btn btn-primary" data-drawer="test">${icon("plus")} Add Test</button>`)}
@@ -1457,7 +1497,7 @@
     const meta = pageMeta[currentUser.role]["create-order"] || pageMeta.Doctor["create-order"];
     return `${heading(...meta)}
       <div class="create-order-layout"><section class="card"><div class="card-head"><div><h3 class="card-title">Available Patients</h3><p class="card-subtitle">Choose from database patient records.</p></div></div><div class="recent-patient-list">${state.data.availablePatients.slice(0, previewLimit()).map((patient, index) => `<button class="recent-patient ${index === 0 ? "selected" : ""}" type="button" data-patient-pick="${patient.id}">${avatar(patient.avatar)}<div><strong>${h(patient.name)}</strong><span>${h(patient.patientCode)} - ${h(patient.sex || "No sex recorded")}</span></div></button>`).join("")}</div></section>
-      <form class="card order-compose-card" data-form="create-order"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Laboratory Request Details</h3><p class="card-subtitle">Complete the four sections in order. New requests begin as Pending.</p></div>${badge("Pending")}</div>${formHint}<div class="request-form-sections"><fieldset class="request-form-section"><legend><span>1</span> Patient</legend><div class="form-field full"><label>Search and select patient</label>${patientSelect}</div></fieldset><fieldset class="request-form-section"><legend><span>2</span> Facility</legend><div class="form-field full"><label>Search and select facility</label>${facilitySelect}</div></fieldset><fieldset class="request-form-section"><legend><span>3</span> Requested Tests</legend><div class="form-field full"><label>Select one or more laboratory tests</label><div class="test-choice-grid">${testsMarkup}</div></div></fieldset><fieldset class="request-form-section"><legend><span>4</span> Request Details</legend><div class="form-grid"><div class="form-field"><label>Priority</label>${select("priority", ["Regular", "Priority"], "Regular", disabled)}</div><div class="form-field"><label>Status</label><div class="readonly-pill">${badge("Pending")} Laboratory staff updates this after intake.</div></div><div class="form-field full"><label>Clinical Indication / Notes</label><textarea name="clinicalNotes" ${disabled} placeholder="Clinical indication, provisional diagnosis, or special instructions"></textarea></div></div></fieldset></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("plus-file")} Submit Laboratory Request</button></div></form>
+      <form class="card order-compose-card" data-form="create-order"><div class="card-head" style="padding:0 0 17px"><div><h3 class="card-title">Laboratory Request Details</h3><p class="card-subtitle">Complete the four sections in order. New requests begin as Pending.</p></div>${badge("Pending")}</div>${formHint}<div class="request-form-sections"><fieldset class="request-form-section"><legend><span>1</span> Patient</legend><div class="form-field full"><label>Search and select patient</label>${patientSelect}</div></fieldset><fieldset class="request-form-section"><legend><span>2</span> Facility</legend><div class="form-field full"><label>Select destination laboratory facility</label>${facilitySelect}<small>All active facilities in the centralized laboratory network are available.</small></div></fieldset><fieldset class="request-form-section"><legend><span>3</span> Requested Tests</legend><div class="form-field full"><label>Select one or more laboratory tests</label><div class="test-choice-grid">${testsMarkup}</div></div></fieldset><fieldset class="request-form-section"><legend><span>4</span> Request Details</legend><div class="form-grid"><div class="form-field"><label>Priority</label>${select("priority", ["Regular", "Priority"], "Regular", disabled)}</div><div class="form-field"><label>Status</label><div class="readonly-pill">${badge("Pending")} Laboratory staff updates this after intake.</div></div><div class="form-field full"><label>Clinical Indication / Notes</label><textarea name="clinicalNotes" ${disabled} placeholder="Clinical indication, provisional diagnosis, or special instructions"></textarea></div></div></fieldset></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-go-page="orders">Cancel</button><button class="btn btn-primary" type="submit" ${disabled}>${icon("plus-file")} Submit Laboratory Request</button></div></form>
       <aside class="card order-summary"><p class="eyebrow">Request Summary</p><h3 class="card-title">Clinical workflow</h3><div class="clinical-note-box"><h4>${icon("shield")} Notifications included</h4><p>Submitting creates a laboratory request, notifies laboratory staff and the patient, and writes an audit record.</p></div></aside></div>`;
   }
 
@@ -1562,7 +1602,7 @@
   }
 
   const renderers = {
-    Admin: { dashboard: renderAdminDashboard, users: renderUsers, facilities: renderFacilities, tests: renderTests, orders: () => renderOrders("Admin"), results: () => renderResults("Admin"), reports: renderReports, audit: renderAudit, notifications: () => renderNotifications("Admin"), maintenance: renderAdminMaintenance, profile: renderAdminProfile, settings: renderAdminSettings },
+    Admin: { dashboard: renderAdminManagementDashboard, users: renderUsers, facilities: renderFacilities, tests: renderTests, orders: () => renderOrders("Admin"), results: () => renderResults("Admin"), reports: renderReports, audit: renderAudit, notifications: () => renderNotifications("Admin"), maintenance: renderAdminMaintenance, profile: renderAdminProfile, settings: renderAdminSettings },
     Doctor: { dashboard: renderDoctorDashboard, patients: () => renderPatients("Doctor"), facilities: renderDoctorFacilities, tests: renderDoctorTests, "create-order": renderCreateOrder, orders: () => renderOrders("Doctor"), results: () => renderResults("Doctor"), notifications: () => renderNotifications("Doctor"), profile: renderDoctorProfile, settings: renderDoctorSettings },
     "Laboratory Staff": { dashboard: renderLabDashboard, orders: () => renderOrders("Laboratory Staff"), upload: renderLabUpload, review: renderLabReview, facilities: renderLabFacilities, queue: () => renderOrders("Laboratory Staff", "queue"), notifications: () => renderNotifications("Laboratory Staff"), profile: renderLabProfile, settings: renderLabSettings },
     Patient: { dashboard: renderPatientDashboard, orders: () => renderOrders("Patient"), results: () => renderResults("Patient"), notifications: () => renderNotifications("Patient"), profile: renderPatientProfile, settings: renderPatientSettings },
@@ -1751,7 +1791,7 @@
   function userForm(user = {}) {
     const roles = uiConfig().roles || ["Admin", "Doctor", "Laboratory Staff", "Patient"];
     const facilityOptions = [{ value: "", label: "Unassigned" }, ...state.data.facilities.map((facility) => ({ value: facility.id, label: facility.name }))];
-    return `<form data-form="user"><input type="hidden" name="id" value="${h(user.id || "")}"><div class="form-grid">${field("Full Name", "name", user.name || "", "text", "required")}${field("Email", "email", user.email || "", "email", "required")}${field("Username", "username", user.username || "", "text", 'required minlength="3" maxlength="20" pattern="[A-Za-z0-9._-]{3,20}"')}${field("Contact", "contact", user.contact || "")}<div class="form-field full"><label>Role</label>${select("role", roles, user.role || "Patient", "required")}</div><div class="form-field full"><label>Assigned Facility</label>${select("facilityId", facilityOptions, user.assignedFacilityId || "")}</div><div class="form-field full"><label>Status</label>${select("status", ["Active", "Inactive"], user.status || "Active", "required")}</div>${field(user.id ? "New Password (optional)" : "Password", "password", "", "password", user.id ? "" : "required")}</div><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Save User</button></div></form>`;
+    return `<form data-form="user"><input type="hidden" name="id" value="${h(user.id || "")}"><div class="form-grid user-form-grid">${field("Full Name", "name", user.name || "", "text", "required")}${field("Email", "email", user.email || "", "email", "required")}${field("Username", "username", user.username || "", "text", 'class="user-compact-input" required minlength="3" maxlength="20" pattern="[A-Za-z0-9._-]{3,20}"')}${field("Contact", "contact", formatPhilippineMobile(user.contact || ""), "tel", 'class="user-compact-input" inputmode="numeric" autocomplete="tel-national" placeholder="09XX-XXX-XXXX" maxlength="13" pattern="09[0-9]{2}-[0-9]{3}-[0-9]{4}" title="Use the format 09XX-XXX-XXXX"')}<div class="form-field"><label>Role</label>${select("role", roles, user.role || "Patient", "required")}</div><div class="form-field"><label>Assigned Facility</label>${select("facilityId", facilityOptions, user.assignedFacilityId || "")}</div><div class="form-field"><label>Status</label>${select("status", ["Active", "Inactive"], user.status || "Active", "required")}</div>${field(user.id ? "New Password (optional)" : "Password", "password", "", "password", user.id ? "" : "required")}</div><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Save User</button></div></form>`;
   }
 
   function facilityForm(facility = {}) {
@@ -2014,6 +2054,7 @@
       let payload = formObject(form);
       let result;
       if (kind === "user") {
+        payload.contact = formatPhilippineMobile(payload.contact || "");
         result = await api("save_user", payload);
         await refreshAfter(result, "User saved successfully.");
         closeDrawer();
@@ -2103,6 +2144,16 @@
   }
 
   async function handleDashboardClick(event) {
+    const passwordToggle = event.target.closest("[data-drawer-password-toggle]");
+    if (passwordToggle) {
+      const input = document.getElementById(passwordToggle.dataset.drawerPasswordToggle);
+      if (!input) return;
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      passwordToggle.setAttribute("aria-pressed", String(show));
+      passwordToggle.setAttribute("aria-label", show ? "Hide password" : "Show password");
+      return;
+    }
     const addRule = event.target.closest("[data-add-validation-rule]");
     if (addRule) { addRule.closest("form").querySelector("[data-validation-rules]").insertAdjacentHTML("beforeend", validationRuleEditor()); return; }
     const removeRule = event.target.closest("[data-remove-validation-rule]");
@@ -2554,6 +2605,10 @@
   }
 
   function handleDashboardInput(event) {
+    if (event.target.matches('form[data-form="user"] input[name="contact"]')) {
+      event.target.value = formatPhilippineMobile(event.target.value);
+      return;
+    }
     if (!event.target.matches("[data-table-search], [data-table-date-from], [data-table-date-to], #global-search")) return;
     applyPageFilters();
   }

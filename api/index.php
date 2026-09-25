@@ -783,11 +783,9 @@ function fetch_facilities($pdo, $user = null)
         $where = 'WHERE f.id IN (' . placeholders(count($ids)) . ')';
         $params = $ids;
     } elseif ($user && $user['role'] === 'Doctor') {
-        if (!$user['assignedFacilityId']) {
-            return [];
-        }
-        $where = 'WHERE f.status = "Active" AND f.id = ?';
-        $params[] = (int) $user['assignedFacilityId'];
+        // Doctors can route a laboratory request to any active facility in the
+        // centralized network. Laboratory staff access remains facility-scoped.
+        $where = 'WHERE f.status = "Active"';
     } elseif ($user && $user['role'] !== 'Admin') {
         $where = 'WHERE f.status = "Active"';
     }
@@ -1464,6 +1462,9 @@ function save_user($pdo, $data, $actor)
     validate_max_length($name, 120, 'Full name', 'name');
     validate_max_length($email, 160, 'Email', 'email');
     validate_max_length($contact, 40, 'Contact number', 'contact');
+    if ($contact !== null && $contact !== '' && !preg_match('/^09\d{2}-\d{3}-\d{4}$/', $contact)) {
+        respond(false, 'Use the contact number format 09XX-XXX-XXXX.', [], 422, ['contact' => 'Invalid format']);
+    }
     if (!valid_username($username)) {
         respond(false, 'Use a 3-20 character username with letters, numbers, dots, hyphens, or underscores.', [], 422, ['username' => 'Invalid username']);
     }
@@ -1639,11 +1640,11 @@ function create_order($pdo, $data, $actor)
         respond(false, 'Select a patient connected to your assigned facility or existing laboratory requests.', [], 403, ['patientId' => 'Outside doctor scope']);
     }
     $facilityId = find_facility_id($pdo, $data);
-    if (!$facilityId || (int) $facilityId !== (int) ($actor['assignedFacilityId'] ?? 0)) {
-        respond(false, 'Laboratory requests can only be submitted for your assigned active facility.', [], 403, ['facilityId' => 'Outside doctor scope']);
+    if (!$facilityId) {
+        respond(false, 'Select an active laboratory facility.', [], 422, ['facilityId' => 'Required']);
     }
     if (!one($pdo, 'SELECT id FROM facilities WHERE id = ? AND status = "Active" LIMIT 1', [$facilityId])) {
-        respond(false, 'Your assigned facility is not active.', [], 409, ['facilityId' => 'Inactive facility']);
+        respond(false, 'The selected laboratory facility is not active.', [], 409, ['facilityId' => 'Inactive facility']);
     }
     $doctorId = $actor['role'] === 'Doctor' ? $actor['id'] : (int) ($data['doctorId'] ?? $actor['id']);
     $doctor = one($pdo, 'SELECT u.id, u.name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ? AND r.name = "Doctor" AND u.status = "Active"', [$doctorId]);
