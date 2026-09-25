@@ -21,6 +21,8 @@ assert.match(main, /data-add-result-parameter/);
 assert.match(main, /data-remove-result-parameter/);
 assert.match(main, /application\/pdf/);
 assert.match(main, /data-rotate-result-image/);
+assert.match(main, /Trying another image orientation/);
+assert.match(main, /rotationCandidates/);
 assert.match(main, /data-remove-result-source/);
 assert.match(main, /data-include-result-source/);
 assert.match(main, /OCR confidence/);

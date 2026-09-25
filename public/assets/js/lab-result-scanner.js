@@ -198,7 +198,9 @@
       });
       const insideResultTable = resultHeadingIndex >= 0 && index > resultHeadingIndex && (resultEndIndex < 0 || index < resultEndIndex);
       const looksQualitative = /\b(?:non[- ]?reactive|not detected|positive|negative|reactive|detected|trace|present|absent)\b/i.test(line);
-      if (!matchedKnownAnalyte && (insideResultTable || looksQualitative)) {
+      const looksStructuredNumeric = unitPattern.test(line)
+        && new RegExp(`(${numberPattern})\\s*(?:-|â€“|â€”|to)\\s*(${numberPattern})`, "i").test(line);
+      if (!matchedKnownAnalyte && (insideResultTable || looksQualitative || looksStructuredNumeric)) {
         const result = parseGenericResultLine(line);
         if (result && !found.has(result.parameter)) found.set(result.parameter, result);
       }

@@ -610,19 +610,43 @@
     try {
       const worker = await scannerWorker(form);
       await worker.setParameters({ tessedit_pageseg_mode: "6" });
-      const preparedPages = await prepareResultScan(file, Number(form.dataset.scanRotation || 0));
-      const recognizedPages = [];
-      for (let index = 0; index < preparedPages.length; index += 1) {
-        updateScannerStatus(form, `Reading page ${index + 1} of ${preparedPages.length}...`, index / preparedPages.length);
-        recognizedPages.push(await worker.recognize(preparedPages[index]));
+      const selectedRotation = Number(form.dataset.scanRotation || 0);
+      const rotationCandidates = file.type.startsWith("image/")
+        ? [...new Set([selectedRotation, (selectedRotation + 90) % 360, (selectedRotation + 270) % 360])]
+        : [selectedRotation];
+      let recognizedPages = [];
+      let parsed = null;
+      let appliedRotation = selectedRotation;
+      for (let rotationIndex = 0; rotationIndex < rotationCandidates.length; rotationIndex += 1) {
+        const candidateRotation = rotationCandidates[rotationIndex];
+        if (rotationIndex > 0) updateScannerStatus(form, "No values matched yet. Trying another image orientation...", 0);
+        const preparedPages = await prepareResultScan(file, candidateRotation);
+        const candidatePages = [];
+        for (let index = 0; index < preparedPages.length; index += 1) {
+          updateScannerStatus(form, `Reading page ${index + 1} of ${preparedPages.length}...`, index / preparedPages.length);
+          candidatePages.push(await worker.recognize(preparedPages[index]));
+        }
+        const candidateParsed = window.ClinicLabScanner?.parse(candidatePages.map((page) => page.data?.text || "").join("\n"));
+        if (!parsed || (candidateParsed?.values?.length || 0) > (parsed?.values?.length || 0)) {
+          parsed = candidateParsed;
+          recognizedPages = candidatePages;
+          appliedRotation = candidateRotation;
+        }
+        // A single row from a sideways scan can be a false match. Keep trying
+        // orientations until a credible table is found, then retain the best result.
+        if ((candidateParsed?.values?.length || 0) >= 2) break;
       }
-      const parsed = window.ClinicLabScanner?.parse(recognizedPages.map((page) => page.data?.text || "").join("\n"));
+      if (appliedRotation !== selectedRotation) {
+        form.dataset.scanRotation = String(appliedRotation);
+        const preview = $("[data-result-scan-preview]", form);
+        if (preview) preview.style.transform = `rotate(${appliedRotation}deg)`;
+      }
       const rawOutput = $("[data-result-scan-text]", form);
       const rawPanel = $("[data-result-scan-output]", form);
       if (rawOutput) rawOutput.textContent = parsed?.rawText || "No text detected.";
       if (rawPanel) rawPanel.hidden = false;
       if (!parsed?.values?.length) {
-        updateScannerStatus(form, "Text was read, but no supported laboratory values were matched. Try a clearer, straight-on image or enter the values manually.", null, "error");
+        updateScannerStatus(form, "Text was detected, but no result rows could be identified after checking the image orientation. Review the detected text or enter the values manually.", null, "error");
         return;
       }
       const confidence = Math.round(recognizedPages.reduce((sum, page) => sum + Number(page.data?.confidence || 0), 0) / Math.max(1, recognizedPages.length));

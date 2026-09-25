@@ -78,4 +78,14 @@ assert.equal(qualitative.values[0].flag, "Normal");
 assert.equal(qualitative.values[1].value, "Non-reactive");
 assert.equal(qualitative.values[2].flag, "Abnormal");
 
+const headingMissedByOcr = scanner.parse(`
+PATIENT INFORMATION
+Bilirubin Total 0.40 mg/dL 0.30 - 1.20 Normal
+Alkaline Phosphatase 88 U/L 40 - 129 Normal
+`);
+assert.equal(headingMissedByOcr.values.length, 2);
+assert.equal(headingMissedByOcr.values[0].parameter, "Bilirubin Total");
+assert.equal(headingMissedByOcr.values[0].referenceRange, "0.30-1.20");
+assert.equal(headingMissedByOcr.values[1].value, "88");
+
 console.log("Lab result scanner parser tests passed.");
