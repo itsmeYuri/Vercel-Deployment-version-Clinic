@@ -2943,6 +2943,100 @@
     });
   }
 
+  function patientAssistantReply(question) {
+    const query = String(question || "").toLowerCase().trim();
+    const orders = state.data?.orders || [];
+    const results = state.data?.results || [];
+    const notifications = state.data?.notifications || [];
+    const patient = state.data?.patients?.[0] || {};
+    if (/chest pain|can't breathe|cannot breathe|severe bleeding|unconscious|suicid|emergency/.test(query)) {
+      return "This may need urgent help. Contact your local emergency service or go to the nearest emergency department now. This assistant cannot assess emergencies.";
+    }
+    if (/diagnos|medicine|medication|treatment|what does.*mean|is.*normal|high|low|critical|interpret/.test(query)) {
+      return "I can show your released laboratory information, but I cannot diagnose a condition or recommend treatment. Please discuss the result and its reference range with your doctor. Open My Results to review the verified report.";
+    }
+    if (/result|report/.test(query)) {
+      const released = results.filter((result) => result.status === "Released");
+      if (!released.length) return "You do not have a released result available yet. Results appear in My Results only after laboratory verification and release.";
+      const latest = released[0];
+      return `You have ${released.length} released result${released.length === 1 ? "" : "s"}. The latest is ${latest.testName || "a laboratory result"} from ${latest.facilityName || "your facility"}. Open My Results to view or download it.`;
+    }
+    if (/request|order|status|progress|pending|sample/.test(query)) {
+      if (!orders.length) return "No laboratory requests are currently linked to your patient profile.";
+      const latest = orders[0];
+      return `Your latest request ${latest.orderNumber || ""} is ${latest.status || "being processed"}. It includes ${latest.tests || "the requested laboratory tests"} at ${latest.facilityName || "your assigned facility"}.`;
+    }
+    if (/facility|clinic|laboratory|location/.test(query)) {
+      return `Your primary facility is ${patient.primaryFacility || currentUser.assignedFacility || "not assigned yet"}. Facility contact details appear on your request and result records.`;
+    }
+    if (/notification|alert|update/.test(query)) {
+      const unread = notifications.filter((item) => !item.isRead).length;
+      return `You have ${unread} unread notification${unread === 1 ? "" : "s"}. Use the notification bell in the header to review updates.`;
+    }
+    if (/download|print|pdf/.test(query)) return "Open My Results, select a released result, then use Print / Save PDF. You can also export your visible records from Settings.";
+    if (/profile|email|phone|contact|password/.test(query)) return "Open your profile menu to update contact details or go to Settings to change your password and download your visible records.";
+    if (/hello|hi|hey|help|what can you do/.test(query)) return "I can help with your laboratory request status, released results, facility, notifications, profile, downloads, and portal navigation. What would you like to know?";
+    return "I can help with this patient portal and the records connected to your account. Try asking: “What is my latest request status?”, “Do I have released results?”, or “How do I download my report?” For medical advice, contact your doctor.";
+  }
+
+  function initPatientAssistant() {
+    if (currentUser?.role !== "Patient" || $("[data-patient-assistant]")) return;
+    const assistant = document.createElement("section");
+    assistant.className = "patient-assistant";
+    assistant.dataset.patientAssistant = "";
+    assistant.innerHTML = `<button class="patient-assistant-launcher" type="button" aria-label="Open patient assistant" aria-expanded="false">${icon("note")}<span>Ask Assistant</span></button><div class="patient-assistant-panel" role="dialog" aria-label="Patient assistant" hidden><header><div><strong>Patient Assistant</strong><span>Portal and record guidance</span></div><button type="button" class="icon-button" data-close-patient-assistant aria-label="Close patient assistant">${icon("close")}</button></header><div class="patient-assistant-messages" aria-live="polite"><p class="patient-assistant-message is-assistant">Hello ${h(currentUser.name?.split(" ")[0] || "there")}. Ask me about your requests, released results, notifications, facility, or how to use the portal.</p></div><div class="patient-assistant-suggestions"><button type="button">Latest request status</button><button type="button">Released results</button><button type="button">How to download</button></div><form class="patient-assistant-form"><label class="sr-only" for="patient-assistant-question">Ask a question</label><input id="patient-assistant-question" maxlength="300" autocomplete="off" placeholder="Ask about your records or the portal..." required><button type="submit" aria-label="Send question">${icon("arrow")}</button></form><p class="patient-assistant-disclaimer">This assistant does not provide diagnosis, treatment, or emergency advice.</p></div>`;
+    document.body.append(assistant);
+    const launcher = $(".patient-assistant-launcher", assistant);
+    const panel = $(".patient-assistant-panel", assistant);
+    const input = $("input", assistant);
+    const messages = $(".patient-assistant-messages", assistant);
+    const setOpen = (open) => {
+      panel.hidden = !open;
+      launcher.setAttribute("aria-expanded", String(open));
+      if (open) input.focus(); else launcher.focus();
+    };
+    const history = [];
+    const ask = async (question) => {
+      const userMessage = document.createElement("p");
+      userMessage.className = "patient-assistant-message is-user";
+      userMessage.textContent = question;
+      messages.append(userMessage);
+      const pending = document.createElement("p");
+      pending.className = "patient-assistant-message is-assistant is-thinking";
+      pending.textContent = "Thinking...";
+      messages.append(pending);
+      messages.scrollTop = messages.scrollHeight;
+      input.disabled = true;
+      let answer;
+      try {
+        const result = await api("patient_ai_chat", { question, history: history.slice(-6) });
+        answer = result.answer;
+      } catch (error) {
+        answer = patientAssistantReply(question);
+      } finally {
+        input.disabled = false;
+      }
+      pending.remove();
+      const response = document.createElement("p");
+      response.className = "patient-assistant-message is-assistant";
+      response.textContent = answer;
+      messages.append(response);
+      history.push({ role: "user", content: question }, { role: "assistant", content: answer });
+      messages.scrollTop = messages.scrollHeight;
+      input.focus();
+    };
+    launcher.addEventListener("click", () => setOpen(panel.hidden));
+    $("[data-close-patient-assistant]", assistant).addEventListener("click", () => setOpen(false));
+    $$(".patient-assistant-suggestions button", assistant).forEach((button) => button.addEventListener("click", () => { ask(button.textContent); }));
+    $("form", assistant).addEventListener("submit", (event) => {
+      event.preventDefault();
+      const question = input.value.trim();
+      if (!question) return;
+      input.value = "";
+      ask(question);
+    });
+  }
+
   async function initProtectedApp() {
     const requiredRole = document.body?.dataset.requiredRole;
     if (!requiredRole) return;
@@ -2959,6 +3053,7 @@
       hydrateStaticIcons();
       hydrateProfile();
       setPage(requestedPage, false);
+      initPatientAssistant();
       startNotificationPolling();
       setTimeout(warmPanelCache, 250);
     } catch (error) {

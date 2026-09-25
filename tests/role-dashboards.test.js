@@ -7,6 +7,14 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const main = fs.readFileSync(path.join(root, "public/assets/js/main.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "public/assets/css/styles.css"), "utf8");
+
+assert.match(main, /function initPatientAssistant/);
+assert.match(main, /currentUser\?\.role !== "Patient"/);
+assert.match(main, /function patientAssistantReply/);
+assert.match(main, /This assistant does not provide diagnosis, treatment, or emergency advice/);
+assert.match(main, /api\("patient_ai_chat"/);
+assert.match(main, /is-thinking/);
+assert.match(css, /\.patient-assistant-panel/);
 const shell = fs.readFileSync(path.join(root, "app/views/pages/app-shell.php"), "utf8");
 
 for (const label of [
