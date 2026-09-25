@@ -41,6 +41,8 @@ assert.match(main, /function renderPatientDashboard/);
 assert.match(main, /function filteredTable/);
 assert.match(main, /Patients with laboratory activity, shown before their results/);
 assert.match(main, /Requests available for result upload", "Search request, patient, or test"/);
+assert.match(main, /class="upload-queue-section"/);
+assert.match(css, /\.upload-layout \.upload-panel \{ position: static;/);
 assert.match(main, /goPage: "facilities"/);
 assert.match(main, /goPage: "tests"/);
 assert.match(main, /table-filter-scope/);
