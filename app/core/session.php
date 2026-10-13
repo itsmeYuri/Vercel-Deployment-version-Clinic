@@ -21,6 +21,28 @@ function clinic_session_cookie_options($expires = 0)
     ];
 }
 
+function clinic_session_unavailable(Throwable $error)
+{
+    error_log('Database session initialization failed: ' . $error->getMessage());
+    http_response_code(503);
+    header('Cache-Control: no-store, private');
+    $path = (string) parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+    if (preg_match('~^/api(?:/|$)~', $path)) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'success' => false,
+            'ok' => false,
+            'message' => 'Sign-in is temporarily unavailable. Please contact the administrator.',
+            'data' => [],
+            'errors' => new stdClass(),
+        ], JSON_UNESCAPED_SLASHES);
+    } else {
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Sign-in is temporarily unavailable. Please contact the administrator.';
+    }
+    exit;
+}
+
 function clinic_start_session()
 {
     static $started = false;
@@ -47,11 +69,16 @@ function clinic_start_session()
 
     $_SESSION = [];
     $token = (string) ($_COOKIE['CLINIC_SESSION'] ?? '');
-    $row = null;
-    if (preg_match('/^[a-f0-9]{64}$/', $token)) {
+    $validToken = (bool) preg_match('/^[a-f0-9]{64}$/', $token);
+    if (!$validToken) {
+        $token = bin2hex(random_bytes(32));
+    }
+    try {
         $stmt = db()->prepare('SELECT user_id, csrf_token, mfa_verified, pending_mfa_user_id, pending_mfa_expires_at, oauth_flow, recent_auth_at, auth_notice FROM auth_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1');
         $stmt->execute([hash('sha256', $token)]);
-        $row = $stmt->fetch() ?: null;
+        $row = $validToken ? ($stmt->fetch() ?: null) : null;
+    } catch (PDOException $error) {
+        clinic_session_unavailable($error);
     }
     if ($row) {
         if ($row['user_id'] !== null) {
@@ -75,7 +102,9 @@ function clinic_start_session()
         }
         $_SESSION['csrf_token'] = $row['csrf_token'];
     } else {
-        $token = bin2hex(random_bytes(32));
+        if ($validToken) {
+            $token = bin2hex(random_bytes(32));
+        }
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
     $GLOBALS['clinicSessionToken'] = $token;
