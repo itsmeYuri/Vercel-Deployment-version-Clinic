@@ -4247,3 +4247,26 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
   .patient-assistant-panel { width: 100%; max-height: calc(100dvh - 84px); }
   .patient-assistant-messages { max-height: min(42dvh, 340px); }
 }
+
+/* Focused account-security popup, shared by all dashboard roles. */
+.account-security-dialog { width: min(600px, calc(100vw - 32px)); max-width: none; height: min(720px, calc(100dvh - 40px)); max-height: none; padding: 0; border: 0; border-radius: 16px; background: #fff; color: var(--ink-900); box-shadow: 0 24px 64px rgba(20, 55, 67, .24); }
+.account-security-dialog::backdrop { background: rgba(16, 39, 48, .5); }
+.security-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--line); }
+.security-dialog-header h2 { margin: 0; font-size: 22px; }
+.security-dialog-header button { flex-shrink: 0; width: 44px; height: 44px; }
+.account-security-dialog iframe { display: block; width: 100%; height: calc(100% - 85px); border: 0; }
+.security-popup-content { min-height: 0; background: #fff; }
+.security-popup-content .account-security-shell { display: block; min-height: 0; padding: 0; background: #fff; }
+.security-popup-content .account-security-panel { display: block; padding: 0; }
+.security-popup-content .account-security-card { width: 100%; max-width: none; padding: 0 24px 24px; border: 0; border-radius: 0; box-shadow: none; animation: none; }
+.security-tabs { display: flex; gap: 4px; padding: 16px 0; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+.security-tabs button { flex: 1; padding: 12px 6px; border: 0; border-radius: 8px; background: transparent; color: #456572; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.security-tabs button:hover { background: #f0f8f8; }
+.security-tabs button[aria-pressed="true"] { background: #def5f3; color: #006f70; }
+.security-popup-content [data-security-panel] > section:first-child { border-top: 0; margin-top: 0; padding-top: 12px; }
+.security-popup-content [hidden] { display: none !important; }
+@media (max-width: 480px) {
+  .account-security-dialog { width: calc(100vw - 20px); height: calc(100dvh - 24px); }
+  .security-dialog-header { padding: 16px; }
+  .security-popup-content .account-security-card { padding: 0 16px 20px; }
+}

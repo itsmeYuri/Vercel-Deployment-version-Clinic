@@ -1412,7 +1412,7 @@
 
   function renderAdminSettings() {
     return `${heading(...pageMeta.Admin.settings)}
-      <div class="settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update the password for your administrator account.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button> <a class="btn btn-secondary" href="../auth/security.php">Authenticator and Google sign-in</a></section>${accessibilityCard()}<section class="card settings-card"><div class="settings-card-head"><div><h3>Role Permissions</h3><p>Access is assigned according to each clinic role.</p></div>${icon("lock")}</div>${["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => `<div class="setting-row"><div><strong>${h(role)}</strong><p>${role === "Admin" ? "Full system access" : "Role-scoped records and workflow actions"}</p></div><span class="badge badge-green">Enforced</span></div>`).join("")}</section></div>`;
+      <div class="settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update the password for your administrator account.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-security-open="password">Change Password</button> <button class="btn btn-secondary" data-security-open="authenticator">Authenticator and Google sign-in</button></section>${accessibilityCard()}<section class="card settings-card"><div class="settings-card-head"><div><h3>Role Permissions</h3><p>Access is assigned according to each clinic role.</p></div>${icon("lock")}</div>${["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => `<div class="setting-row"><div><strong>${h(role)}</strong><p>${role === "Admin" ? "Full system access" : "Role-scoped records and workflow actions"}</p></div><span class="badge badge-green">Enforced</span></div>`).join("")}</section></div>`;
   }
 
   function renderAdminMaintenance() {
@@ -1530,7 +1530,7 @@
   }
 
   function renderDoctorSettings() {
-    return `${heading(...pageMeta.Doctor.settings)}<div class="doctor-settings"><div class="doctor-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update your account password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button> <a class="btn btn-secondary" href="../auth/security.php">Authenticator and Google sign-in</a></section>${accessibilityCard()}</div></div>`;
+    return `${heading(...pageMeta.Doctor.settings)}<div class="doctor-settings"><div class="doctor-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update your account password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-security-open="password">Change Password</button> <button class="btn btn-secondary" data-security-open="authenticator">Authenticator and Google sign-in</button></section>${accessibilityCard()}</div></div>`;
   }
 
   function renderLabDashboard() {
@@ -1590,7 +1590,7 @@
   }
 
   function renderLabSettings() {
-    return `${heading(...pageMeta["Laboratory Staff"].settings)}<div class="lab-settings-layout"><div class="lab-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Change your password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button> <a class="btn btn-secondary" href="../auth/security.php">Authenticator and Google sign-in</a></section>${accessibilityCard()}</div></div>`;
+    return `${heading(...pageMeta["Laboratory Staff"].settings)}<div class="lab-settings-layout"><div class="lab-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Change your password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-security-open="password">Change Password</button> <button class="btn btn-secondary" data-security-open="authenticator">Authenticator and Google sign-in</button></section>${accessibilityCard()}</div></div>`;
   }
 
   function renderPatientDashboard() {
@@ -1622,7 +1622,7 @@
 
   function renderPatientSettings() {
     return `${heading(...pageMeta.Patient.settings)}
-      <div class="patient-settings"><div class="patient-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Account Settings</h3><p>Manage sign-in and privacy.</p></div>${icon("user")}</div><div class="info-display-grid"><div class="info-display"><span>Email</span><strong>${h(currentUser.email)}</strong></div><div class="info-display"><span>Username</span><strong>${h(currentUser.username)}</strong></div></div><div class="account-settings-actions">${currentUser.googleCreated ? `<a class="btn btn-secondary" href="../auth/security.php#password-section">Set or update password</a>` : `<button class="btn btn-secondary" data-drawer="password">Change password</button>`}<a class="btn btn-secondary" href="../auth/security.php">Authenticator and Google sign-in</a></div></section><section class="card settings-card"><div class="settings-card-head"><div><h3>Privacy Settings</h3><p>Patients can only see released own results.</p></div>${icon("lock")}</div><div class="clinical-note-box"><h4>${icon("shield")} Data access notice</h4><p>API filtering restricts your portal to patient profile ${h(currentUser.patientProfileId)}.</p></div><div class="patient-download-box"><div><strong>Download records</strong><p>Export your currently visible database-backed records.</p></div><button class="btn btn-primary btn-sm" data-download>${icon("download")} Download</button></div></section>${accessibilityCard()}</div></div>`;
+      <div class="patient-settings"><div class="patient-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Account Settings</h3><p>Manage sign-in and privacy.</p></div>${icon("user")}</div><div class="info-display-grid"><div class="info-display"><span>Email</span><strong>${h(currentUser.email)}</strong></div><div class="info-display"><span>Username</span><strong>${h(currentUser.username)}</strong></div></div><div class="account-settings-actions">${currentUser.googleCreated ? `<button class="btn btn-secondary" data-security-open="password">Set or update password</button>` : `<button class="btn btn-secondary" data-security-open="password">Change password</button>`}<button class="btn btn-secondary" data-security-open="authenticator">Authenticator and Google sign-in</button></div></section><section class="card settings-card"><div class="settings-card-head"><div><h3>Privacy Settings</h3><p>Patients can only see released own results.</p></div>${icon("lock")}</div><div class="clinical-note-box"><h4>${icon("shield")} Data access notice</h4><p>API filtering restricts your portal to patient profile ${h(currentUser.patientProfileId)}.</p></div><div class="patient-download-box"><div><strong>Download records</strong><p>Export your currently visible database-backed records.</p></div><button class="btn btn-primary btn-sm" data-download>${icon("download")} Download</button></div></section>${accessibilityCard()}</div></div>`;
   }
 
   const renderers = {
@@ -1973,6 +1973,31 @@
 
   function passwordForm() {
     return `<form data-form="password"><div class="form-grid">${field("Current Password", "currentPassword", "", "password", "required")}${field("New Password", "newPassword", "", "password", "required minlength=\"12\" maxlength=\"128\"")}${field("Confirm New Password", "confirmPassword", "", "password", "required minlength=\"12\" maxlength=\"128\"")}</div><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Update Password</button></div></form>`;
+  }
+
+  function openSecurityPopup(tab = "authenticator") {
+    if (document.querySelector('#account-security-dialog')) return;
+    const trigger = document.activeElement;
+    const dialog = document.createElement('dialog');
+    dialog.id = 'account-security-dialog';
+    dialog.className = 'account-security-dialog';
+    dialog.setAttribute('aria-labelledby', 'security-dialog-title');
+    dialog.innerHTML = `<header class="security-dialog-header"><h2 id="security-dialog-title">Account security</h2><button type="button" class="icon-button" aria-label="Close account security" data-security-close>${icon("close")}</button></header><iframe title="Account security settings" src="../auth/security.php?embed=1&tab=${encodeURIComponent(tab)}"></iframe>`;
+    document.body.append(dialog);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onMessage = event => {
+      if (event.origin === location.origin && event.source === dialog.querySelector('iframe').contentWindow && event.data?.type === 'clinic-security-close') dialog.close();
+    };
+    window.addEventListener('message', onMessage);
+    dialog.querySelector('[data-security-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => {
+      window.removeEventListener('message', onMessage);
+      document.body.style.overflow = previousOverflow;
+      dialog.remove();
+      trigger?.focus();
+    }, { once: true });
+    dialog.showModal();
   }
 
   function openDrawer(type, id = null) {
@@ -2940,6 +2965,10 @@
     window.matchMedia("(max-width: 620px)").addEventListener("change", () => {
       paginateTables();
     });
+    document.addEventListener("click", event => {
+      const trigger = event.target.closest('[data-security-open]');
+      if (trigger) { event.preventDefault(); openSecurityPopup(trigger.dataset.securityOpen); }
+    });
     document.addEventListener("click", handleDashboardClick);
     document.addEventListener("submit", handleDashboardSubmit);
     document.addEventListener("input", handleDashboardInput);
@@ -3083,6 +3112,13 @@
       hydrateStaticIcons();
       hydrateProfile();
       setPage(requestedPage, false);
+      const securityTab = new URLSearchParams(location.search).get('security');
+      if (['password', 'authenticator', 'google'].includes(securityTab)) {
+        openSecurityPopup(securityTab);
+        const cleanUrl = new URL(location.href);
+        cleanUrl.searchParams.delete('security');
+        history.replaceState(null, '', cleanUrl);
+      }
       initPatientAssistant();
       startNotificationPolling();
       setTimeout(warmPanelCache, 250);

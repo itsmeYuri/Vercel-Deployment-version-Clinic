@@ -142,7 +142,7 @@ try {
         clinic_redirect('auth/login.php#mfa');
     }
     $_SESSION['user_id'] = $userId;
-    if ($newGoogleAccount) clinic_redirect('auth/security.php#password-section');
+    if ($newGoogleAccount) clinic_redirect(explode('#', clinic_role_home_path($user['role']))[0] . '?security=password#settings');
     clinic_redirect(clinic_role_home_path($user['role']));
 } catch (Throwable $error) {
     if (isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();

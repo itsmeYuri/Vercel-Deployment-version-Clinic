@@ -2,6 +2,12 @@
 require_once __DIR__ . '/../../app/core/auth.php';
 require_once __DIR__ . '/../../app/core/google.php';
 $user = clinic_require_auth();
+$securityTab = in_array($_GET['tab'] ?? '', ['password', 'authenticator', 'google'], true) ? $_GET['tab'] : 'authenticator';
+if (($_GET['embed'] ?? '') !== '1') {
+    $dashboard = explode('#', clinic_role_home_path($user['role']))[0];
+    clinic_redirect($dashboard . '?security=' . $securityTab . '#settings');
+}
+$bodyClass = 'security-popup-content';
 $googleIdentity = db()->prepare('SELECT 1 FROM user_google_identities WHERE user_id = ? LIMIT 1');
 $googleIdentity->execute([$user['id']]);
 $googleLinked = (bool) $googleIdentity->fetchColumn();
@@ -19,14 +25,13 @@ require __DIR__ . '/../../app/views/layouts/header.php';
 <main class="auth-shell account-security-shell">
   <section class="form-panel account-security-panel">
     <div class="form-card account-security-card">
-      <header class="form-header account-security-header">
-        <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2 4 6v5c0 5.2 3.2 9.2 8 11 4.8-1.8 8-5.8 8-11V6l-8-4Z"/><path d="m9 12 2 2 4-4"/></svg></span>
-        <h1>Account security</h1>
-        <p>Manage your password, authenticator, and Google sign-in.</p>
-      </header>
-      <a class="security-back-link" href="<?= e(clinic_public_url(clinic_role_home_path($user['role']))) ?>"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>Back to dashboard</a>
+      <nav class="security-tabs" aria-label="Account security settings">
+        <button type="button" data-security-tab="password">Password</button>
+        <button type="button" data-security-tab="authenticator">Authenticator</button>
+        <button type="button" data-security-tab="google">Google sign-in</button>
+      </nav>
       <div class="status-message" id="security-status" role="status" aria-live="polite"></div>
-      <section id="password-section">
+      <div data-security-panel="password"><section id="password-section">
         <h2><?= $googleCreated ? 'Set an account password' : 'Change password' ?></h2>
         <p><?= $googleCreated ? 'Create a password for email sign-in. Your recent Google sign-in confirms this change.' : 'Use your current password to choose a new one.' ?></p>
         <?php if ($googleCreated && !$recentAuth): ?><p class="security-hint">For your security, sign out and sign in with Google again before setting a password.</p><?php endif; ?>
@@ -37,6 +42,7 @@ require __DIR__ . '/../../app/views/layouts/header.php';
           <button class="primary-button" type="submit"><?= $googleCreated ? 'Set password' : 'Update password' ?></button>
         </form>
       </section>
+      </div><div data-security-panel="authenticator" hidden>
       <section id="mfa-disabled" hidden>
         <h2>Set up an authenticator</h2>
         <p><?= $googleCreated ? 'Your recent Google sign-in lets you start setup. If it has been more than five minutes, sign in with Google again.' : 'If it has been more than five minutes since sign-in, confirm your current password.' ?></p>
@@ -75,19 +81,21 @@ require __DIR__ . '/../../app/views/layouts/header.php';
         <pre id="recovery-list"></pre>
         <button class="btn btn-secondary" id="recovery-done" type="button">I saved these codes</button>
       </section>
+      </div><div data-security-panel="google" hidden>
       <?php if ($googleLinked): ?>
       <section class="security-google-connected"><h2>Google sign-in</h2><p>Your Google account is connected. You can use it to sign in.</p><span class="security-connected-badge">Connected</span></section>
       <?php elseif (clinic_env('CLINIC_GOOGLE_CLIENT_ID', '') !== '' && clinic_env('CLINIC_GOOGLE_CLIENT_SECRET', '') !== '' && clinic_env('CLINIC_GOOGLE_REDIRECT_URI', '') !== ''): ?>
       <section>
         <h2>Google sign-in</h2>
         <p>Link a Google account to this signed-in account. Confirm your current password first.</p>
-        <form method="post" action="<?= e(clinic_public_url('auth/google.php?mode=link')) ?>">
+        <form method="post" target="_top" action="<?= e(clinic_public_url('auth/google.php?mode=link')) ?>">
           <input type="hidden" name="csrf_token" value="<?= e(clinic_csrf_token()) ?>">
           <div class="field"><label for="google-link-password">Current password</label><div class="input-wrap"><input id="google-link-password" name="password" type="password" autocomplete="current-password" required></div></div>
           <button class="btn btn-secondary" type="submit">Link Google account</button>
         </form>
       </section>
-      <?php endif; ?>
+      <?php else: ?><section><h2>Google sign-in</h2><p>Google sign-in is not available for this system yet.</p></section><?php endif; ?>
+      </div>
     </div>
   </section>
 </main>
@@ -162,7 +170,19 @@ require __DIR__ . '/../../app/views/layouts/header.php';
     status('Password saved. You can now sign in with your email and new password.');
     $('#security-status').scrollIntoView({ block: 'nearest' });
   });
-  showStatus().catch((error) => status(error.message, true));
+  let mfaLoaded = false;
+  const selectTab = (tab) => {
+    document.querySelectorAll('[data-security-panel]').forEach(panel => { panel.hidden = panel.dataset.securityPanel !== tab; });
+    document.querySelectorAll('[data-security-tab]').forEach(button => { button.setAttribute('aria-pressed', String(button.dataset.securityTab === tab)); });
+    $('#security-status').textContent = '';
+    $('#security-status').classList.remove('is-visible');
+    if (tab === 'authenticator' && !mfaLoaded) showStatus().then(() => { mfaLoaded = true; }).catch(error => status(error.message, true));
+  };
+  document.querySelectorAll('[data-security-tab]').forEach(button => button.addEventListener('click', () => selectTab(button.dataset.securityTab)));
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') parent.postMessage({ type: 'clinic-security-close' }, location.origin);
+  });
+  selectTab(<?= json_encode($securityTab) ?>);
 })();
 </script>
-<?php require __DIR__ . '/../../app/views/layouts/footer.php'; ?>
+</body></html>
