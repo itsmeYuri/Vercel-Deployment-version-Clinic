@@ -106,6 +106,7 @@ try {
         clinic_redirect(clinic_role_home_path(clinic_current_user()['role']));
     }
 
+    $newGoogleAccount = false;
     if ($identity) {
         $userId = (int) $identity['user_id'];
     } else {
@@ -127,6 +128,7 @@ try {
         $pdo->prepare('INSERT INTO patients (user_id, patient_code, privacy_acknowledged) VALUES (?, ?, 0)')->execute([$userId, $patientCode]);
         $pdo->prepare('INSERT INTO user_google_identities (issuer, subject, user_id) VALUES (?, ?, ?)')->execute(['https://accounts.google.com', $subject, $userId]);
         $pdo->commit();
+        $newGoogleAccount = true;
     }
     $user = clinic_fetch_user($userId);
     if (!$user) clinic_google_fail('Your account is unavailable.');
@@ -140,6 +142,7 @@ try {
         clinic_redirect('auth/login.php#mfa');
     }
     $_SESSION['user_id'] = $userId;
+    if ($newGoogleAccount) clinic_redirect('auth/security.php#password-section');
     clinic_redirect(clinic_role_home_path($user['role']));
 } catch (Throwable $error) {
     if (isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();

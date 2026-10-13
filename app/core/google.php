@@ -1,5 +1,15 @@
 <?php
 
+function clinic_google_created_account($pdo, $userId, $username)
+{
+    if (!preg_match('/^google_[a-f0-9]{16}$/', (string) $username)) {
+        return false;
+    }
+    $stmt = $pdo->prepare('SELECT 1 FROM user_google_identities WHERE user_id = ? LIMIT 1');
+    $stmt->execute([(int) $userId]);
+    return (bool) $stmt->fetchColumn();
+}
+
 function clinic_google_identity_from_claims($claims, $expectedNonce, $clientId)
 {
     if (!is_array($claims)

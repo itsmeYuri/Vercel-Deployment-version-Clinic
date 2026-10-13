@@ -8,6 +8,7 @@ require_once __DIR__ . '/../app/config/database.php';
 require_once __DIR__ . '/../app/core/maintenance.php';
 require_once __DIR__ . '/../app/core/session.php';
 require_once __DIR__ . '/../app/core/mfa.php';
+require_once __DIR__ . '/../app/core/google.php';
 require_once __DIR__ . '/../app/core/storage.php';
 require_once __DIR__ . '/../app/core/helpers.php';
 require_once __DIR__ . '/../app/core/result-validation.php';
@@ -277,6 +278,10 @@ function require_recent_authentication($pdo, $userId, $data)
         return;
     }
     $limitKey = 'reauth:' . (int) $userId;
+    $account = one($pdo, 'SELECT username FROM users WHERE id = ? LIMIT 1', [$userId]);
+    if ($account && clinic_google_created_account($pdo, $userId, $account['username']) && empty($data['password'])) {
+        respond(false, 'Sign out and sign in with Google again to confirm your identity.', [], 401);
+    }
     enforce_login_rate_limit($pdo, $limitKey);
     $password = require_field($data, 'password', 'Current password');
     $row = one($pdo, 'SELECT password_hash FROM users WHERE id = ?', [$userId]);
@@ -298,6 +303,7 @@ function public_user_from_row($row)
         'name' => $row['name'],
         'email' => $row['email'],
         'username' => $row['username'],
+        'googleCreated' => !empty($row['has_google_identity']) && (bool) preg_match('/^google_[a-f0-9]{16}$/', (string) $row['username']),
         'role' => $row['role'],
         'avatar' => $row['avatar'],
         'contact' => $row['contact'],
@@ -316,6 +322,7 @@ function public_user_from_row($row)
 function fetch_user($pdo, $id)
 {
     $sql = 'SELECT u.id, u.name, u.email, u.username, u.avatar, u.contact, u.status, u.created_at, r.name AS role,
+                   EXISTS (SELECT 1 FROM user_google_identities gi WHERE gi.user_id = u.id) AS has_google_identity,
                    p.id AS patient_id, p.patient_code, p.date_of_birth, p.sex, p.address,
                    CASE
                      WHEN r.name = "Patient" THEN p.primary_facility_id
@@ -2230,8 +2237,10 @@ function update_patient_profile($pdo, $data, $actor)
 
 function change_password($pdo, $data, $actor)
 {
-    $userRow = one($pdo, 'SELECT password_hash FROM users WHERE id = ? LIMIT 1', [$actor['id']]);
-    $current = require_field($data, 'currentPassword', 'Current password');
+    $userRow = one($pdo, 'SELECT password_hash, username FROM users WHERE id = ? LIMIT 1', [$actor['id']]);
+    if (!$userRow) respond(false, 'Account unavailable.', [], 404);
+    $googleCreated = clinic_google_created_account($pdo, $actor['id'], $userRow['username']);
+    $current = trim((string) ($data['currentPassword'] ?? ''));
     $new = require_field($data, 'newPassword', 'New password');
     $confirm = require_field($data, 'confirmPassword', 'Confirm password');
     if ($new !== $confirm) {
@@ -2240,8 +2249,14 @@ function change_password($pdo, $data, $actor)
     if (!valid_password($new)) {
         respond(false, 'New password must be 12-128 characters and include a letter and number.', [], 422);
     }
-    if (!password_match_type($current, $userRow['password_hash'])) {
-        respond(false, 'Current password is incorrect.', [], 401);
+    if ($current !== '') {
+        if (!password_match_type($current, $userRow['password_hash'])) {
+            respond(false, 'Current password is incorrect.', [], 401);
+        }
+    } elseif (!$googleCreated) {
+        respond(false, 'Current password is required.', [], 422);
+    } elseif ((int) ($_SESSION['recent_auth_at'] ?? 0) < time() - 300) {
+        respond(false, 'Sign out and sign in with Google again before setting a password.', [], 401);
     }
     $pdo->beginTransaction();
     $stmt = $pdo->prepare('UPDATE users SET password_hash=? WHERE id=?');
