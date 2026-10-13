@@ -27,8 +27,8 @@ require __DIR__ . '/../../app/views/layouts/header.php';
   <section class="form-panel account-security-panel">
     <div class="form-card account-security-card">
       <nav class="security-tabs" role="tablist" aria-label="Account security settings">
-        <button type="button" role="tab" id="password-tab" aria-controls="password-panel" data-security-tab="password">Password</button>
-        <button type="button" role="tab" id="authenticator-tab" aria-controls="authenticator-panel" data-security-tab="authenticator">Authenticator &amp; Google</button>
+        <button type="button" class="security-control" role="tab" id="password-tab" aria-controls="password-panel" data-security-tab="password">Password</button>
+        <button type="button" class="security-control" role="tab" id="authenticator-tab" aria-controls="authenticator-panel" data-security-tab="authenticator">Authenticator &amp; Google</button>
       </nav>
       <div class="status-message" id="security-status" role="status" aria-live="polite"></div>
       <div id="password-panel" role="tabpanel" aria-labelledby="password-tab" data-security-panel="password"><section id="password-section">
