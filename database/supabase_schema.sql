@@ -257,9 +257,42 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
   csrf_token CHAR(64) NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
+  mfa_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  pending_mfa_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  pending_mfa_expires_at TIMESTAMPTZ,
+  oauth_flow TEXT,
+  recent_auth_at TIMESTAMPTZ,
+  auth_notice TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS mfa_verified BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS pending_mfa_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS pending_mfa_expires_at TIMESTAMPTZ;
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS oauth_flow TEXT;
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS recent_auth_at TIMESTAMPTZ;
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS auth_notice TEXT;
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS user_mfa (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  secret_ciphertext TEXT NOT NULL,
+  pending_expires_at TIMESTAMPTZ,
+  enabled_at TIMESTAMPTZ,
+  last_accepted_step BIGINT
+);
+CREATE TABLE IF NOT EXISTS user_mfa_recovery (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash CHAR(64) NOT NULL,
+  PRIMARY KEY (user_id, code_hash)
+);
+CREATE TABLE IF NOT EXISTS user_google_identities (
+  issuer VARCHAR(80) NOT NULL,
+  subject VARCHAR(255) NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  linked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (issuer, subject),
+  UNIQUE (user_id)
+);
 
 CREATE TABLE IF NOT EXISTS auth_login_attempts (
   key_hash CHAR(64) PRIMARY KEY,
@@ -281,7 +314,7 @@ BEGIN
     'staff_facilities', 'test_definitions', 'lab_orders', 'lab_order_items',
     'lab_results', 'result_workflow_events', 'lab_result_values', 'result_files', 'clinical_notes',
     'notifications', 'audit_logs', 'maintenance_settings', 'system_settings', 'auth_sessions',
-    'auth_login_attempts'
+    'auth_login_attempts', 'user_mfa', 'user_mfa_recovery', 'user_google_identities'
   ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);
   END LOOP;

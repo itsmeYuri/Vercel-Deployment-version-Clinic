@@ -1412,7 +1412,7 @@
 
   function renderAdminSettings() {
     return `${heading(...pageMeta.Admin.settings)}
-      <div class="settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update the password for your administrator account.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}<section class="card settings-card"><div class="settings-card-head"><div><h3>Role Permissions</h3><p>Access is assigned according to each clinic role.</p></div>${icon("lock")}</div>${["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => `<div class="setting-row"><div><strong>${h(role)}</strong><p>${role === "Admin" ? "Full system access" : "Role-scoped records and workflow actions"}</p></div><span class="badge badge-green">Enforced</span></div>`).join("")}</section></div>`;
+      <div class="settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update the password for your administrator account.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button> <a class="btn btn-secondary" href="../auth/security.php">Authenticator and Google sign-in</a></section>${accessibilityCard()}<section class="card settings-card"><div class="settings-card-head"><div><h3>Role Permissions</h3><p>Access is assigned according to each clinic role.</p></div>${icon("lock")}</div>${["Admin", "Doctor", "Laboratory Staff", "Patient"].map((role) => `<div class="setting-row"><div><strong>${h(role)}</strong><p>${role === "Admin" ? "Full system access" : "Role-scoped records and workflow actions"}</p></div><span class="badge badge-green">Enforced</span></div>`).join("")}</section></div>`;
   }
 
   function renderAdminMaintenance() {
@@ -1530,7 +1530,7 @@
   }
 
   function renderDoctorSettings() {
-    return `${heading(...pageMeta.Doctor.settings)}<div class="doctor-settings"><div class="doctor-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update your account password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}</div></div>`;
+    return `${heading(...pageMeta.Doctor.settings)}<div class="doctor-settings"><div class="doctor-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Update your account password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button> <a class="btn btn-secondary" href="../auth/security.php">Authenticator and Google sign-in</a></section>${accessibilityCard()}</div></div>`;
   }
 
   function renderLabDashboard() {
@@ -1590,7 +1590,7 @@
   }
 
   function renderLabSettings() {
-    return `${heading(...pageMeta["Laboratory Staff"].settings)}<div class="lab-settings-layout"><div class="lab-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Change your password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button></section>${accessibilityCard()}</div></div>`;
+    return `${heading(...pageMeta["Laboratory Staff"].settings)}<div class="lab-settings-layout"><div class="lab-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Security</h3><p>Change your password.</p></div>${icon("shield")}</div><button class="btn btn-secondary" data-drawer="password">Change Password</button> <a class="btn btn-secondary" href="../auth/security.php">Authenticator and Google sign-in</a></section>${accessibilityCard()}</div></div>`;
   }
 
   function renderPatientDashboard() {
@@ -1622,7 +1622,7 @@
 
   function renderPatientSettings() {
     return `${heading(...pageMeta.Patient.settings)}
-      <div class="patient-settings"><div class="patient-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Account Settings</h3><p>Manage sign-in and privacy.</p></div>${icon("user")}</div><div class="info-display-grid"><div class="info-display"><span>Email</span><strong>${h(currentUser.email)}</strong></div><div class="info-display"><span>Username</span><strong>${h(currentUser.username)}</strong></div></div><button class="btn btn-secondary" style="margin-top:14px" data-drawer="password">Change Password</button></section><section class="card settings-card"><div class="settings-card-head"><div><h3>Privacy Settings</h3><p>Patients can only see released own results.</p></div>${icon("lock")}</div><div class="clinical-note-box"><h4>${icon("shield")} Data access notice</h4><p>API filtering restricts your portal to patient profile ${h(currentUser.patientProfileId)}.</p></div><div class="patient-download-box"><div><strong>Download records</strong><p>Export your currently visible database-backed records.</p></div><button class="btn btn-primary btn-sm" data-download>${icon("download")} Download</button></div></section>${accessibilityCard()}</div></div>`;
+      <div class="patient-settings"><div class="patient-settings-grid"><section class="card settings-card"><div class="settings-card-head"><div><h3>Account Settings</h3><p>Manage sign-in and privacy.</p></div>${icon("user")}</div><div class="info-display-grid"><div class="info-display"><span>Email</span><strong>${h(currentUser.email)}</strong></div><div class="info-display"><span>Username</span><strong>${h(currentUser.username)}</strong></div></div><button class="btn btn-secondary" style="margin-top:14px" data-drawer="password">Change Password</button> <a class="btn btn-secondary" href="../auth/security.php">Authenticator and Google sign-in</a></section><section class="card settings-card"><div class="settings-card-head"><div><h3>Privacy Settings</h3><p>Patients can only see released own results.</p></div>${icon("lock")}</div><div class="clinical-note-box"><h4>${icon("shield")} Data access notice</h4><p>API filtering restricts your portal to patient profile ${h(currentUser.patientProfileId)}.</p></div><div class="patient-download-box"><div><strong>Download records</strong><p>Export your currently visible database-backed records.</p></div><button class="btn btn-primary btn-sm" data-download>${icon("download")} Download</button></div></section>${accessibilityCard()}</div></div>`;
   }
 
   const renderers = {
@@ -2713,6 +2713,18 @@
   function initLoginPage() {
     const loginForm = $("#login-form");
     if (!loginForm) return;
+    const mfaForm = $("#mfa-form");
+    const showMfa = () => {
+      loginForm.hidden = true;
+      if (mfaForm) mfaForm.hidden = false;
+      const mfaStatus = $("#mfa-status");
+      if (mfaStatus) mfaStatus.hidden = false;
+      const heading = $("#login-screen h2");
+      if (heading) heading.textContent = "Verify sign-in";
+      $(".demo-login")?.setAttribute("hidden", "");
+      $("#mfa-code")?.focus();
+    };
+    if (location.hash === "#mfa") showMfa();
     clearAppCache();
     const registerForm = $("#register-form");
     const screens = { login: $("#login-screen"), register: $("#register-screen") };
@@ -2776,12 +2788,30 @@
       loginForm.classList.add("is-loading");
       try {
         const data = await api("login", { identifier: $("#login-identifier").value, password: $("#login-password").value });
+        if (data.mfaRequired) {
+          showMfa();
+          showStatus(mfaForm, "Enter the current six-digit code or a recovery code.", "success");
+          return;
+        }
         showStatus(loginForm, `Welcome, ${data.user.name}. Opening your dashboard...`, "success");
         setTimeout(() => { location.href = destinations[data.user.role] || LOGIN_URL; }, 400);
       } catch (error) {
         showStatus(loginForm, error.message, "error");
         button?.removeAttribute("disabled");
         loginForm.classList.remove("is-loading");
+      }
+    });
+    mfaForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = mfaForm.querySelector('button[type="submit"]');
+      button.disabled = true;
+      try {
+        const data = await api("mfa_verify", { code: $("#mfa-code").value.trim() });
+        showStatus(mfaForm, "Verified. Opening your dashboard...", "success");
+        location.href = destinations[data.user.role] || LOGIN_URL;
+      } catch (error) {
+        showStatus(mfaForm, error.message, "error");
+        button.disabled = false;
       }
     });
     registerForm?.addEventListener("submit", async (event) => {

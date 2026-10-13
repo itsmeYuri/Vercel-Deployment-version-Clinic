@@ -140,6 +140,21 @@ body[data-required-role] a:hover { text-decoration: none; }
 
 /* ==================== Login Page ==================== */
 
+.account-security-shell { grid-template-columns: minmax(0, 1fr); }
+.account-security-panel { grid-column: 1 / -1; }
+.account-security-card { max-width: 620px; }
+.account-security-card section { padding-block: 22px; }
+.account-security-card section + section { border-top: 1px solid var(--line); }
+.account-security-card section[hidden] { display: none; }
+.account-security-card section h2 { margin: 0 0 8px; font-size: var(--font-lg); }
+.account-security-card section p { margin: 0 0 18px; }
+.account-security-card form + form { margin-top: 24px; }
+.account-security-card #mfa-qr { width: 180px; margin: 12px 0 20px; }
+.account-security-card #mfa-secret { overflow-wrap: anywhere; }
+.account-security-card #recovery-list { padding: 16px; overflow-x: auto; border-radius: 10px; background: #f4faf9; line-height: 1.7; }
+.mfa-challenge[hidden], .status-message[hidden] { display: none; }
+
+
 .auth-shell {
   display: grid;
   grid-template-columns: minmax(420px, 0.92fr) minmax(520px, 1.08fr);
@@ -807,6 +822,46 @@ form.is-loading .register-submit::after {
 
 .form-switch a {
   margin-left: 3px;
+}
+
+.google-signin-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.google-signin {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 15px;
+  border: 1px solid #b9dcd9;
+  border-radius: 10px;
+  color: var(--teal-800);
+  background: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.google-signin:hover {
+  border-color: var(--teal-700);
+  background: var(--teal-50);
+}
+
+.google-signin:focus-visible {
+  outline: 3px solid var(--teal-700);
+  outline-offset: 3px;
+}
+
+.google-signin svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  stroke: none;
 }
 
 .status-message {

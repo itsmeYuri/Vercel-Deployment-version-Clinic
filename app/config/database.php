@@ -1,5 +1,27 @@
 <?php
 
+// Local-only settings. Existing process variables take precedence.
+$clinicEnvLocalPath = dirname(__DIR__, 2) . '/.env.local';
+if (is_file($clinicEnvLocalPath) && is_readable($clinicEnvLocalPath)) {
+    foreach (file($clinicEnvLocalPath, FILE_IGNORE_NEW_LINES) as $clinicEnvLine) {
+        $clinicEnvLine = trim($clinicEnvLine);
+        if ($clinicEnvLine === '' || $clinicEnvLine[0] === '#' || strpos($clinicEnvLine, '=') === false) {
+            continue;
+        }
+        [$clinicEnvName, $clinicEnvValue] = explode('=', $clinicEnvLine, 2);
+        $clinicEnvName = trim($clinicEnvName);
+        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $clinicEnvName) || getenv($clinicEnvName) !== false) {
+            continue;
+        }
+        $clinicEnvValue = trim($clinicEnvValue);
+        if (strlen($clinicEnvValue) >= 2 && in_array($clinicEnvValue[0], ['"', "'"], true)
+            && substr($clinicEnvValue, -1) === $clinicEnvValue[0]) {
+            $clinicEnvValue = substr($clinicEnvValue, 1, -1);
+        }
+        putenv($clinicEnvName . '=' . $clinicEnvValue);
+    }
+}
+
 function clinic_env($name, $default = null)
 {
     $value = getenv($name);
@@ -95,7 +117,11 @@ function db()
         if ($host === '' || $pass === '') {
             throw new RuntimeException('SUPABASE_DB_URL must contain a PostgreSQL host, username, password, and database.');
         }
-        $dsn = 'pgsql:host=' . $host . ';port=' . $port . ';dbname=' . $name . ';sslmode=require';
+        $sslMode = (string) clinic_env('CLINIC_DB_SSLMODE', 'require');
+        if (!in_array($sslMode, ['require', 'verify-ca', 'verify-full', 'disable'], true)) {
+            throw new RuntimeException('CLINIC_DB_SSLMODE is invalid.');
+        }
+        $dsn = 'pgsql:host=' . $host . ';port=' . $port . ';dbname=' . $name . ';sslmode=' . $sslMode;
     } else {
         $dsn = 'mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET;
         $user = DB_USER;

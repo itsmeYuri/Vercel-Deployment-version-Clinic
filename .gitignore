@@ -16,6 +16,7 @@ app/config/local.php
 .tools/
 .test-mysql-data/
 .test-screenshots/
+tmp/
 .test-*.log
 public/uploads/results/*
 !public/uploads/results/.gitkeep

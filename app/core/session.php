@@ -49,13 +49,29 @@ function clinic_start_session()
     $token = (string) ($_COOKIE['CLINIC_SESSION'] ?? '');
     $row = null;
     if (preg_match('/^[a-f0-9]{64}$/', $token)) {
-        $stmt = db()->prepare('SELECT user_id, csrf_token FROM auth_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1');
+        $stmt = db()->prepare('SELECT user_id, csrf_token, mfa_verified, pending_mfa_user_id, pending_mfa_expires_at, oauth_flow, recent_auth_at, auth_notice FROM auth_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1');
         $stmt->execute([hash('sha256', $token)]);
         $row = $stmt->fetch() ?: null;
     }
     if ($row) {
         if ($row['user_id'] !== null) {
             $_SESSION['user_id'] = (int) $row['user_id'];
+        }
+        if (!empty($row['mfa_verified'])) {
+            $_SESSION['mfa_verified'] = true;
+        }
+        if ($row['pending_mfa_user_id'] !== null && strtotime((string) $row['pending_mfa_expires_at']) > time()) {
+            $_SESSION['pending_mfa_user_id'] = (int) $row['pending_mfa_user_id'];
+            $_SESSION['pending_mfa_expires_at'] = strtotime((string) $row['pending_mfa_expires_at']);
+        }
+        if (!empty($row['oauth_flow'])) {
+            $_SESSION['oauth_flow'] = json_decode($row['oauth_flow'], true);
+        }
+        if (!empty($row['recent_auth_at'])) {
+            $_SESSION['recent_auth_at'] = strtotime((string) $row['recent_auth_at']);
+        }
+        if (!empty($row['auth_notice'])) {
+            $_SESSION['auth_notice'] = $row['auth_notice'];
         }
         $_SESSION['csrf_token'] = $row['csrf_token'];
     } else {
@@ -76,18 +92,32 @@ function clinic_persist_session()
         $tokenHash = hash('sha256', $GLOBALS['clinicSessionToken']);
         $userId = isset($_SESSION['user_id']) ? (int) $_SESSION['user_id'] : null;
         $csrf = (string) ($_SESSION['csrf_token'] ?? bin2hex(random_bytes(32)));
-        $expiresAt = date('Y-m-d H:i:sP', time() + CLINIC_SESSION_TTL);
+        $expiresAt = db_is_postgres() ? date('Y-m-d H:i:sP', time() + CLINIC_SESSION_TTL) : date('Y-m-d H:i:s', time() + CLINIC_SESSION_TTL);
+        $verified = !empty($_SESSION['mfa_verified']) ? 1 : 0;
+        $pendingId = isset($_SESSION['pending_mfa_user_id']) ? (int) $_SESSION['pending_mfa_user_id'] : null;
+        $pendingExpiry = $pendingId ? (db_is_postgres() ? date('Y-m-d H:i:sP', (int) $_SESSION['pending_mfa_expires_at']) : date('Y-m-d H:i:s', (int) $_SESSION['pending_mfa_expires_at'])) : null;
+        $oauthFlow = !empty($_SESSION['oauth_flow']) ? json_encode($_SESSION['oauth_flow']) : null;
+        $recentAuth = !empty($_SESSION['recent_auth_at']) ? (db_is_postgres() ? date('Y-m-d H:i:sP', (int) $_SESSION['recent_auth_at']) : date('Y-m-d H:i:s', (int) $_SESSION['recent_auth_at'])) : null;
+        $authNotice = isset($_SESSION['auth_notice']) ? mb_substr((string) $_SESSION['auth_notice'], 0, 255) : null;
         $sql = db_is_postgres()
-            ? 'INSERT INTO auth_sessions (token_hash, user_id, csrf_token, expires_at, updated_at)
-               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ? 'INSERT INTO auth_sessions (token_hash, user_id, csrf_token, expires_at, mfa_verified, pending_mfa_user_id, pending_mfa_expires_at, oauth_flow, recent_auth_at, auth_notice, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                ON CONFLICT (token_hash) DO UPDATE SET user_id=EXCLUDED.user_id, csrf_token=EXCLUDED.csrf_token,
-                   expires_at=EXCLUDED.expires_at, updated_at=CURRENT_TIMESTAMP'
-            : 'INSERT INTO auth_sessions (token_hash, user_id, csrf_token, expires_at, updated_at)
-               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                   expires_at=EXCLUDED.expires_at, mfa_verified=EXCLUDED.mfa_verified,
+                   pending_mfa_user_id=EXCLUDED.pending_mfa_user_id, pending_mfa_expires_at=EXCLUDED.pending_mfa_expires_at,
+                   oauth_flow=EXCLUDED.oauth_flow, recent_auth_at=EXCLUDED.recent_auth_at,
+                   auth_notice=EXCLUDED.auth_notice,
+                   updated_at=CURRENT_TIMESTAMP'
+            : 'INSERT INTO auth_sessions (token_hash, user_id, csrf_token, expires_at, mfa_verified, pending_mfa_user_id, pending_mfa_expires_at, oauth_flow, recent_auth_at, auth_notice, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), csrf_token=VALUES(csrf_token),
-                   expires_at=VALUES(expires_at), updated_at=CURRENT_TIMESTAMP';
+                   expires_at=VALUES(expires_at), mfa_verified=VALUES(mfa_verified),
+                   pending_mfa_user_id=VALUES(pending_mfa_user_id), pending_mfa_expires_at=VALUES(pending_mfa_expires_at),
+                   oauth_flow=VALUES(oauth_flow), recent_auth_at=VALUES(recent_auth_at),
+                   auth_notice=VALUES(auth_notice),
+                   updated_at=CURRENT_TIMESTAMP';
         $stmt = db()->prepare($sql);
-        $stmt->execute([$tokenHash, $userId, $csrf, $expiresAt]);
+        $stmt->execute([$tokenHash, $userId, $csrf, $expiresAt, $verified, $pendingId, $pendingExpiry, $oauthFlow, $recentAuth, $authNotice]);
         if (random_int(1, 100) === 1) {
             db()->exec('DELETE FROM auth_sessions WHERE expires_at <= CURRENT_TIMESTAMP');
         }

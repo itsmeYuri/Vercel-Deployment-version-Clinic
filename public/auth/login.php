@@ -97,6 +97,31 @@ require __DIR__ . '/../../app/views/layouts/header.php';
             </button>
           </form>
 
+          <?php if (clinic_env('CLINIC_GOOGLE_CLIENT_ID', '') !== '' && clinic_env('CLINIC_GOOGLE_CLIENT_SECRET', '') !== '' && clinic_env('CLINIC_GOOGLE_REDIRECT_URI', '') !== ''): ?>
+          <div class="google-signin-row">
+            <a class="google-signin" href="<?= e(clinic_public_url('auth/google.php')) ?>">
+              <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z" />
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.25 5.48-4.75 7.18l7.73 6C44.43 38.03 46.98 31.68 46.98 24.55Z" />
+                <path fill="#FBBC05" d="M10.53 28.59A14.4 14.4 0 0 1 9.75 24c0-1.59.27-3.13.76-4.59l-7.98-6.2A23.9 23.9 0 0 0 0 24c0 3.87.92 7.51 2.56 10.78l7.97-6.19Z" />
+                <path fill="#34A853" d="M24 48c6.48 0 11.92-2.13 15.9-5.8l-7.73-6c-2.14 1.44-4.87 2.3-8.17 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.97 6.19C6.51 42.62 14.62 48 24 48Z" />
+              </svg>
+              <span>Continue with Google</span>
+            </a>
+          </div>
+          <?php endif; ?>
+
+          <div class="status-message" id="mfa-status" role="status" aria-live="polite" hidden></div>
+          <form id="mfa-form" class="mfa-challenge" hidden novalidate>
+            <div class="field">
+              <label for="mfa-code">Authenticator or recovery code</label>
+              <div class="input-wrap"><input id="mfa-code" name="code" type="text" inputmode="text" autocomplete="one-time-code" maxlength="39" required /></div>
+              <p class="field-error" id="mfa-code-error"></p>
+            </div>
+            <button class="primary-button" type="submit">Verify and continue</button>
+            <p class="form-switch"><a href="<?= e(clinic_public_url('auth/logout.php')) ?>">Cancel sign-in</a></p>
+          </form>
+
           <section class="demo-login" aria-labelledby="demo-login-title">
             <h3 id="demo-login-title">Demo login accounts</h3>
             <div class="demo-login-grid">

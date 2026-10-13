@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/session.php';
+require_once __DIR__ . '/mfa.php';
 
 function clinic_csrf_token()
 {
@@ -55,6 +56,10 @@ function clinic_current_user()
     }
 
     try {
+        if (clinic_mfa_enabled(db(), (int) $_SESSION['user_id']) && empty($_SESSION['mfa_verified'])) {
+            unset($_SESSION['user_id']);
+            return null;
+        }
         $user = clinic_fetch_user((int) $_SESSION['user_id']);
     } catch (Throwable $e) {
         unset($_SESSION['user_id']);

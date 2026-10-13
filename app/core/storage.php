@@ -60,11 +60,9 @@ function clinic_storage_request($method, $endpoint, $body = null)
     $raw = curl_exec($curl);
     if ($raw === false) {
         $message = curl_error($curl);
-        curl_close($curl);
         throw new ClinicStorageException('Supabase Storage request failed: ' . $message, 503);
     }
     $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
-    curl_close($curl);
     $decoded = json_decode($raw, true);
     if ($status < 200 || $status >= 300) {
         $message = is_array($decoded) ? ($decoded['message'] ?? $decoded['error'] ?? 'Storage request failed.') : 'Storage request failed.';
