@@ -1982,17 +1982,30 @@
     dialog.id = 'account-security-dialog';
     dialog.className = 'account-security-dialog';
     dialog.setAttribute('aria-labelledby', 'security-dialog-title');
-    dialog.innerHTML = `<header class="security-dialog-header"><h2 id="security-dialog-title">Account security</h2><button type="button" class="icon-button" aria-label="Close account security" data-security-close>${icon("close")}</button></header><iframe title="Account security settings" src="../auth/security.php?embed=1&tab=${encodeURIComponent(tab)}"></iframe>`;
+    dialog.innerHTML = `<header class="security-dialog-header"><div class="security-dialog-title-group"><span class="security-dialog-emblem">${icon("shield")}</span><div><h2 id="security-dialog-title">Account security</h2><p>Manage how you sign in.</p></div></div><button type="button" class="icon-button" aria-label="Close account security" data-security-close>${icon("close")}</button></header><iframe title="Account security settings" src="../auth/security.php?embed=1&tab=${encodeURIComponent(tab)}"></iframe>`;
     document.body.append(dialog);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const onMessage = event => {
-      if (event.origin === location.origin && event.source === dialog.querySelector('iframe').contentWindow && event.data?.type === 'clinic-security-close') dialog.close();
+    const frame = dialog.querySelector('iframe');
+    let contentHeight = 360;
+    const resizePopup = () => {
+      const available = Math.max(100, window.innerHeight - dialog.querySelector('header').offsetHeight - 32);
+      frame.style.height = `${Math.min(contentHeight, available)}px`;
     };
+    const onMessage = event => {
+      if (event.origin !== location.origin || event.source !== frame.contentWindow) return;
+      if (event.data?.type === 'clinic-security-close') dialog.close();
+      if (event.data?.type === 'clinic-security-resize' && Number.isFinite(event.data.height)) {
+        contentHeight = Math.max(120, Math.min(10000, event.data.height));
+        resizePopup();
+      }
+    };
+    window.addEventListener('resize', resizePopup);
     window.addEventListener('message', onMessage);
     dialog.querySelector('[data-security-close]').addEventListener('click', () => dialog.close());
     dialog.addEventListener('close', () => {
       window.removeEventListener('message', onMessage);
+      window.removeEventListener('resize', resizePopup);
       document.body.style.overflow = previousOverflow;
       dialog.remove();
       trigger?.focus();
