@@ -2050,6 +2050,9 @@ function update_result_status($pdo, $data, $actor, $forcedStatus = null)
     if ($status === 'Verified' && $result['status'] !== 'Pending Review') {
         respond(false, 'Only pending-review results can be verified.', [], 409);
     }
+    if ($status === 'Verified' && (int) $result['uploaded_by'] === (int) $actor['id']) {
+        respond(false, 'A different laboratory staff member must verify this result.', [], 409);
+    }
     if ($status === 'Rejected' && !in_array($result['status'], ['Pending Review', 'Verified'], true)) {
         respond(false, 'Only pending-review or verified results can be rejected.', [], 409);
     }
@@ -2599,9 +2602,11 @@ try {
         $user = require_auth($pdo);
         $requestedPage = optional_string($data, 'page', 'dashboard');
         if ($action === 'page_data' && ($user['role'] ?? '') !== 'Admin') {
-            $decision = clinic_maintenance_decision(clinic_maintenance_current($pdo), $user['role'] ?? null, $requestedPage);
+            $decision = clinic_maintenance_decision($pdo, $user['role'] ?? null, $requestedPage);
             if (!empty($decision['blocked'])) {
-                respond(false, $decision['message'] ?: 'This page is temporarily unavailable.', ['maintenance' => $decision], 503);
+                respond(false, $decision['settings']['message'] ?: 'This page is temporarily unavailable.', [
+                    'maintenance' => clinic_maintenance_public_settings($decision['settings']),
+                ], 503);
             }
         }
         $collections = $action === 'page_data' && isset($data['collections']) && is_array($data['collections'])
