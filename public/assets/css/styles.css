@@ -831,14 +831,15 @@ form.is-loading .register-submit::after {
 }
 
 .google-signin {
-  display: inline-flex;
-  min-height: 44px;
+  display: flex;
+  width: 100%;
+  height: 52px;
   align-items: center;
   justify-content: center;
   gap: 9px;
   padding: 0 15px;
   border: 1px solid #b9dcd9;
-  border-radius: 10px;
+  border-radius: 12px;
   color: var(--teal-800);
   background: #fff;
   font-size: 14px;
@@ -3619,9 +3620,9 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
   .parameter-input-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; padding: 12px; border: 1px solid rgba(255, 255, 255, .72); border-radius: 15px; background: rgba(255, 255, 255, .46); }
   .parameter-input-table td { display: grid; gap: 5px; padding: 0; border: 0; }
   .parameter-input-table td::before { color: var(--muted); font-size: var(--font-xs); font-weight: 700; }
-  .parameter-input-table td:nth-child(1)::before { content: "Parameter"; }
-  .parameter-input-table td:nth-child(2)::before { content: "Value"; }
-  .parameter-input-table td:nth-child(3)::before { content: "Unit"; }
+  .parameter-input-table td:nth-child(1)::before { content: "Test component"; }
+  .parameter-input-table td:nth-child(2)::before { content: "Result"; }
+  .parameter-input-table td:nth-child(3)::before { content: "Measurement unit"; }
   .parameter-input-table td:nth-child(4)::before { content: "Reference range"; }
   .parameter-input-table td:nth-child(5)::before { content: "Flag"; }
   .parameter-input-table td:nth-child(6) { align-self: end; justify-self: end; }
