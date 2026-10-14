@@ -4263,14 +4263,9 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
 .security-popup-content .account-security-shell { display: block; min-height: 0; padding: 0; background: #fff; }
 .security-popup-content .account-security-panel { display: block; min-height: 0; padding: 0; background: #fff; }
 .security-popup-content .account-security-card { width: 100%; max-width: none; padding: 20px 24px 24px; border: 0; border-radius: 0; box-shadow: none; animation: none; }
-.security-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 24px; }
-.account-settings-actions .security-control,
-.security-tabs .security-control { display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 14px; border: 1px solid #afd9dc; border-radius: 10px; background: #fff; color: #007e84; font-family: inherit; font-size: 14px; line-height: 1.4; font-weight: 600; text-align: center; white-space: normal; cursor: pointer; box-shadow: none; }
-.account-settings-actions .security-control:hover,
-.security-tabs .security-control:hover { background: #f0f9f8; border-color: #008c85; }
-.security-tabs .security-control[aria-selected="true"] { background: #def5f3; border-color: #008c85; color: #006f70; }
-.account-settings-actions .security-control:focus-visible,
-.security-tabs .security-control:focus-visible { outline: 2px solid #008c85; outline-offset: 3px; }
+.account-settings-actions .security-control { display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 14px; border: 1px solid #afd9dc; border-radius: 10px; background: #fff; color: #007e84; font-family: inherit; font-size: 14px; line-height: 1.4; font-weight: 600; text-align: center; white-space: normal; cursor: pointer; box-shadow: none; }
+.account-settings-actions .security-control:hover { background: #f0f9f8; border-color: #008c85; }
+.account-settings-actions .security-control:focus-visible { outline: 2px solid #008c85; outline-offset: 3px; }
 .security-popup-content [data-security-panel] > section:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
 .security-popup-content .account-security-card section { padding: 22px 0; }
 .security-popup-content .account-security-card section:last-child { padding-bottom: 0; }
@@ -4298,6 +4293,5 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
   .security-dialog-header h2 { font-size: 19px; }
   .security-dialog-title-group { gap: 10px; }
   .security-popup-content .account-security-card { padding: 16px; }
-  .security-tabs { grid-template-columns: 1fr; }
   .security-method-heading { flex-wrap: wrap; }
 }

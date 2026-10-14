@@ -26,12 +26,8 @@ require __DIR__ . '/../../app/views/layouts/header.php';
 <main class="auth-shell account-security-shell">
   <section class="form-panel account-security-panel">
     <div class="form-card account-security-card">
-      <nav class="security-tabs" role="tablist" aria-label="Account security settings">
-        <button type="button" class="security-control" role="tab" id="password-tab" aria-controls="password-panel" data-security-tab="password">Password</button>
-        <button type="button" class="security-control" role="tab" id="authenticator-tab" aria-controls="authenticator-panel" data-security-tab="authenticator">Authenticator &amp; Google</button>
-      </nav>
       <div class="status-message" id="security-status" role="status" aria-live="polite"></div>
-      <div id="password-panel" role="tabpanel" aria-labelledby="password-tab" data-security-panel="password"><section id="password-section">
+      <div id="password-panel" data-security-panel="password"><section id="password-section">
         <h2><?= $googleCreated ? 'Set an account password' : 'Change password' ?></h2>
         <p><?= $googleCreated ? 'Create a password for email sign-in. Your recent Google sign-in confirms this change.' : 'Use your current password to choose a new one.' ?></p>
         <?php if ($googleCreated && !$recentAuth): ?><p class="security-hint">For your security, sign out and sign in with Google again before setting a password.</p><?php endif; ?>
@@ -42,7 +38,7 @@ require __DIR__ . '/../../app/views/layouts/header.php';
           <button class="primary-button" type="submit"><?= $googleCreated ? 'Set password' : 'Update password' ?></button>
         </form>
       </section>
-      </div><div id="authenticator-panel" role="tabpanel" aria-labelledby="authenticator-tab" data-security-panel="authenticator" hidden>
+      </div><div id="authenticator-panel" data-security-panel="authenticator" hidden>
       <p id="mfa-loading" class="security-loading" role="status">Checking authenticator status...</p>
       <section id="mfa-disabled" hidden>
         <div class="security-method-heading"><span class="security-method-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="m9 11 2 2 4-4M11 18h2"/></svg></span><div><h2>Authenticator app</h2><span class="security-method-state">Not enabled</span></div></div>
@@ -178,34 +174,16 @@ require __DIR__ . '/../../app/views/layouts/header.php';
     status('Password saved. You can now sign in with your email and new password.');
     $('#security-status').scrollIntoView({ block: 'nearest' });
   });
-  let mfaLoaded = false;
-  const selectTab = (tab) => {
-    document.querySelectorAll('[data-security-panel]').forEach(panel => { panel.hidden = panel.dataset.securityPanel !== tab; });
-    document.querySelectorAll('[data-security-tab]').forEach(button => {
-      const active = button.dataset.securityTab === tab;
-      button.setAttribute('aria-selected', String(active));
-      button.tabIndex = active ? 0 : -1;
-    });
-    $('#security-status').textContent = '';
-    $('#security-status').classList.remove('is-visible');
-    if (tab === 'authenticator' && !mfaLoaded) showStatus().then(() => { mfaLoaded = true; }).catch(error => status(error.message, true));
-  };
-  document.querySelectorAll('[data-security-tab]').forEach(button => button.addEventListener('click', () => selectTab(button.dataset.securityTab)));
-  document.querySelector('.security-tabs').addEventListener('keydown', event => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const tabs = [...document.querySelectorAll('[data-security-tab]')];
-    const index = tabs.indexOf(document.activeElement);
-    const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[tabs.length - 1] : tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
-    selectTab(next.dataset.securityTab);
-    next.focus();
+  const section = <?= json_encode($securityTab) ?>;
+  document.querySelectorAll('[data-security-panel]').forEach(panel => {
+    panel.hidden = panel.dataset.securityPanel !== section;
   });
+  if (section === 'authenticator') showStatus().catch(error => status(error.message, true));
   const resizePopup = () => parent.postMessage({ type: 'clinic-security-resize', height: Math.ceil(document.querySelector('.account-security-card').getBoundingClientRect().height) }, location.origin);
   new ResizeObserver(resizePopup).observe(document.querySelector('.account-security-card'));
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape') parent.postMessage({ type: 'clinic-security-close' }, location.origin);
   });
-  selectTab(<?= json_encode($securityTab) ?>);
 })();
 </script>
 </body></html>
