@@ -2057,9 +2057,6 @@ function update_result_status($pdo, $data, $actor, $forcedStatus = null)
     if ($status === 'Verified' && $result['status'] !== 'Pending Review') {
         respond(false, 'Only pending-review results can be verified.', [], 409);
     }
-    if ($status === 'Verified' && (int) $result['uploaded_by'] === (int) $actor['id']) {
-        respond(false, 'A different laboratory staff member must verify this result.', [], 409);
-    }
     if ($status === 'Rejected' && !in_array($result['status'], ['Pending Review', 'Verified'], true)) {
         respond(false, 'Only pending-review or verified results can be rejected.', [], 409);
     }

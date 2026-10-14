@@ -1899,7 +1899,12 @@
       drawerBody?.querySelector(".validation-report")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       return false;
     }
-    return true;
+    return Boolean(await glassDialog({
+      title: "Verify laboratory result?",
+      message: "Double-check each recorded value and unit against the source report. Verification is required before release.",
+      confirmText: "I checked the result",
+      detailHtml: validationReportHtml(validation),
+    }));
   }
 
   function testForm(test = {}) {
