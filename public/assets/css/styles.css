@@ -4249,6 +4249,22 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
 }
 
 /* Focused account-security popup, shared by all dashboard roles. */
+.result-comparison > p,
+.plain-language-card > p { color: var(--ink-700); font-size: var(--font-sm); line-height: 1.55; }
+.result-comparison > label { display: block; margin: 15px 0 6px; font-size: var(--font-sm); font-weight: 700; }
+.result-comparison > select { width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.comparison-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: var(--font-sm); }
+.comparison-table :is(th, td) { padding: 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.comparison-table thead { background: var(--teal-50); }
+.comparison-table small { display: block; margin-top: 5px; color: var(--ink-500); font-size: var(--font-xs); font-weight: 400; }
+.plain-language-card { margin-top: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--teal-50); }
+.plain-language-card h3 { margin: 0 0 10px; font-size: var(--font-md); }
+.plain-language-card dl { margin: 0; }
+.plain-language-card dl > div { padding: 9px 0; border-top: 1px solid var(--line); }
+.plain-language-card dt { font-weight: 700; text-transform: capitalize; }
+.plain-language-card dd { margin: 3px 0 0; color: var(--ink-700); font-size: var(--font-sm); line-height: 1.5; }
+.plain-language-card > p:last-child { margin-bottom: 0; }
+
 .account-security-dialog { width: min(600px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 0; overflow: hidden; border: 0; border-radius: 16px; background: #fff; color: var(--ink-900); box-shadow: 0 24px 64px rgba(20, 55, 67, .24); }
 .account-security-dialog::backdrop { background: rgba(16, 39, 48, .5); }
 .security-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 24px; border-bottom: 1px solid var(--line); background: #f5fbfa; }

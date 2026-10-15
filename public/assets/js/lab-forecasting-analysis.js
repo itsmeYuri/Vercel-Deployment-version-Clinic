@@ -45,8 +45,8 @@
 
   function build(orders, options) {
     const horizon = [7, 30, 90].includes(Number(options?.horizon)) ? Number(options.horizon) : 7;
-    const validOrders = (orders || []).map((order) => ({ order, created: parseDate(order.createdAt) })).filter((item) => item.created).sort((a, b) => a.created - b.created);
-    const asOf = validOrders.length ? dayOnly(validOrders[validOrders.length - 1].created) : dayOnly(new Date());
+    const asOf = dayOnly(parseDate(options?.asOf) || new Date());
+    const validOrders = (orders || []).map((order) => ({ order, created: parseDate(order.createdAt) })).filter((item) => item.created && dayOnly(item.created) <= asOf).sort((a, b) => a.created - b.created);
     const earliest = validOrders.length ? dayOnly(validOrders[0].created) : asOf;
     const trainingStart = new Date(Math.max(earliest.getTime(), addDays(asOf, -89).getTime()));
     const history = [];

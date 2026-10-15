@@ -144,8 +144,63 @@ function clinic_order_validation($pdo, $orderId, $values)
         $report['valid'] = false;
     }
     $report['warnings'] = $missing;
+    $report['anomalies'] = clinic_historical_anomalies($pdo, $orderId, $report['values']);
     $report['validatedAt'] = date(DATE_ATOM);
     return $report;
+}
+
+function clinic_median($numbers)
+{
+    sort($numbers, SORT_NUMERIC);
+    $count = count($numbers);
+    if (!$count) return null;
+    $middle = intdiv($count, 2);
+    return $count % 2 ? $numbers[$middle] : ($numbers[$middle - 1] + $numbers[$middle]) / 2;
+}
+
+function clinic_detect_historical_anomalies($values, $history)
+{
+    $groups = [];
+    foreach ($history as $item) {
+        if (!clinic_number($item['value'] ?? null)) continue;
+        $key = mb_strtolower(trim((string) ($item['parameter'] ?? ''))) . "\0" . trim((string) ($item['unit'] ?? ''));
+        $groups[$key][] = (float) $item['value'];
+    }
+    $alerts = [];
+    foreach ($values as $value) {
+        if (!clinic_number($value['value'] ?? null) || ($value['flag'] ?? '') === 'Invalid Entry') continue;
+        $key = mb_strtolower(trim((string) ($value['parameter'] ?? ''))) . "\0" . trim((string) ($value['unit'] ?? ''));
+        $sample = $groups[$key] ?? [];
+        if (count($sample) < 5) continue;
+        $median = clinic_median($sample);
+        $deviations = array_map(fn($number) => abs($number - $median), $sample);
+        $mad = clinic_median($deviations);
+        // Median absolute deviation is robust to one unusual historical result.
+        // With no measurable spread, abstain rather than claim an anomaly.
+        if ($mad <= 0 || abs((float) $value['value'] - $median) <= 4 * 1.4826 * $mad) continue;
+        $alerts[] = [
+            'parameter' => $value['parameter'],
+            'unit' => $value['unit'],
+            'value' => $value['value'],
+            'historicalMedian' => $median,
+            'sampleCount' => count($sample),
+            'message' => 'This value differs markedly from this patient\'s previous released values in the same unit. Check the source report, patient identity, and clinical context.',
+        ];
+    }
+    return $alerts;
+}
+
+function clinic_historical_anomalies($pdo, $orderId, $values)
+{
+    $order = one($pdo, 'SELECT patient_id FROM lab_orders WHERE id=?', [$orderId]);
+    if (!$order || !$values) return [];
+    $rows = all_rows($pdo, 'SELECT rv.parameter_name AS parameter, rv.value_text AS value, rv.unit
+        FROM lab_result_values rv
+        JOIN lab_results lr ON lr.id=rv.result_id
+        JOIN lab_orders lo ON lo.id=lr.order_id
+        WHERE lo.patient_id=? AND lo.id<>? AND lr.status=\'Released\'
+        ORDER BY lr.released_at DESC, rv.id DESC LIMIT 500', [(int) $order['patient_id'], $orderId]);
+    return clinic_detect_historical_anomalies($values, $rows);
 }
 
 function clinic_require_valid_result($pdo, $orderId, $values, $data)

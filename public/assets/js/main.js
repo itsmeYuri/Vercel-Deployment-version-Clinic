@@ -972,7 +972,7 @@
     const controls = horizons.map(([value, label]) => `<button type="button" class="utilization-period${analysis.horizon === value ? " active" : ""}" data-forecast-horizon="${value}" aria-pressed="${analysis.horizon === value}">${label}</button>`).join("");
     const confidenceClass = analysis.confidence.toLowerCase();
     const peakDate = analysis.peak ? shortDate(service.parseDate(analysis.peak.date)) : "No predicted activity";
-    return `<section class="card utilization-card forecast-card"><div class="card-head"><div><div class="forecast-title-line"><h3 class="card-title">Laboratory Demand Forecast</h3><span class="forecast-confidence ${confidenceClass}">${h(analysis.confidence)} confidence</span></div><p class="card-subtitle">Projected demand after ${h(shortDate(service.parseDate(analysis.asOf)))} based on recent laboratory-request patterns.</p></div>${icon("activity")}</div><div class="utilization-toolbar forecast-toolbar"><div class="utilization-periods" role="group" aria-label="Forecast horizon">${controls}</div><span class="forecast-training">Training window: ${h(shortDate(service.parseDate(analysis.trainingStart)))} – ${h(shortDate(service.parseDate(analysis.asOf)))}</span></div><div class="stats-grid utilization-stats">${stat("Predicted Patient Visits", analysis.totals.patients, "users", "-", "teal")}${stat("Predicted Requests", analysis.totals.requests, "orders", "-", "blue")}${stat("Predicted Tests", analysis.totals.tests, "test", "-", "purple")}${stat("Expected Request Range", `${analysis.interval.requestsLow}–${analysis.interval.requestsHigh}`, "trend", "-", "orange")}</div><div class="card-body utilization-chart-body">${forecastTrendChart(analysis)}<div class="forecast-insights"><span><strong>Expected trend:</strong> ${h(analysis.trend)}</span><span><strong>Peak day:</strong> ${h(peakDate)}${analysis.peak ? ` (${h(analysis.peak.requests.toFixed(1))} requests)` : ""}</span><span><strong>Historical requests used:</strong> ${h(analysis.historicalRequests)}</span></div><p class="utilization-note forecast-disclaimer">Planning estimate only. Patient visits are the sum of expected daily unique patients, not guaranteed distinct people across the whole forecast. The model uses up to 90 days of history, gives newer records more weight, learns weekday patterns, and applies a limited recent trend. Holidays, outbreaks, missing records, or operational changes can make actual demand different.</p></div></section>`;
+    return `<section class="card utilization-card forecast-card"><div class="card-head"><div><div class="forecast-title-line"><h3 class="card-title">Laboratory Demand Forecast</h3><span class="forecast-confidence ${confidenceClass}">${h(analysis.confidence)} history depth</span></div><p class="card-subtitle">Projected demand after ${h(shortDate(service.parseDate(analysis.asOf)))} based on recent laboratory-request patterns.</p></div>${icon("activity")}</div><div class="utilization-toolbar forecast-toolbar"><div class="utilization-periods" role="group" aria-label="Forecast horizon">${controls}</div><span class="forecast-training">Training window: ${h(shortDate(service.parseDate(analysis.trainingStart)))} – ${h(shortDate(service.parseDate(analysis.asOf)))}</span></div><div class="stats-grid utilization-stats">${stat("Predicted Patient Visits", analysis.totals.patients, "users", "-", "teal")}${stat("Predicted Requests", analysis.totals.requests, "orders", "-", "blue")}${stat("Predicted Tests", analysis.totals.tests, "test", "-", "purple")}${stat("Planning Request Range", analysis.historicalRequests ? `${analysis.interval.requestsLow}–${analysis.interval.requestsHigh}` : "No estimate", "trend", "-", "orange")}</div><div class="card-body utilization-chart-body">${forecastTrendChart(analysis)}<div class="forecast-insights"><span><strong>Expected trend:</strong> ${h(analysis.trend)}</span><span><strong>Peak day:</strong> ${h(peakDate)}${analysis.peak ? ` (${h(analysis.peak.requests.toFixed(1))} requests)` : ""}</span><span><strong>Historical requests used:</strong> ${h(analysis.historicalRequests)}</span></div><p class="utilization-note forecast-disclaimer">Planning estimate only. History depth describes available data, not measured accuracy; the planning range is a heuristic rather than a statistical confidence interval. Patient visits are the sum of expected daily unique patients, not guaranteed distinct people across the whole forecast. The model uses up to 90 days of history, gives newer records more weight, learns weekday patterns, and applies a limited recent trend. Holidays, outbreaks, missing records, or operational changes can make actual demand different.</p></div></section>`;
   }
 
   function donutCard(title, counts, totalLabel = "Total") {
@@ -1809,7 +1809,7 @@
   }
 
   function drawerTitle(type) {
-    return ({ user: "User Details", facility: "Facility Details", test: "Test Definition", order: "Laboratory Request Details", result: "Result Details", patient: "Patient Details", notification: "Notification Details", password: "Change Password" })[type] || "Details";
+    return ({ user: "User Details", facility: "Facility Details", test: "Test Definition", order: "Laboratory Request Details", result: "Result Details", "result-compare": "Compare Laboratory Results", patient: "Patient Details", notification: "Notification Details", password: "Change Password" })[type] || "Details";
   }
 
   function userForm(user = {}) {
@@ -1827,7 +1827,7 @@
   }
 
   function validationReportHtml(report) {
-    return `<section class="validation-report" role="status" aria-live="polite"><h3>Result validation</h3>${(report.issues || []).map(issue => `<p class="abnormal">${h(issue)}</p>`).join("")}${(report.warnings || []).map(warning => `<p class="validation-warning">${h(warning)} The entered values will use strict format checks.</p>`).join("")}${report.values.map(value => `<article><strong>${h(value.parameter)}: ${h(value.flag)}</strong><p>${h(value.value)} ${h(value.unit)} &middot; Reference: ${h(value.referenceRange || "Unconfigured")}</p><p>${h(value.validationReason)}</p>${value.validationRule ? `<small>Rule: ${h(value.validationRule.parameter)}. Source: ${h(value.validationRule.source)}${value.validationRule.criticalLow != null ? ` &middot; Critical &le; ${h(value.validationRule.criticalLow)}` : ""}${value.validationRule.criticalHigh != null ? ` &middot; Critical &ge; ${h(value.validationRule.criticalHigh)}` : ""}</small>` : ""}</article>`).join("")}</section>`;
+    return `<section class="validation-report" role="status" aria-live="polite"><h3>Result validation</h3>${(report.issues || []).map(issue => `<p class="abnormal">${h(issue)}</p>`).join("")}${(report.warnings || []).map(warning => `<p class="validation-warning">${h(warning)} The entered values will use strict format checks.</p>`).join("")}${(report.anomalies || []).map(alert => `<p class="validation-warning"><strong>Historical change: ${h(alert.parameter)}</strong> — ${h(alert.message)} Based on ${h(alert.sampleCount)} previous released values; this advisory does not change the approved validation decision.</p>`).join("")}${report.values.map(value => `<article><strong>${h(value.parameter)}: ${h(value.flag)}</strong><p>${h(value.value)} ${h(value.unit)} &middot; Reference: ${h(value.referenceRange || "Unconfigured")}</p><p>${h(value.validationReason)}</p>${value.validationRule ? `<small>Rule: ${h(value.validationRule.parameter)}. Source: ${h(value.validationRule.source)}${value.validationRule.criticalLow != null ? ` &middot; Critical &le; ${h(value.validationRule.criticalLow)}` : ""}${value.validationRule.criticalHigh != null ? ` &middot; Critical &ge; ${h(value.validationRule.criticalHigh)}` : ""}</small>` : ""}</article>`).join("")}</section>`;
   }
 
   function showResultValidationErrors(form, report) {
@@ -1899,6 +1899,10 @@
       drawerBody?.querySelector(".validation-report")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       return false;
     }
+    if (validation.anomalies?.length) {
+      const confirmed = await glassDialog({ title: "Review unusual historical change", message: "One or more values differ from this patient's prior released results. Check the source report and patient identity before continuing. The alert is advisory; approved validation rules still decide whether the result is valid.", confirmText: "I reviewed the change", detailHtml: validationReportHtml(validation) });
+      if (!confirmed) return false;
+    }
     return true;
   }
 
@@ -1949,10 +1953,24 @@
       : "";
     const canDownload = result.status === "Released";
     const detailDownload = canDownload ? `<a class="btn btn-primary btn-sm" href="${h(apiUrl("download_result_details", { id: result.id }))}" target="_blank" rel="noopener">${icon("download")} Print / Save PDF</a>` : "";
+    const previousResults = canDownload && window.PatientResultTools ? window.PatientResultTools.comparableResults(result, state.data.results || []) : [];
+    const compareButton = previousResults.length ? `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result-compare" data-id="${h(result.id)}">Compare previous result</button>` : "";
+    const terms = currentUser.role === "Patient" && window.PatientResultTools ? window.PatientResultTools.matchingTerms(result) : [];
+    const plainLanguage = currentUser.role === "Patient" ? `<section class="plain-language-card"><h3>Terms in this report</h3>${terms.length ? `<dl>${terms.map(item => `<div><dt>${h(item.term)}</dt><dd>${h(item.meaning)}</dd></div>`).join("")}</dl>` : `<p>No glossary terms were recognized in this report. Ask your doctor to explain unfamiliar wording.</p>`}<p>These definitions explain words only. Your doctor should interpret what your result means for you.</p></section>` : "";
     const files = (result.files || []).length
       ? `<div class="attachment-list">${result.files.map((file) => `<a class="attachment-link" href="${h(API_URL.replace(/[^/]+$/, ""))}${h(file.downloadUrl)}" target="_blank" rel="noopener">${icon("file")} <span>Download Uploaded File: ${h(file.originalName)}</span><small>${Math.round((file.sizeBytes || 0) / 1024)} KB</small></a>`).join("")}</div>`
       : '<p>No files attached.</p>';
-    return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Request No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Created", h(shortDateTime(result.createdAt || result.uploadedAt))], ["Updated", h(shortDateTime(result.updatedAt || result.uploadedAt))], ["Released", h(shortDateTime(result.releasedAt))], ["Status", badge(result.status)], ["Entered by", h(result.uploadedBy || "-")], ["Verified by", h(result.reviewedBy || "-")], ["Released by", h(result.releasedBy || "-")]])}${detailDownload ? `<div class="result-download-actions">${detailDownload}</div>` : ""}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${noteForm}${labActions}`;
+    return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Request No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Created", h(shortDateTime(result.createdAt || result.uploadedAt))], ["Updated", h(shortDateTime(result.updatedAt || result.uploadedAt))], ["Released", h(shortDateTime(result.releasedAt))], ["Status", badge(result.status)], ["Entered by", h(result.uploadedBy || "-")], ["Verified by", h(result.reviewedBy || "-")], ["Released by", h(result.releasedBy || "-")]])}${detailDownload ? `<div class="result-download-actions">${detailDownload}${compareButton}</div>` : ""}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${plainLanguage}${noteForm}${labActions}`;
+  }
+
+  function resultComparison(current, previousId = null) {
+    if (!current || current.status !== "Released" || !window.PatientResultTools) return '<div class="empty-state">A released result is required for comparison.</div>';
+    const available = window.PatientResultTools.comparableResults(current, state.data.results || []);
+    if (!available.length) return '<div class="empty-state">No earlier released result for this test is available.</div>';
+    const previous = available.find(item => String(item.id) === String(previousId)) || available[0];
+    const rows = window.PatientResultTools.comparisonRows(current, previous);
+    const reportLink = result => `<a class="btn btn-secondary btn-sm" href="${h(apiUrl("download_result_details", { id: result.id }))}" target="_blank" rel="noopener">${icon("download")} ${h(result.resultNumber)} report</a>`;
+    return `<section class="result-comparison"><p>Only released results for the same patient and test appear here. Match each value with its unit and reference range; your clinician can explain a change.</p><label for="comparison-previous">Previous result</label><select id="comparison-previous" data-comparison-previous>${available.map(item => `<option value="${h(item.id)}" ${item.id === previous.id ? "selected" : ""}>${h(item.resultNumber)} — ${h(shortDateTime(item.releasedAt))}</option>`).join("")}</select><div class="result-download-actions">${reportLink(current)}${reportLink(previous)}</div><div class="table-responsive"><table class="comparison-table"><thead><tr><th>Test component</th><th>Previous<br>${h(shortDateTime(previous.releasedAt))}</th><th>Current<br>${h(shortDateTime(current.releasedAt))}</th><th>Difference</th></tr></thead><tbody>${rows.map(row => `<tr><th scope="row">${h(row.parameter)}<small>${h(row.unit)}</small></th><td>${row.previous ? `${h(row.previous.value)}<small>${h(row.previous.referenceRange || "No range")} · ${h(row.previous.flag || "-")}</small>` : "Not reported"}</td><td>${row.current ? `${h(row.current.value)}<small>${h(row.current.referenceRange || "No range")} · ${h(row.current.flag || "-")}</small>` : "Not reported"}</td><td>${row.difference === null ? "—" : h(`${row.difference > 0 ? "+" : ""}${Number(row.difference.toPrecision(5))} ${row.unit}`)}</td></tr>`).join("")}</tbody></table></div><p>Differences are arithmetic only and are not a diagnosis. Reference intervals may vary between reports.</p></section>`;
   }
 
   function resultEditForm(result) {
@@ -2026,6 +2044,7 @@
       test: () => currentUser.role === "Admin" ? testForm(recordBy("tests", id)) : testDetails(recordBy("tests", id)),
       order: () => orderDetails(recordBy("orders", id)),
       result: () => resultDetails(recordBy("results", id)),
+      "result-compare": () => resultComparison(recordBy("results", id)),
       "result-edit": () => resultEditForm(recordBy("results", id)),
       patient: () => patientDetails(recordBy("patients", id) || (state.data.availablePatients || []).find((p) => String(p.id) === String(id))),
       notification: () => notificationDetails(recordBy("notifications", id)),
@@ -2676,6 +2695,15 @@
   }
 
   async function handleDashboardChange(event) {
+    if (event.target.matches("[data-comparison-previous]")) {
+      const current = recordBy("results", state.activeRecordId);
+      const body = $("#drawer-body");
+      if (current && body) {
+        body.innerHTML = resultComparison(current, event.target.value);
+        $("[data-comparison-previous]", body)?.focus();
+      }
+      return;
+    }
     if (event.target.matches("[data-admin-turnaround-period]")) {
       state.adminTurnaroundPeriod = event.target.value;
       setPage("dashboard", false);
