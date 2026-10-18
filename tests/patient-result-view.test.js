@@ -28,6 +28,9 @@ test("the real patient renderer shows approved directions and keeps unapproved l
   assert.match(markup, /patient-measurement--within/);
   assert.match(markup, /patient-measurement-reading"><span class="patient-measurement-direction patient-measurement-direction--low"/);
   assert.match(markup, /patient-measurement-reading"><span class="patient-measurement-direction patient-measurement-direction--high"/);
+  assert.match(markup, /patient-measurements-key-item--high/);
+  assert.match(markup, /patient-measurements-key-item--low/);
+  assert.match(markup, /Arrows compare a result with an approved lab range/);
   assert.match(markup, /patient-measurement--unassessed/);
   assert.doesNotMatch(markup, /patient-measurement-direction--unassessed/);
   assert.match(markup, /13,200/);
