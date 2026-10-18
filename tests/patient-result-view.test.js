@@ -18,20 +18,25 @@ test("the real patient renderer shows approved directions and keeps unapproved l
   const markup = render([
     { parameter: "Hemoglobin", value: "11.2", unit: "g/dL", referenceRange: "12-16", flag: "Low", validationRule: rule },
     { parameter: "Hematocrit", value: "38", unit: "%", referenceRange: "36-46", flag: "Normal", validationRule: { type: "numeric" } },
+    { parameter: "Platelets", value: "450", unit: "10^9/L", referenceRange: "150-400", flag: "High", validationRule: { type: "numeric" } },
     { parameter: "WBC", value: "13200", unit: "cells/uL", referenceRange: "4500-11000", flag: "Normal", validationRule: null,
       validationReason: "Format checks passed. No approved parameter rule is configured." },
     { parameter: "Screen", value: "Positive", unit: "1", referenceRange: "Positive, Negative", flag: "Normal", validationRule: { type: "text" } },
   ]);
   assert.match(markup, /patient-measurement--low/);
-  assert.match(markup, /Below reference range/);
+  assert.match(markup, /Below range/);
   assert.match(markup, /patient-measurement--within/);
+  assert.match(markup, /patient-measurement-reading"><span class="patient-measurement-direction patient-measurement-direction--low"/);
+  assert.match(markup, /patient-measurement-reading"><span class="patient-measurement-direction patient-measurement-direction--high"/);
   assert.match(markup, /patient-measurement--unassessed/);
+  assert.doesNotMatch(markup, /patient-measurement-direction--unassessed/);
   assert.match(markup, /13,200/);
   assert.match(markup, /4,500-11,000/);
   assert.match(markup, /cells per microliter/);
   assert.match(markup, /patient-measurement--reported/);
   assert.doesNotMatch(markup, /Positive, Negative 1/);
   assert.doesNotMatch(markup, /Format checks passed/);
+  assert.equal((markup.match(/Range not assessed:<\/strong>/g) || []).length, 1);
 });
 
 test("the patient renderer escapes laboratory-supplied content", () => {

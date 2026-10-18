@@ -66,15 +66,14 @@
     const status = approved && rule.type === "text" && flag === "Normal"
       ? { key: "reported", label: "Result recorded" }
       : ({
-      Low: { key: "low", label: "Below reference range" },
-      High: { key: "high", label: "Above reference range" },
+      Low: { key: "low", label: "Below range" },
+      High: { key: "high", label: "Above range" },
       Critical: { key: "critical", label: "Critical value — contact your care team" },
-      Normal: { key: "within", label: "Within reference range" },
+      Normal: { key: "within", label: "Within range" },
     }[flag] || { key: "unassessed", label: "Range not assessed" });
     const unit = String(value?.unit || "").trim();
     const unitMeaning = {
       "g/dL": "grams per deciliter",
-      "%": "percent",
       "cells/uL": "cells per microliter",
       "cells/µL": "cells per microliter",
       "cells/μL": "cells per microliter",
@@ -90,8 +89,6 @@
       reading: groupDigits(value?.value),
       range: groupDigits(rawRange),
       showRangeUnit: /^\s*(?:[<>]=?\s*)?[+-]?(?:\d|\.)/.test(rawRange),
-      note: !approved ? "The laboratory has not approved a range check for this measurement. Ask your care team to review it with you." :
-        rule.type === "text" ? "This label confirms the result was recorded, not what it means for your health. Ask your care team to interpret it." : "",
     };
   }
 

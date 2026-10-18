@@ -916,11 +916,20 @@
 
   function patientValues(values = []) {
     if (!values.length) return '<p class="patient-measurements-empty">No individual measurements were entered for this result. See the laboratory findings below.</p>';
-    return `<section class="patient-measurements" aria-labelledby="patient-measurements-title"><div class="patient-measurements-head"><h3 id="patient-measurements-title">Your measurements</h3><p>Compare each result with the range shown by the laboratory. Your care team can explain what it means for you.</p></div><div class="patient-measurements-list">${values.map(value => {
-      const view = window.PatientResultTools.patientValueView(value);
+    const rows = values.map(value => ({ value, view: window.PatientResultTools.patientValueView(value) }));
+    const cards = rows.map(({ value, view }) => {
       const unit = String(value.unit || "").trim();
-      return `<article class="patient-measurement patient-measurement--${view.key}"><div class="patient-measurement-top"><h4>${h(value.parameter || "Measurement")}</h4><span class="patient-measurement-status">${patientStatusIcon(view.key)}<span>${h(view.label)}</span></span></div><div class="patient-measurement-reading"><strong>${h(view.reading || "—")}</strong>${unit ? `<span>${h(unit)}</span>` : ""}</div>${view.unitMeaning ? `<p class="patient-measurement-unit">${h(unit)} means ${h(view.unitMeaning)}</p>` : ""}<div class="patient-measurement-range"><span>${h(view.rangeLabel)}</span><strong>${h(view.range || "Not supplied")}${unit && view.showRangeUnit ? ` ${h(unit)}` : ""}</strong></div>${view.note ? `<p class="patient-measurement-note">${h(view.note)}</p>` : ""}</article>`;
-    }).join("")}</div><p class="patient-measurements-footnote">A result inside or outside a reference range does not by itself diagnose a condition.</p></section>`;
+      const direction = ["low", "high"].includes(view.key)
+        ? `<span class="patient-measurement-direction patient-measurement-direction--${view.key}" aria-hidden="true">${patientStatusIcon(view.key)}</span>`
+        : "";
+      const statusIcon = direction ? "" : patientStatusIcon(view.key);
+      return `<article class="patient-measurement patient-measurement--${view.key}"><div class="patient-measurement-top"><h4>${h(value.parameter || "Measurement")}</h4><span class="patient-measurement-status">${statusIcon}<span>${h(view.label)}</span></span></div><div class="patient-measurement-reading">${direction}<strong>${h(view.reading || "—")}</strong>${unit ? `<span>${h(unit)}</span>` : ""}</div>${view.unitMeaning ? `<p class="patient-measurement-unit">${h(view.unitMeaning)}</p>` : ""}<div class="patient-measurement-range"><span>${h(view.rangeLabel)}</span><strong>${h(view.range || "Not supplied")}${unit && view.showRangeUnit ? ` ${h(unit)}` : ""}</strong></div></article>`;
+    }).join("");
+    const guidance = rows.some(({ view }) => view.key === "unassessed")
+      ? '<p><strong>Range not assessed:</strong> The lab has not approved a comparison rule for these measurements. Ask your care team to review them.</p>' : "";
+    const qualitativeGuidance = rows.some(({ view }) => view.key === "reported")
+      ? '<p><strong>Result recorded:</strong> The entry passed format checks; your care team can explain what it means.</p>' : "";
+    return `<section class="patient-measurements" aria-labelledby="patient-measurements-title"><div class="patient-measurements-head"><h3 id="patient-measurements-title">Your measurements</h3><p>Each range comes from the laboratory. Your care team can explain what the results mean for you.</p></div><div class="patient-measurements-list">${cards}</div><div class="patient-measurements-guidance">${guidance}${qualitativeGuidance}<p>A result inside or outside a reference range does not by itself diagnose a condition.</p></div></section>`;
   }
 
   function chartFromCounts(counts) {
