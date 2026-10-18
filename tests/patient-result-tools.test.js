@@ -40,3 +40,20 @@ test("glossary draws from real report text without inventing an interpretation",
   assert(terms.some(item => item.term === "platelet"));
   assert(!terms.some(item => item.term === "glucose"));
 });
+
+test("patient range labels require an approved rule, including for legacy saved Normal flags", () => {
+  const rule = { type: "numeric", minimum: 12, maximum: 16, unit: "g/dL" };
+  const base = { parameter: "Hemoglobin", value: "11.2", unit: "g/dL", referenceRange: "12.0-16.0" };
+  assert.equal(tools.patientValueView({ ...base, flag: "Normal" }).key, "unassessed");
+  assert.equal(tools.patientValueView({ ...base, flag: "Low", validationRule: rule }).label, "Below reference range");
+  assert.equal(tools.patientValueView({ ...base, value: "14", flag: "Normal", validationRule: rule }).key, "within");
+  assert.equal(tools.patientValueView({ ...base, flag: "Critical", validationRule: rule }).key, "critical");
+  assert.equal(tools.patientValueView({ ...base, flag: "High", validationRule: rule }).label, "Above reference range");
+  assert.equal(tools.patientValueView(base).rangeLabel, "Reported reference range");
+  assert.equal(tools.patientValueView(base).unitMeaning, "grams per deciliter");
+  assert.equal(tools.patientValueView({ value: "13200", referenceRange: "4500-11000" }).reading, "13,200");
+  assert.equal(tools.patientValueView({ value: "13200", referenceRange: "4500-11000" }).range, "4,500-11,000");
+  const qualitative = tools.patientValueView({ value: "Positive", referenceRange: "Positive, Negative", flag: "Normal", validationRule: { type: "text" } });
+  assert.equal(qualitative.key, "reported");
+  assert.equal(qualitative.showRangeUnit, false);
+});

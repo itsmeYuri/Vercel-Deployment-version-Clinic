@@ -1,5 +1,6 @@
 <?php
 // Run only against the local PHP server and disposable demo accounts.
+require_once __DIR__ . '/../app/core/result-validation.php';
 $base = 'http://127.0.0.1:8099/api/index.php';
 $cookie = tempnam(sys_get_temp_dir(), 'clinic-http-test-');
 function request_local($base, $cookie, $action, $payload = null, $token = '', $extra = []) {
@@ -50,6 +51,11 @@ try {
         echo "Staff-only validation access control passed.\n";
         [$status, $html] = request_local($base, $cookie, 'download_result_details', null, '', ['id' => (int) $id]);
         if ($status !== 200 || !str_contains($html, 'Laboratory Result')) throw new RuntimeException('Released-result download failed.');
+        foreach ($results['data']['results'][0]['values'] ?? [] as $value) {
+            if (!str_contains($html, htmlspecialchars(clinic_patient_value_label($value), ENT_QUOTES, 'UTF-8'))) {
+                throw new RuntimeException('Downloaded result did not show the safe patient range assessment.');
+            }
+        }
         echo "Released-result download passed.\n";
     }
 } finally {

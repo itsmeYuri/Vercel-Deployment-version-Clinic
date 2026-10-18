@@ -92,7 +92,7 @@ function clinic_evaluate_values($values, $rules)
     if (!$values) $issues[] = 'At least one result parameter is required.';
     foreach ($values as $value) {
         $name = strtolower(trim($value['parameter']));
-        $reasons = []; $flag = 'Normal';
+        $reasons = []; $flag = 'Not Evaluated';
         if (isset($seen[$name])) $reasons[] = 'Duplicate parameter.';
         $seen[$name] = true;
         $matches = $byName[$name] ?? [];
@@ -102,6 +102,7 @@ function clinic_evaluate_values($values, $rules)
             else $reasons = array_merge($reasons, clinic_validate_unconfigured_value($value));
         }
         if ($rule) {
+            $flag = 'Normal';
             if (trim($value['unit']) !== $rule['unit']) $reasons[] = 'Expected unit: ' . ($rule['unit'] ?: '(none)') . '.';
             if ($rule['type'] === 'numeric') {
                 if (!clinic_number($value['value'])) $reasons[] = 'A finite numerical result is required.';
@@ -126,6 +127,22 @@ function clinic_evaluate_values($values, $rules)
     }
     foreach ($rules as $rule) if ($rule['required'] && !isset($seen[strtolower($rule['parameter'])])) $issues[] = 'Missing required parameter: ' . $rule['parameter'] . '.';
     return ['valid' => !$issues && !array_filter($rows, fn($v) => $v['flag'] === 'Invalid Entry'), 'issues' => $issues, 'values' => $rows];
+}
+
+function clinic_patient_value_label($value)
+{
+    // A saved flag is not evidence of an approved comparison: older results
+    // could be marked Normal after format checks alone.
+    $rule = $value['validationRule'] ?? null;
+    if (!is_array($rule) || !in_array($rule['type'] ?? '', ['numeric', 'text'], true)) return 'Range not assessed';
+    if ($rule['type'] === 'text' && ($value['flag'] ?? '') === 'Normal') return 'Result recorded - ask your care team to interpret it';
+    return match ($value['flag'] ?? '') {
+        'Low' => 'Below reference range',
+        'High' => 'Above reference range',
+        'Critical' => 'Critical value - contact your care team',
+        'Normal' => 'Within reference range',
+        default => 'Range not assessed',
+    };
 }
 
 function clinic_order_validation($pdo, $orderId, $values)

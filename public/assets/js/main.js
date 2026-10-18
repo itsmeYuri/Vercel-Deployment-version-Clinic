@@ -907,6 +907,22 @@
     return `<table class="result-values"><thead><tr><th>Test component</th><th>Result</th><th>Measurement unit</th><th>Reference Range</th><th>Validation</th></tr></thead><tbody>${values.map((value) => `<tr><td>${h(value.parameter)}</td><td class="${["High", "Low", "Critical", "Invalid Entry"].includes(value.flag) ? "abnormal" : ""}">${h(value.value)}</td><td>${h(value.unit)}</td><td>${h(value.referenceRange)}</td><td><strong>${h(value.flag || "Not evaluated")}</strong><p>${h(value.validationReason || "")}</p>${value.validationRule ? `<small>Source: ${h(value.validationRule.source)}</small>` : ""}</td></tr>`).join("")}</tbody></table>`;
   }
 
+  function patientStatusIcon(key) {
+    if (key === "low" || key === "high") return `<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M10 ${key === "high" ? "16V4m0 0L5 9m5-5 5 5" : "4v12m0 0-5-5m5 5 5-5"}"/></svg>`;
+    if (key === "within") return '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="m4 10 4 4 8-8"/></svg>';
+    if (key === "critical") return '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M10 3 2 17h16L10 3Zm0 5v4m0 2v.5"/></svg>';
+    return '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="7"/><path d="M10 9v5m0-8v.5"/></svg>';
+  }
+
+  function patientValues(values = []) {
+    if (!values.length) return '<p class="patient-measurements-empty">No individual measurements were entered for this result. See the laboratory findings below.</p>';
+    return `<section class="patient-measurements" aria-labelledby="patient-measurements-title"><div class="patient-measurements-head"><h3 id="patient-measurements-title">Your measurements</h3><p>Compare each result with the range shown by the laboratory. Your care team can explain what it means for you.</p></div><div class="patient-measurements-list">${values.map(value => {
+      const view = window.PatientResultTools.patientValueView(value);
+      const unit = String(value.unit || "").trim();
+      return `<article class="patient-measurement patient-measurement--${view.key}"><div class="patient-measurement-top"><h4>${h(value.parameter || "Measurement")}</h4><span class="patient-measurement-status">${patientStatusIcon(view.key)}<span>${h(view.label)}</span></span></div><div class="patient-measurement-reading"><strong>${h(view.reading || "—")}</strong>${unit ? `<span>${h(unit)}</span>` : ""}</div>${view.unitMeaning ? `<p class="patient-measurement-unit">${h(unit)} means ${h(view.unitMeaning)}</p>` : ""}<div class="patient-measurement-range"><span>${h(view.rangeLabel)}</span><strong>${h(view.range || "Not supplied")}${unit && view.showRangeUnit ? ` ${h(unit)}` : ""}</strong></div>${view.note ? `<p class="patient-measurement-note">${h(view.note)}</p>` : ""}</article>`;
+    }).join("")}</div><p class="patient-measurements-footnote">A result inside or outside a reference range does not by itself diagnose a condition.</p></section>`;
+  }
+
   function chartFromCounts(counts) {
     const values = Object.values(counts || {});
     if (!values.length) return '<div class="empty-state">No chart data is available yet.</div>';
@@ -1960,6 +1976,10 @@
     const files = (result.files || []).length
       ? `<div class="attachment-list">${result.files.map((file) => `<a class="attachment-link" href="${h(API_URL.replace(/[^/]+$/, ""))}${h(file.downloadUrl)}" target="_blank" rel="noopener">${icon("file")} <span>Download Uploaded File: ${h(file.originalName)}</span><small>${Math.round((file.sizeBytes || 0) / 1024)} KB</small></a>`).join("")}</div>`
       : '<p>No files attached.</p>';
+    if (currentUser.role === "Patient") {
+      const patientInfo = drawerInfo([["Result ID", h(result.resultNumber)], ["Test", h(result.testName)], ["Laboratory", h(result.facilityName)], ["Released", h(shortDateTime(result.releasedAt))]]);
+      return `${patientInfo}${detailDownload ? `<div class="result-download-actions">${detailDownload}${compareButton}</div>` : ""}${patientValues(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${plainLanguage}`;
+    }
     return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Request No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Created", h(shortDateTime(result.createdAt || result.uploadedAt))], ["Updated", h(shortDateTime(result.updatedAt || result.uploadedAt))], ["Released", h(shortDateTime(result.releasedAt))], ["Status", badge(result.status)], ["Entered by", h(result.uploadedBy || "-")], ["Verified by", h(result.reviewedBy || "-")], ["Released by", h(result.releasedBy || "-")]])}${detailDownload ? `<div class="result-download-actions">${detailDownload}${compareButton}</div>` : ""}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${plainLanguage}${noteForm}${labActions}`;
   }
 
@@ -1968,7 +1988,11 @@
     const available = window.PatientResultTools.comparableResults(current, state.data.results || []);
     if (!available.length) return '<div class="empty-state">No earlier released result for this test is available.</div>';
     const previous = available.find(item => String(item.id) === String(previousId)) || available[0];
-    const rows = window.PatientResultTools.comparisonRows(current, previous);
+    const rows = window.PatientResultTools.comparisonRows(current, previous).map(row => ({
+      ...row,
+      current: row.current ? { ...row.current, flag: window.PatientResultTools.patientValueView(row.current).label } : null,
+      previous: row.previous ? { ...row.previous, flag: window.PatientResultTools.patientValueView(row.previous).label } : null,
+    }));
     const reportLink = result => `<a class="btn btn-secondary btn-sm" href="${h(apiUrl("download_result_details", { id: result.id }))}" target="_blank" rel="noopener">${icon("download")} ${h(result.resultNumber)} report</a>`;
     return `<section class="result-comparison"><p>Only released results for the same patient and test appear here. Match each value with its unit and reference range; your clinician can explain a change.</p><label for="comparison-previous">Previous result</label><select id="comparison-previous" data-comparison-previous>${available.map(item => `<option value="${h(item.id)}" ${item.id === previous.id ? "selected" : ""}>${h(item.resultNumber)} — ${h(shortDateTime(item.releasedAt))}</option>`).join("")}</select><div class="result-download-actions">${reportLink(current)}${reportLink(previous)}</div><div class="table-responsive"><table class="comparison-table"><thead><tr><th>Test component</th><th>Previous<br>${h(shortDateTime(previous.releasedAt))}</th><th>Current<br>${h(shortDateTime(current.releasedAt))}</th><th>Difference</th></tr></thead><tbody>${rows.map(row => `<tr><th scope="row">${h(row.parameter)}<small>${h(row.unit)}</small></th><td>${row.previous ? `${h(row.previous.value)}<small>${h(row.previous.referenceRange || "No range")} · ${h(row.previous.flag || "-")}</small>` : "Not reported"}</td><td>${row.current ? `${h(row.current.value)}<small>${h(row.current.referenceRange || "No range")} · ${h(row.current.flag || "-")}</small>` : "Not reported"}</td><td>${row.difference === null ? "—" : h(`${row.difference > 0 ? "+" : ""}${Number(row.difference.toPrecision(5))} ${row.unit}`)}</td></tr>`).join("")}</tbody></table></div><p>Differences are arithmetic only and are not a diagnosis. Reference intervals may vary between reports.</p></section>`;
   }
