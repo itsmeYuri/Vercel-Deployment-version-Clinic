@@ -49,6 +49,7 @@ $configs = [
             ['page' => 'dashboard', 'file' => 'dashboard', 'icon' => 'dashboard', 'label' => 'Dashboard'],
             ['page' => 'users', 'file' => 'users', 'icon' => 'users', 'label' => 'Users'],
             ['page' => 'facilities', 'file' => 'facilities', 'icon' => 'facility', 'label' => 'Facilities'],
+            ['page' => 'tests', 'file' => 'tests', 'icon' => 'test', 'label' => 'Laboratory Tests'],
             ['section' => 'Insights & controls'],
             ['page' => 'reports', 'file' => 'reports', 'icon' => 'chart', 'label' => 'Reports'],
             ['page' => 'audit', 'file' => 'audit', 'icon' => 'audit', 'label' => 'Audit Trail'],
