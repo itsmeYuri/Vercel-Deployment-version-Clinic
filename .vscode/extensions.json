@@ -1,0 +1,19 @@
+{
+  "recommendations": [
+    "bmewburn.vscode-intelephense-client",
+    "xdebug.php-debug",
+    "usernamehw.errorlens",
+    "christian-kohler.path-intellisense",
+    "pkief.material-icon-theme",
+    "zhuangtongfa.material-theme",
+    "esbenp.prettier-vscode",
+    "oderwat.indent-rainbow",
+    "vincaslt.highlight-matching-tag",
+    "eamodio.gitlens",
+    "mtxr.sqltools",
+    "mtxr.sqltools-driver-pg",
+    "mtxr.sqltools-driver-mysql",
+    "mikestead.dotenv",
+    "gruntfuggly.todo-tree"
+  ]
+}

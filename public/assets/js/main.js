@@ -777,6 +777,14 @@
     return `<article class="stat-card" style="--accent:${accent};--tint:${tint}"><div class="stat-top"><span class="stat-icon">${icon(iconName)}</span>${change === "-" ? "" : `<span class="stat-change ${String(change).startsWith("-") ? "down" : ""}">${icon("trend")}${h(change)}</span>`}</div><div class="stat-value">${h(value)}</div><div class="stat-label">${h(label)}</div></article>`;
   }
 
+  function catalogueStatus(total, active) {
+    return total === 0 ? "No records yet" : active === total ? "All active" : `${active} active / ${total - active} inactive`;
+  }
+
+  function listPageIntro(description, action = "") {
+    return `<div class="test-catalogue-toolbar"><p>${h(description)}</p>${action}</div>`;
+  }
+
   function table(headers, rows, footer = "") {
     const clean = (value) => String(value).replace(/<[^>]*>/g, "");
     const prepared = rows.map((entry) => {
@@ -1330,16 +1338,16 @@
 
   function renderUsers() {
     const rows = state.data.users.map((user) => [identity(user.name, `@${user.username}`, user.email, user.avatar), `${badge(user.role)}<span class="cell-sub">${h(user.assignedFacility || "Unassigned")}</span>`, badge(user.status), `<div class="row-actions"><button class="row-action" data-drawer="user" data-id="${user.id}" aria-label="Edit user">${icon("edit")}</button><button class="row-action" data-toggle-user="${user.id}" data-status="${user.status === "Active" ? "Inactive" : "Active"}" aria-label="${user.status === "Active" ? "Deactivate user" : "Activate user"}">${icon(user.status === "Active" ? "lock" : "check")}</button><button class="row-action row-action-danger" data-delete-user="${user.id}" data-user-name="${h(user.name)}" aria-label="Delete user">${icon("trash")}</button></div>`]);
-    return `${heading(...pageMeta.Admin.users, `<button class="btn btn-primary" data-drawer="user">${icon("plus")} Add User</button>`)}
-      <div class="stats-grid">${stat("Total Users", state.data.users.length, "users")}${stat("Active Users", state.data.users.filter((u) => u.status === "Active").length, "check", "-", "green")}${stat("Doctors", state.data.users.filter((u) => u.role === "Doctor").length, "doctor", "-", "blue")}${stat("Patients", state.data.users.filter((u) => u.role === "Patient").length, "user", "-", "orange")}</div>
+    return `${listPageIntro("Manage accounts, roles, and access.", `<button type="button" class="btn btn-primary" data-drawer="user">${icon("plus")} Add User</button>`)}
+      <div class="stats-grid test-catalogue-summary">${stat(`Users · ${catalogueStatus(state.data.users.length, state.data.users.filter((u) => u.status === "Active").length)}`, state.data.users.length, "users")}${stat("Doctors", state.data.users.filter((u) => u.role === "Doctor").length, "doctor", "-", "blue")}${stat("Patients", state.data.users.filter((u) => u.role === "Patient").length, "user", "-", "orange")}</div>
       ${filters("Search users", [["All roles", ["Admin", "Doctor", "Laboratory Staff", "Patient"]], ["All statuses", ["Active", "Inactive"]]])}
       ${table(["User", "Role & Facility", "Status", "Actions"], rows)}`;
   }
 
   function renderFacilities() {
     const rows = state.data.facilities.map((facility) => [`<span class="cell-strong">${h(facility.name)}</span><span class="cell-sub">${h(facility.address)}</span>`, `<span class="cell-strong">${h(facility.phone || "No phone")}</span><span class="cell-sub">${h(facility.email || "No email")}</span>`, `<span class="cell-strong">${h(facility.activeOrders)} open requests</span><span class="cell-sub">${h(facility.activeTests)} active tests</span>`, badge(facility.status), `<button class="btn btn-secondary btn-sm" data-drawer="facility" data-id="${facility.id}">Edit</button>`]);
-    return `${heading(...pageMeta.Admin.facilities, `<button class="btn btn-primary" data-drawer="facility">${icon("plus")} Add Facility</button>`)}
-      <div class="stats-grid">${stat("Facilities", state.data.facilities.length, "facility")}${stat("Active", state.data.facilities.filter((f) => f.status === "Active").length, "check", "-", "green")}${stat("Open Requests", state.data.facilities.reduce((sum, f) => sum + Number(f.activeOrders || 0), 0), "orders", "-", "blue")}${stat("Active Tests", state.data.tests.filter((t) => t.status === "Active").length, "test", "-", "purple")}</div>
+    return `${listPageIntro("Manage locations and availability.", `<button type="button" class="btn btn-primary" data-drawer="facility">${icon("plus")} Add Facility</button>`)}
+      <div class="stats-grid test-catalogue-summary">${stat(`Facilities · ${catalogueStatus(state.data.facilities.length, state.data.facilities.filter((f) => f.status === "Active").length)}`, state.data.facilities.length, "facility")}${stat("Open Requests", state.data.facilities.reduce((sum, f) => sum + Number(f.activeOrders || 0), 0), "orders", "-", "blue")}${stat("Active Tests", state.data.tests.filter((t) => t.status === "Active").length, "test", "-", "purple")}</div>
       ${filters("Search facilities", [["All statuses", ["Active", "Inactive"]]])}
       ${table(["Facility", "Contact", "Activity", "Status", "Action"], rows)}`;
   }
@@ -1374,9 +1382,16 @@
   }
 
   function renderTests() {
+    const tests = state.data.tests;
+    const activeCount = tests.filter((test) => test.status === "Active").length;
+    const availability = tests.length === 0 ? "No tests yet" : activeCount === tests.length ? "All active" : `${activeCount} active / ${tests.length - activeCount} inactive`;
     const rows = state.data.tests.map((test) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(test.name)}</span><span class="cell-sub">${h(test.code)}</span>`, `<span class="cell-strong">${h(test.category)}</span><span class="cell-sub">${h(test.sampleType)}</span>`, `<span class="cell-strong">${h(test.turnaroundTime)}</span><span class="cell-sub">${money(test.price)}</span>`, badge(test.status), `<button class="btn btn-secondary btn-sm" data-drawer="test" data-id="${test.id}">Edit</button>`]);
-    return `${heading(...pageMeta.Admin.tests, `<button class="btn btn-primary" data-drawer="test">${icon("plus")} Add Test</button>`)}
-      <div class="stats-grid">${stat("Test Definitions", state.data.tests.length, "test")}${stat("Active Tests", state.data.tests.filter((t) => t.status === "Active").length, "check", "-", "green")}${stat("Categories", new Set(state.data.tests.map((t) => t.category)).size, "chart", "-", "blue")}${stat("Average Price", money(state.data.tests.reduce((sum, t) => sum + Number(t.price || 0), 0) / Math.max(1, state.data.tests.length)), "file", "-", "purple")}</div>
+    return `${listPageIntro("Manage test details, pricing, and availability.", `<button type="button" class="btn btn-primary" data-drawer="test">${icon("plus")} Add Test</button>`)}
+      <div class="stats-grid test-catalogue-summary">
+        ${stat(`Test Definitions · ${availability}`, tests.length, "test")}
+        ${stat("Categories", new Set(tests.map((test) => test.category).filter(Boolean)).size, "chart", "-", "blue")}
+        ${stat("Average Price", tests.length ? money(tests.reduce((sum, test) => sum + Number(test.price || 0), 0) / tests.length) : "—", "file", "-", "purple")}
+      </div>
       ${filters("Search test name or code", [["All categories", [...new Set(state.data.tests.map((t) => t.category))]], ["All samples", [...new Set(state.data.tests.map((t) => t.sampleType))]], ["All statuses", ["Active", "Inactive"]]])}
       ${table(["Test", "Category & Sample", "Turnaround & Price", "Status", "Action"], rows)}`;
   }
@@ -1385,8 +1400,8 @@
     const rows = state.data.orders.map((order) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(order.orderNumber)}</span><span class="cell-sub">Created <time datetime="${h(order.createdAt)}">${shortDateTime(order.createdAt)}</time></span><span class="cell-sub">Updated ${shortDateTime(order.updatedAt || order.createdAt)}</span>`, identity(order.patientName, order.patientCode, "", order.patientAvatar), `<span class="cell-strong">${h(order.doctorName)}</span><span class="cell-sub">${h(order.facilityName)}</span>`, `<span class="cell-wrap">${h(order.tests)}</span>`, `${badge(order.priority)} ${badge(order.status)}`, `<button class="btn btn-secondary btn-sm" data-drawer="order" data-id="${order.id}">View</button>`]);
     const meta = pageMeta[titleRole]?.[pageKey] || pageMeta[titleRole]?.orders || pageMeta.Admin.orders;
     const action = titleRole === "Doctor" ? `<button class="btn btn-primary" data-go-page="create-order">${icon("plus")} New Laboratory Request</button>` : "";
-    return `${heading(...meta, action)}
-      <div class="stats-grid">${stat("Requests", state.data.orders.length, "orders")}${stat("Open", state.data.orders.filter((o) => !["Released", "Rejected", "Cancelled"].includes(o.status)).length, "clock", "-", "orange")}${stat("Released", state.data.orders.filter((o) => o.status === "Released").length, "check", "-", "green")}${stat("Priority", state.data.orders.filter((o) => o.priority === "Priority").length, "alert", "-", "red")}</div>
+    return `${listPageIntro(meta[1], action)}
+      <div class="stats-grid test-catalogue-summary">${stat(`Requests · ${state.data.orders.filter((o) => !["Released", "Rejected", "Cancelled"].includes(o.status)).length} open`, state.data.orders.length, "orders")}${stat("Released", state.data.orders.filter((o) => o.status === "Released").length, "check", "-", "green")}${stat("Priority", state.data.orders.filter((o) => o.priority === "Priority").length, "alert", "-", "red")}</div>
       ${filters("Search request, patient, clinician, or test", [["All statuses", Object.keys(state.data.reports.ordersByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)], ["All priorities", ["Regular", "Priority"]]], "", { dates: true })}
       ${table(["Request", "Patient", "Clinician & Facility", "Tests", "Workflow", "Action"], rows)}`;
   }
@@ -1394,8 +1409,8 @@
   function renderResults(titleRole = currentUser.role) {
     const rows = state.data.results.map((result) => [`<span class="cell-strong" style="color:var(--teal-800)">${h(result.resultNumber)}</span><span class="cell-sub">Request ${h(result.orderNumber)}</span><span class="cell-sub"><time datetime="${h(result.createdAt || result.uploadedAt)}">${shortDateTime(result.releasedAt || result.updatedAt || result.uploadedAt)}</time></span>`, identity(result.patientName, result.patientCode), `<span class="cell-strong">${h(result.testName)}</span><span class="cell-sub">${h(result.facilityName)}</span>`, badge(result.status), `<span class="cell-wrap">${h(result.clinicalNote || "No clinical note yet")}</span>`, `<button class="btn btn-secondary btn-sm" data-drawer="result" data-id="${result.id}">View</button>`]);
     const meta = pageMeta[titleRole]?.results || pageMeta.Admin.results;
-    return `${heading(...meta)}
-      <div class="stats-grid">${stat("Results", state.data.results.length, "results")}${stat("Pending Review", state.data.results.filter((r) => r.status === "Pending Review").length, "clock", "-", "orange")}${stat("Verified", state.data.results.filter((r) => r.status === "Verified").length, "check", "-", "green")}${stat("Released", state.data.results.filter((r) => r.status === "Released").length, "download", "-", "blue")}</div>
+    return `${listPageIntro(meta[1])}
+      <div class="stats-grid test-catalogue-summary">${stat(`${titleRole === "Patient" ? "Released Results" : "Results"} · ${titleRole === "Patient" ? "Available to you" : `${state.data.results.filter((r) => r.status === "Released").length} released`}`, state.data.results.length, "results")}${titleRole === "Patient" ? "" : `${stat("Pending Review", state.data.results.filter((r) => r.status === "Pending Review").length, "clock", "-", "orange")}${stat("Verified", state.data.results.filter((r) => r.status === "Verified").length, "check", "-", "green")}`}</div>
       ${filters("Search result, request, patient, or test", [["All statuses", Object.keys(state.data.reports.resultsByStatus || {})], ["All facilities", state.data.facilities.map((f) => f.name)]], "", { dates: true })}
       ${table(["Result", "Patient", "Test & Facility", "Status", "Clinical Note", "Action"], rows)}`;
   }
@@ -1512,22 +1527,22 @@
   function renderPatients(role = currentUser.role) {
     const meta = pageMeta[role].patients;
     const rows = state.data.patients.map((patient) => [identity(patient.name, patient.patientCode, patient.email, patient.avatar), `<time datetime="${h(patient.dateOfBirth || "")}">${h(patient.dateOfBirth || "No birth date")}</time><span class="cell-sub">${h(patient.sex || "Not recorded")}</span>`, h(patient.primaryFacility || "-"), `<span class="cell-wrap">${h(patient.latestTests || "No tests")}</span>${badge(patient.latestStatus || "Pending")}`, `<button class="btn btn-secondary btn-sm" data-drawer="patient" data-id="${patient.id}">View</button>`]);
-    return `${heading(...meta)}
-      <div class="stats-grid">${stat("Patients", state.data.patients.length, "users")}${stat("With Requests", state.data.patients.filter((p) => p.orderCount > 0).length, "orders", "-", "blue")}${stat("Released Results", state.data.patients.reduce((sum, p) => sum + Number(p.resultCount || 0), 0), "results", "-", "green")}${stat("Facilities", new Set(state.data.patients.map((p) => p.primaryFacility).filter(Boolean)).size, "facility", "-", "purple")}</div>
+    return `${listPageIntro(meta[1])}
+      <div class="stats-grid test-catalogue-summary">${stat(`Patients · ${state.data.patients.filter((p) => p.orderCount > 0).length} with requests`, state.data.patients.length, "users")}${stat("Released Results", state.data.patients.reduce((sum, p) => sum + Number(p.resultCount || 0), 0), "results", "-", "green")}${stat("Facilities", new Set(state.data.patients.map((p) => p.primaryFacility).filter(Boolean)).size, "facility", "-", "purple")}</div>
       ${filters("Search patient name, ID, or email", [["All genders", ["Female", "Male", "Prefer not to say"]], ["All statuses", [...new Set(state.data.patients.map((p) => p.latestStatus))]], ["All facilities", state.data.facilities.map((f) => f.name)]], "", { dates: true })}
       ${table(["Patient", "DOB & Sex", "Facility", "Latest Activity", "Action"], rows)}`;
   }
 
   function renderDoctorFacilities() {
     const facilityRows = state.data.facilities.map((facility) => [h(facility.name), h(facility.address), h(facility.phone), badge(facility.status), h(facility.activeOrders), `<button class="btn btn-secondary btn-sm" data-drawer="facility" data-id="${facility.id}">View</button>`]);
-    return `${heading(...pageMeta.Doctor.facilities)}
-      <div class="stats-grid">${stat("Facilities", state.data.facilities.length, "facility")}${stat("Active", state.data.facilities.filter((f) => f.status === "Active").length, "check", "-", "green")}${stat("Open Requests", state.data.facilities.reduce((sum, f) => sum + Number(f.activeOrders || 0), 0), "orders", "-", "blue")}</div>
+    return `${listPageIntro(pageMeta.Doctor.facilities[1])}
+      <div class="stats-grid test-catalogue-summary">${stat(`Facilities · ${catalogueStatus(state.data.facilities.length, state.data.facilities.filter((f) => f.status === "Active").length)}`, state.data.facilities.length, "facility")}${stat("Open Requests", state.data.facilities.reduce((sum, f) => sum + Number(f.activeOrders || 0), 0), "orders", "-", "blue")}</div>
       ${filters("Search facility name or address", [["All statuses", ["Active", "Inactive"]]])}${table(["Facility", "Address", "Phone", "Status", "Open Requests", "Action"], facilityRows)}`;
   }
 
   function renderDoctorTests() {
     const testRows = state.data.tests.map((test) => [`<span class="cell-strong">${h(test.name)}</span><span class="cell-sub">${h(test.code)}</span>`, `<span class="cell-strong">${h(test.category)}</span><span class="cell-sub">${h(test.sampleType)}</span>`, `<span class="cell-strong">${h(test.turnaroundTime)}</span><span class="cell-sub">${money(test.price)}</span>`, badge(test.status), `<button class="btn btn-secondary btn-sm" data-drawer="test" data-id="${test.id}">View</button>`]);
-    return `${heading(...pageMeta.Doctor.tests)}<div class="stats-grid">${stat("Tests", state.data.tests.length, "test")}${stat("Active", state.data.tests.filter((t) => t.status === "Active").length, "check", "-", "green")}${stat("Categories", new Set(state.data.tests.map((t) => t.category)).size, "chart", "-", "blue")}${stat("Fastest TAT", state.data.tests[0]?.turnaroundTime || "-", "clock", "-", "orange")}</div>${filters("Search test name or code", [["All categories", [...new Set(state.data.tests.map((t) => t.category))]], ["All samples", [...new Set(state.data.tests.map((t) => t.sampleType))]], ["All statuses", ["Active", "Inactive"]]])}${table(["Test", "Category & Sample", "Turnaround & Price", "Status", "Action"], testRows)}`;
+    return `${listPageIntro(pageMeta.Doctor.tests[1])}<div class="stats-grid test-catalogue-summary">${stat(`Tests · ${catalogueStatus(state.data.tests.length, state.data.tests.filter((t) => t.status === "Active").length)}`, state.data.tests.length, "test")}${stat("Categories", new Set(state.data.tests.map((t) => t.category).filter(Boolean)).size, "chart", "-", "blue")}</div>${filters("Search test name or code", [["All categories", [...new Set(state.data.tests.map((t) => t.category))]], ["All samples", [...new Set(state.data.tests.map((t) => t.sampleType))]], ["All statuses", ["Active", "Inactive"]]])}${table(["Test", "Category & Sample", "Turnaround & Price", "Status", "Action"], testRows)}`;
   }
 
   function renderCreateOrder() {
@@ -1599,8 +1614,8 @@
     const verifiedRows = state.data.results.filter((result) => result.status === "Verified").map(resultRow);
     const completedRows = state.data.results.filter((result) => ["Released", "Rejected"].includes(result.status)).map(resultRow);
     const columns = ["Result", "Patient", "Test & Facility", "Status", "Updated/Released", "Action"];
-    return `${heading(...pageMeta["Laboratory Staff"].review)}
-      <div class="stats-grid">${stat("Results", state.data.results.length, "results")}${stat("Pending Review", state.data.results.filter((r) => r.status === "Pending Review").length, "clock", "-", "orange")}${stat("Verified", state.data.results.filter((r) => r.status === "Verified").length, "check", "-", "green")}${stat("Released", state.data.results.filter((r) => r.status === "Released").length, "download", "-", "blue")}</div>
+    return `${listPageIntro(pageMeta["Laboratory Staff"].review[1])}
+      <div class="stats-grid test-catalogue-summary">${stat(`Results · ${state.data.results.filter((r) => r.status === "Released").length} released`, state.data.results.length, "results")}${stat("Pending Review", pendingRows.length, "clock", "-", "orange")}${stat("Verified", verifiedRows.length, "check", "-", "green")}</div>
       ${filters("Search result, patient, test, or facility", [["All facilities", [...new Set(state.data.results.map((r) => r.facilityName))]]], "", { dates: true })}
       <div class="result-review-sections"><section><h3>Pending Review</h3>${table(columns, pendingRows, "No results are waiting for verification.")}</section><section><h3>Verified Results</h3>${table(columns, verifiedRows, "No verified results are waiting for release.")}</section><section><h3>Released and Rejected Results</h3>${table(columns, completedRows, "No completed result records.")}</section></div>`;
   }

@@ -1,0 +1,50 @@
+{
+  "workbench.colorTheme": "One Dark Pro",
+  "workbench.iconTheme": "material-icon-theme",
+  "editor.bracketPairColorization.enabled": true,
+  "editor.guides.bracketPairs": "active",
+  "editor.guides.indentation": true,
+  "editor.smoothScrolling": true,
+  "editor.cursorSmoothCaretAnimation": "on",
+  "editor.minimap.enabled": false,
+  "editor.stickyScroll.enabled": true,
+  "breadcrumbs.enabled": true,
+  "php.suggest.basic": false,
+  "[php]": {
+    "editor.defaultFormatter": "bmewburn.vscode-intelephense-client"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[css]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[html]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "errorLens.enabledDiagnosticLevels": ["error", "warning"],
+  "editor.lineHeight": 24,
+  "editor.padding.top": 12,
+  "editor.padding.bottom": 12,
+  "editor.renderWhitespace": "selection",
+  "workbench.tree.indent": 16,
+  "indentRainbow.indicatorStyle": "light",
+  "indentRainbow.colors": [
+    "rgba(97, 175, 239, 0.12)",
+    "rgba(152, 195, 121, 0.12)",
+    "rgba(229, 192, 123, 0.12)",
+    "rgba(198, 120, 221, 0.12)"
+  ],
+  "highlight-matching-tag.showPath": false,
+  "gitlens.currentLine.enabled": false,
+  "gitlens.codeLens.enabled": false,
+  "todo-tree.filtering.excludeGlobs": [
+    "**/vendor/**",
+    "**/node_modules/**",
+    "**/.git/**",
+    "**/Main-Clinic-system/**"
+  ]
+}
