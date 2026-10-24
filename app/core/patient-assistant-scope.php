@@ -3,8 +3,8 @@
 function patient_assistant_in_scope($question)
 {
     $query = trim((string) $question);
-    // Greetings and language changes are allowed, but must not include another request.
-    if (preg_match('/^(?:hello|hi|hey|hoy|help|thanks|thank you|salamat|kumusta|kamusta|maayong (?:buntag|adlaw|hapon|gabii)|good (?:morning|afternoon|evening)|(?:please )?(?:speak |use |in |reply in |answer in )?(?:bisaya|cebuano|tagalog|filipino|english)(?: please)?)[\s!?.]*$/iu', $query)) {
+    // Greetings are allowed; standalone language requests receive the English scope reminder.
+    if (preg_match('/^(?:hello|hi|hey|hoy|help|thanks|thank you|salamat|kumusta|kamusta|maayong (?:buntag|adlaw|hapon|gabii)|good (?:morning|afternoon|evening))[\s!?.]*$/iu', $query)) {
         return true;
     }
     // Require a supported topic in the current message, not just in old chat history.
