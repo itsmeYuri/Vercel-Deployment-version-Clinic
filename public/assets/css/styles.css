@@ -4240,7 +4240,7 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
 .patient-assistant-panel header strong { color: var(--navy); font-size: var(--font-md); }
 .patient-assistant-panel header span { margin-top: 2px; color: var(--muted); font-size: var(--font-xs); }
 .patient-assistant-messages { display: grid; align-content: start; gap: 10px; min-height: 220px; max-height: 340px; padding: 16px; overflow-y: auto; background: #f7fbfb; }
-.patient-assistant-message { width: fit-content; max-width: 88%; margin: 0; padding: 10px 12px; border-radius: 12px; font-size: var(--font-sm); line-height: 1.5; }
+.patient-assistant-message { width: fit-content; max-width: 88%; margin: 0; padding: 10px 12px; border-radius: 12px; font-size: var(--font-sm); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .patient-assistant-message.is-assistant { border: 1px solid #d7e9e8; border-bottom-left-radius: 4px; color: var(--ink); background: #fff; }
 .patient-assistant-message.is-user { justify-self: end; border-bottom-right-radius: 4px; color: #fff; background: var(--teal-700); }
 .patient-assistant-message.is-thinking { color: var(--muted); font-style: italic; }
