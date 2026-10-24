@@ -3124,7 +3124,7 @@
     if (/download|print|pdf/.test(query)) return "Open My Results, select a released result, then use Print / Save PDF. You can also export your visible records from Settings.";
     if (/profile|email|phone|contact|password/.test(query)) return "Open your profile menu to update contact details or go to Settings to change your password and download your visible records.";
     if (/hello|hi|hey|help|what can you do/.test(query)) return "I can help with your laboratory request status, released results, facility, notifications, profile, downloads, and portal navigation. What would you like to know?";
-    return "The AI assistant is temporarily unavailable, so I cannot answer general questions right now. Please try again shortly. I can still provide basic portal help with request status, released results, and downloads.";
+    return "I can only help with hospital, laboratory, and patient portal questions. Try asking about your request status, released results, facility, or downloads.";
   }
 
   function initPatientAssistant() {
