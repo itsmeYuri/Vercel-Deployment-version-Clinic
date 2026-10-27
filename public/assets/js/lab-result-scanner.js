@@ -217,11 +217,57 @@
     });
     return {
       values,
+      patientName: lines.map((line) => line.match(/^patient\s*name\s*[:\-]?\s*(.+)$/i)).find(Boolean)?.[1]?.trim() || "",
       findings: extractSection(lines, /^findings summary\b/i, [/^remarks\b/i, /^result values?\b/i, /^performed by\b/i]),
       remarks: extractSection(lines, /^remarks\b/i, [/^result values?\b/i, /^performed by\b/i, /^reviewed by\b/i]),
       lines,
       rawText: String(text || "").trim(),
     };
+  }
+
+  function parameterKey(value) {
+    const key = String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (["hemoglobina1c", "hba1c", "a1c"].includes(key)) return "hba1c";
+    if (["creactiveprotein", "crp"].includes(key)) return "crp";
+    if (["fastingglucose", "fastingbloodsugar", "glucose", "fbs"].includes(key)) return "glucose";
+    if (["alt", "altsgpt", "alanineaminotransferase"].includes(key)) return "alt";
+    if (["esr", "erythrocytesedimentationrate"].includes(key)) return "esr";
+    if (["ldl", "ldlcholesterol"].includes(key)) return "ldl";
+    if (["hdl", "hdlcholesterol"].includes(key)) return "hdl";
+    return key;
+  }
+
+  function expectedParameters(testNames) {
+    const expected = new Set();
+    const add = (...names) => names.forEach((name) => expected.add(parameterKey(name)));
+    for (const name of testNames) {
+      const test = parameterKey(name).replace(/^demo/, "");
+      if (test.includes("completebloodcount") || test === "cbc") add("WBC", "RBC", "Hemoglobin", "Hematocrit", "Platelets", "MCV", "MCH", "MCHC", "RDW", "Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Basophils");
+      else if (test.includes("urinalysis") || test === "ua") add("Urine pH", "Specific Gravity");
+      else if (test.includes("lipidprofile") || test === "lipid") add("Total Cholesterol", "LDL", "HDL", "Triglycerides");
+      else if (test.includes("metabolicpanel") || test === "cmp") add("Glucose", "Creatinine", "BUN", "Sodium", "Potassium", "Chloride", "Calcium", "ALT", "AST/SGOT");
+      else if (test.includes("creactiveprotein") || test === "crp") add("CRP");
+      else if (test.includes("hemoglobina1c") || test === "hba1c") add("HbA1c");
+      else if (test.includes("fastingbloodsugar") || test === "fbs") add("Glucose");
+      else if (test.includes("creatinine")) add("Creatinine");
+      else if (test.includes("thyroidstimulatinghormone") || test === "tsh") add("TSH");
+      else if (test.includes("alanineaminotransferase") || test === "alt") add("ALT");
+      else if (test.includes("erythrocytesedimentationrate") || test === "esr") add("ESR");
+    }
+    return expected;
+  }
+
+  function scanMismatch(parsed, order) {
+    if (!order) return { reasons: ["Select a laboratory request before scanning."] };
+    const testNames = String(order.tests || "").split(/,|;/).map((name) => name.trim()).filter(Boolean);
+    const expected = expectedParameters(testNames);
+    const unexpected = expected.size ? (parsed.values || []).filter((value) => !expected.has(parameterKey(value.parameter))).map((value) => value.parameter) : [];
+    const normalizeName = (name) => String(name || "").toLowerCase().replace(/\b(?:mr|mrs|ms|dr)\.?\b/g, "").replace(/[^a-z]/g, "");
+    const patientMismatch = parsed.patientName && order.patientName && normalizeName(parsed.patientName) !== normalizeName(order.patientName);
+    const reasons = [];
+    if (patientMismatch) reasons.push(`Scanned patient: ${parsed.patientName}; requested patient: ${order.patientName}.`);
+    if (unexpected.length) reasons.push(`Unexpected test components: ${unexpected.join(", ")}. Ordered tests: ${testNames.join(", ")}.`);
+    return { reasons, unexpected, patientMismatch };
   }
 
   function imageQuality(imageData) {
@@ -253,5 +299,5 @@
     return complete * 30 + rows.length * 12 + Math.max(0, Math.min(100, Number(confidence) || 0)) * .15;
   }
 
-  return { parse, inferredFlag, imageQuality, recognitionScore };
+  return { parse, inferredFlag, imageQuality, recognitionScore, scanMismatch };
 }));

@@ -186,6 +186,18 @@ function clinic_order_validation($pdo, $orderId, $values)
         $rules = array_merge($rules, $testRules);
     }
     $report = clinic_evaluate_values($values, $rules);
+    $expected = [];
+    foreach ($rules as $rule) $expected[clinic_parameter_key($rule['parameter'])] = true;
+    foreach ($tests as $test) {
+        foreach (clinic_test_parameter_keys($test['test_name']) as $key) $expected[$key] = true;
+    }
+    if ($expected) foreach ($values as $value) {
+        $parameter = trim((string) ($value['parameter'] ?? ''));
+        if (!isset($expected[clinic_parameter_key($parameter)])) {
+            $report['issues'][] = 'Wrong laboratory test: ' . $parameter . ' is not part of the selected request. Scan the report for the ordered test.';
+            $report['valid'] = false;
+        }
+    }
     if (!$tests) {
         $report['issues'][] = 'The request has no test definitions.';
         $report['valid'] = false;
@@ -194,6 +206,36 @@ function clinic_order_validation($pdo, $orderId, $values)
     $report['anomalies'] = clinic_historical_anomalies($pdo, $orderId, $report['values']);
     $report['validatedAt'] = date(DATE_ATOM);
     return $report;
+}
+
+function clinic_parameter_key($name)
+{
+    $key = preg_replace('/[^a-z0-9]/', '', strtolower((string) $name));
+    foreach ([
+        'hba1c' => ['hemoglobina1c', 'hba1c', 'a1c'],
+        'crp' => ['creactiveprotein', 'crp'],
+        'glucose' => ['fastingglucose', 'fastingbloodsugar', 'glucose', 'fbs'],
+        'alt' => ['alt', 'altsgpt', 'alanineaminotransferase'],
+        'esr' => ['esr', 'erythrocytesedimentationrate'],
+        'ldl' => ['ldl', 'ldlcholesterol'],
+        'hdl' => ['hdl', 'hdlcholesterol'],
+    ] as $canonical => $aliases) if (in_array($key, $aliases, true)) return $canonical;
+    return $key;
+}
+
+function clinic_test_parameter_keys($name)
+{
+    $test = clinic_parameter_key($name);
+    $test = preg_replace('/^demo/', '', $test);
+    if (str_contains($test, 'completebloodcount') || $test === 'cbc') $names = ['WBC','RBC','Hemoglobin','Hematocrit','Platelets','MCV','MCH','MCHC','RDW','Neutrophils','Lymphocytes','Monocytes','Eosinophils','Basophils'];
+    elseif (str_contains($test, 'urinalysis') || $test === 'ua') $names = ['Urine pH','Specific Gravity'];
+    elseif (str_contains($test, 'lipidprofile') || $test === 'lipid') $names = ['Total Cholesterol','LDL','HDL','Triglycerides'];
+    elseif (str_contains($test, 'metabolicpanel') || $test === 'cmp') $names = ['Glucose','Creatinine','BUN','Sodium','Potassium','Chloride','Calcium','ALT','AST/SGOT'];
+    elseif (in_array($test, ['crp','hba1c','glucose','alt','esr'], true)) $names = [$test];
+    elseif (str_contains($test, 'creatinine')) $names = ['Creatinine'];
+    elseif (str_contains($test, 'thyroidstimulatinghormone') || $test === 'tsh') $names = ['TSH'];
+    else return [];
+    return array_map('clinic_parameter_key', $names);
 }
 
 function clinic_median($numbers)

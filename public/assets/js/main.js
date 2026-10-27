@@ -693,6 +693,15 @@
         updateScannerStatus(form, "Text was detected, but no result rows could be identified after checking the image orientation. Review the detected text or enter the values manually.", null, "error");
         return;
       }
+      const selectedOrderId = $('select[name="orderId"]', form)?.value;
+      const selectedOrder = state.data?.orders?.find((order) => String(order.id) === String(selectedOrderId));
+      const mismatch = window.ClinicLabScanner?.scanMismatch(parsed, selectedOrder);
+      if (mismatch?.reasons?.length) {
+        const message = `Wrong scan. This report does not match the selected doctor's request. ${mismatch.reasons.join(" ")} Choose the correct report and scan again.`;
+        updateScannerStatus(form, message, null, "error");
+        await glassDialog({ title: "Wrong laboratory report", message, confirmText: "OK", danger: true });
+        return;
+      }
       const confidence = Math.round(recognizedPages.reduce((sum, page) => sum + Number(page.data?.confidence || 0), 0) / Math.max(1, recognizedPages.length));
       parsed.values = parsed.values.map((value) => ({ ...value, confidence,
         reviewWarnings: [...(value.reviewWarnings || []), ...(!value.unit || !value.referenceRange ? ["Unit or reference range was not read; compare with the source."] : [])] }));
@@ -2077,6 +2086,8 @@
     form.querySelector(".validation-report")?.remove();
     form.querySelector(".form-actions").insertAdjacentHTML("beforebegin", validationReportHtml(validation));
     if (!validation.valid) {
+      const wrongTest = (validation.issues || []).find((issue) => /wrong laboratory test/i.test(issue));
+      if (wrongTest) await glassDialog({ title: "Wrong laboratory test", message: `${wrongTest} This result cannot be uploaded for the selected request.`, confirmText: "OK", danger: true });
       form.querySelector(".validation-report").scrollIntoView({ block: "nearest", behavior: "smooth" });
       toast("Correct the validation issues shown below the result values.", "error");
       return false;
