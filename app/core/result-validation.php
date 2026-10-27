@@ -62,6 +62,20 @@ function clinic_rule_range($rule)
     return $rule['minimum'] . ' - ' . $rule['maximum'];
 }
 
+function clinic_reference_bounds($range)
+{
+    $range = preg_replace('/[\x{2012}\x{2013}\x{2014}\x{2212}]/u', '-', trim((string) $range));
+    if (preg_match('/^\s*([+-]?\d+(?:\.\d+)?)\s*-\s*([+-]?\d+(?:\.\d+)?)\s*$/', $range, $match)) {
+        return ['minimum' => (float) $match[1], 'maximum' => (float) $match[2], 'minimumInclusive' => true, 'maximumInclusive' => true];
+    }
+    if (preg_match('/^\s*(<=|>=|<|>)\s*([+-]?\d+(?:\.\d+)?)\s*$/', $range, $match)) {
+        return in_array($match[1], ['<', '<='], true)
+            ? ['minimum' => null, 'maximum' => (float) $match[2], 'minimumInclusive' => true, 'maximumInclusive' => $match[1] === '<=']
+            : ['minimum' => (float) $match[2], 'maximum' => null, 'minimumInclusive' => $match[1] === '>=', 'maximumInclusive' => true];
+    }
+    return null;
+}
+
 function clinic_validate_unconfigured_value($value)
 {
     $errors = [];
@@ -104,7 +118,15 @@ function clinic_evaluate_values($values, $rules)
         if ($rule) {
             $flag = 'Normal';
             if (trim($value['unit']) !== $rule['unit']) $reasons[] = 'Expected unit: ' . ($rule['unit'] ?: '(none)') . '.';
+            $extractedRange = trim((string) ($value['referenceRange'] ?? ''));
+            $value['extractedReferenceRange'] = $extractedRange;
+            $value['approvedReferenceRange'] = clinic_rule_range($rule);
             if ($rule['type'] === 'numeric') {
+                $bounds = clinic_reference_bounds($extractedRange);
+                if ($extractedRange === '') $reasons[] = 'Reference range is missing; compare the source report with the approved rule.';
+                elseif (!$bounds) $reasons[] = 'Reference range could not be read reliably; compare it with the approved rule.';
+                elseif ($bounds['minimum'] !== null && $bounds['maximum'] !== null && $bounds['minimum'] > $bounds['maximum']) $reasons[] = 'Reference range minimum exceeds maximum.';
+                elseif ($bounds['minimum'] !== $rule['minimum'] || $bounds['maximum'] !== $rule['maximum'] || $bounds['minimumInclusive'] !== $rule['minimumInclusive'] || $bounds['maximumInclusive'] !== $rule['maximumInclusive']) $reasons[] = 'Extracted reference range conflicts with the approved rule; review the source report and rule applicability.';
                 if (!clinic_number($value['value'])) $reasons[] = 'A finite numerical result is required.';
                 else {
                     $n = (float) $value['value'];
@@ -116,8 +138,7 @@ function clinic_evaluate_values($values, $rules)
                 $allowed = array_map('strtolower', array_map('trim', explode(',', $rule['allowedValues'])));
                 if (!in_array(strtolower(trim($value['value'])), $allowed, true)) $reasons[] = 'Permitted values: ' . $rule['allowedValues'] . '.';
             }
-            // Use the approved range, never an OCR-supplied or manually overridden range.
-            $value['referenceRange'] = clinic_rule_range($rule);
+            if (!$reasons) $value['referenceRange'] = clinic_rule_range($rule);
         }
         if ($reasons) $flag = 'Invalid Entry';
         $value['flag'] = $flag;
@@ -143,6 +164,15 @@ function clinic_patient_value_label($value)
         'Normal' => 'Within reference range',
         default => 'Range not assessed',
     };
+}
+
+function clinic_patient_explanation_visible($result, $explanation)
+{
+    return is_array($explanation)
+        && ($result['status'] ?? '') === 'Released'
+        && ($explanation['review_status'] ?? '') === 'Approved'
+        && ($explanation['result_updated_at'] ?? null) !== null
+        && (string) $explanation['result_updated_at'] === (string) ($result['updated_at'] ?: $result['created_at']);
 }
 
 function clinic_order_validation($pdo, $orderId, $values)

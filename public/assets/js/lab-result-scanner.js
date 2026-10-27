@@ -224,5 +224,34 @@
     };
   }
 
-  return { parse, inferredFlag };
+  function imageQuality(imageData) {
+    const { width, height, data } = imageData;
+    if (!width || !height || !data?.length) return { sharpness: 0, contrast: 0, lowResolution: true, blurry: true, lowContrast: true };
+    const step = Math.max(1, Math.floor(Math.min(width, height) / 350));
+    let count = 0, sum = 0, sumSquares = 0, edges = 0, edgeCount = 0;
+    const gray = (offset) => data[offset] * .299 + data[offset + 1] * .587 + data[offset + 2] * .114;
+    for (let y = 0; y < height - step; y += step) {
+      for (let x = 0; x < width - step; x += step) {
+        const offset = (y * width + x) * 4;
+        const value = gray(offset);
+        sum += value;
+        sumSquares += value * value;
+        count += 1;
+        edges += Math.abs(value - gray(offset + step * 4)) + Math.abs(value - gray(offset + step * width * 4));
+        edgeCount += 2;
+      }
+    }
+    const contrast = Math.sqrt(Math.max(0, sumSquares / count - (sum / count) ** 2));
+    const sharpness = edges / edgeCount;
+    return { sharpness, contrast, lowResolution: Math.min(width, height) < 700,
+      blurry: sharpness < 5, lowContrast: contrast < 28 };
+  }
+
+  function recognitionScore(parsed, confidence) {
+    const rows = parsed?.values || [];
+    const complete = rows.filter((row) => row.parameter && row.value && row.unit && row.referenceRange).length;
+    return complete * 30 + rows.length * 12 + Math.max(0, Math.min(100, Number(confidence) || 0)) * .15;
+  }
+
+  return { parse, inferredFlag, imageQuality, recognitionScore };
 }));

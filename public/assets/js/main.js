@@ -8,6 +8,7 @@
   const LEGACY_APP_CACHE_PREFIX = "clinicSystemAppData:v1";
   let resultScannerWorkerPromise = null;
   let resultScannerActiveForm = null;
+  let resultValidationTimer = null;
   let resultCameraStream = null;
   let notificationPollTimer = null;
   let notificationPollPending = false;
@@ -163,7 +164,8 @@
 
   let currentUser = null;
   const PAGE_CACHE_TTL = 60000;
-  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, trends: null, adminTurnaroundPeriod: "week", loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map(), collectionLoadedAt: new Map(), metadataLoadedAt: 0 };
+  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, trends: null, diagnosticAi: null, adminTurnaroundPeriod: "week", loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map(), collectionLoadedAt: new Map(), metadataLoadedAt: 0 };
+  let diagnosticAiTimer = null;
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -282,9 +284,9 @@
     window.addEventListener("resize", hideTooltip);
   }
 
-  async function api(action, payload = {}) {
+  async function api(action, payload = {}, timeoutMs = 20000) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let response;
     try {
       response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
@@ -575,6 +577,33 @@
     return [removeScanTableRules(canvas)];
   }
 
+  function enhanceResultScan(source, mode) {
+    if (!(source instanceof HTMLCanvasElement)) return source;
+    const canvas = document.createElement("canvas");
+    canvas.width = source.width;
+    canvas.height = source.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    context.drawImage(source, 0, 0);
+    const image = context.getImageData(0, 0, canvas.width, canvas.height);
+    const original = new Uint8ClampedArray(image.data);
+    const width = canvas.width;
+    const height = canvas.height;
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const index = (y * width + x) * 4;
+        const center = original[index];
+        const neighbors = [index - 4, index + 4, index - width * 4, index + width * 4];
+        const average = neighbors.reduce((sum, offset) => sum + original[offset], 0) / 4;
+        const value = mode === "threshold"
+          ? (center < average - 12 ? 0 : center > average + 12 ? 255 : center)
+          : Math.max(0, Math.min(255, center + (center - average) * .45));
+        image.data[index] = image.data[index + 1] = image.data[index + 2] = value;
+      }
+    }
+    context.putImageData(image, 0, 0);
+    return canvas;
+  }
+
   async function populateScannedResultValues(form, values) {
     const tbody = $(".parameter-input-table tbody", form);
     if (!tbody) return;
@@ -617,24 +646,39 @@
       let recognizedPages = [];
       let parsed = null;
       let appliedRotation = selectedRotation;
+      let bestScore = -1;
+      let bestQuality = null;
       for (let rotationIndex = 0; rotationIndex < rotationCandidates.length; rotationIndex += 1) {
         const candidateRotation = rotationCandidates[rotationIndex];
         if (rotationIndex > 0) updateScannerStatus(form, "No values matched yet. Trying another image orientation...", 0);
         const preparedPages = await prepareResultScan(file, candidateRotation);
-        const candidatePages = [];
-        for (let index = 0; index < preparedPages.length; index += 1) {
-          updateScannerStatus(form, `Reading page ${index + 1} of ${preparedPages.length}...`, index / preparedPages.length);
-          candidatePages.push(await worker.recognize(preparedPages[index]));
+        const quality = preparedPages[0] instanceof HTMLCanvasElement
+          ? window.ClinicLabScanner?.imageQuality(preparedPages[0].getContext("2d", { willReadFrequently: true }).getImageData(0, 0, preparedPages[0].width, preparedPages[0].height))
+          : null;
+        const strategies = [preparedPages];
+        if (file.type.startsWith("image/") && (quality?.blurry || quality?.lowContrast || quality?.lowResolution)) {
+          strategies.push(preparedPages.map((page) => enhanceResultScan(page, "sharpen")));
+          if (quality.lowContrast) strategies.push(preparedPages.map((page) => enhanceResultScan(page, "threshold")));
         }
-        const candidateParsed = window.ClinicLabScanner?.parse(candidatePages.map((page) => page.data?.text || "").join("\n"));
-        if (!parsed || (candidateParsed?.values?.length || 0) > (parsed?.values?.length || 0)) {
-          parsed = candidateParsed;
-          recognizedPages = candidatePages;
-          appliedRotation = candidateRotation;
+        for (const strategy of strategies) {
+          const candidatePages = [];
+          for (let index = 0; index < strategy.length; index += 1) {
+            updateScannerStatus(form, `Reading page ${index + 1} of ${strategy.length}...`, index / strategy.length);
+            candidatePages.push(await worker.recognize(strategy[index]));
+          }
+          const candidateParsed = window.ClinicLabScanner?.parse(candidatePages.map((page) => page.data?.text || "").join("\n"));
+          const confidence = candidatePages.reduce((sum, page) => sum + Number(page.data?.confidence || 0), 0) / Math.max(1, candidatePages.length);
+          const score = window.ClinicLabScanner?.recognitionScore(candidateParsed, confidence) ?? 0;
+          if (score > bestScore) {
+            bestScore = score;
+            parsed = candidateParsed;
+            recognizedPages = candidatePages;
+            appliedRotation = candidateRotation;
+            bestQuality = quality;
+          }
+          if (score >= 80 && confidence >= 75) break;
         }
-        // A single row from a sideways scan can be a false match. Keep trying
-        // orientations until a credible table is found, then retain the best result.
-        if ((candidateParsed?.values?.length || 0) >= 2) break;
+        if (bestScore >= 80 && recognizedPages.every((page) => Number(page.data?.confidence || 0) >= 75)) break;
       }
       if (appliedRotation !== selectedRotation) {
         form.dataset.scanRotation = String(appliedRotation);
@@ -650,16 +694,30 @@
         return;
       }
       const confidence = Math.round(recognizedPages.reduce((sum, page) => sum + Number(page.data?.confidence || 0), 0) / Math.max(1, recognizedPages.length));
-      parsed.values = parsed.values.map((value) => ({ ...value, confidence }));
+      parsed.values = parsed.values.map((value) => ({ ...value, confidence,
+        reviewWarnings: [...(value.reviewWarnings || []), ...(!value.unit || !value.referenceRange ? ["Unit or reference range was not read; compare with the source."] : [])] }));
       const populated = await populateScannedResultValues(form, parsed.values);
       if (populated === false) {
         updateScannerStatus(form, "Scan completed without replacing your entered values.", null, "idle");
         return;
       }
       populateScannedResultText(form, parsed);
+      const orderId = $('select[name="orderId"]', form)?.value;
+      if (orderId) {
+        try {
+          const { validation } = await api("validate_result", { orderId, values: parsed.values });
+          showResultValidationErrors(form, validation);
+          form.querySelector(".validation-report")?.remove();
+          form.querySelector(".form-actions")?.insertAdjacentHTML("beforebegin", validationReportHtml(validation));
+        } catch (validationError) {
+          updateScannerStatus(form, "OCR finished, but validation could not be completed. Review the values and retry before uploading.", null, "warning");
+          return;
+        }
+      }
       const reviewCount = parsed.values.filter((value) => value.reviewWarnings?.length).length;
-      const reviewMessage = reviewCount ? ` ${reviewCount} row(s) contain unclear fields left blank and highlighted for review.` : "";
-      updateScannerStatus(form, `${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"} detected with ${confidence}% OCR confidence.${reviewMessage} Compare every value with the source image before uploading.`, null, confidence >= 75 && !reviewCount ? "success" : "warning");
+      const qualityMessage = [bestQuality?.lowResolution ? "Low image resolution detected." : "", bestQuality?.blurry ? "Image appears blurry. Please upload a clearer photo if values are unclear." : "", bestQuality?.lowContrast ? "Low image contrast detected." : ""].filter(Boolean).join(" ");
+      const reviewMessage = reviewCount ? ` ${reviewCount} row(s) contain unclear fields and are highlighted for review.` : "";
+      updateScannerStatus(form, `${qualityMessage} ${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"} detected with ${confidence}% OCR confidence.${reviewMessage} Compare every value with the source image before uploading.`.trim(), null, confidence >= 75 && !reviewCount && !qualityMessage ? "success" : "warning");
       toast(`${parsed.values.length} laboratory values filled from the scanned image.`);
     } catch (error) {
       updateScannerStatus(form, error.message || "The image could not be scanned.", null, "error");
@@ -1031,17 +1089,59 @@
     return (state.data?.[collection] || []).find((item) => String(item.id) === String(id));
   }
 
-  function trendAnalysisSection() {
+  function trendReportData() {
     const service = window.LabTrendAnalysis;
-    if (!service) return "";
+    if (!service) return null;
     if (!state.trends) {
       const dates = [...state.data.orders, ...state.data.results].map((row) => service.parseDate(row.createdAt)).filter(Boolean).sort((a, b) => a - b);
       const latest = dates.at(-1) || new Date();
       state.trends = { from: service.dateKey(new Date(latest.getFullYear(), latest.getMonth(), latest.getDate() - 29)), to: service.dateKey(latest), group: "day", facility: "", test: "" };
     }
-    const analysis = service.build(state.data.orders, state.data.results, state.trends);
+    return { service, analysis: service.build(state.data.orders, state.data.results, state.trends) };
+  }
+
+  function trendAnalysisSection() {
+    const report = trendReportData();
+    if (!report) return "";
+    const { analysis } = report;
     const turnaround = analysis.totals.averageTurnaroundMinutes === null ? "No data" : analysis.totals.averageTurnaroundMinutes < 120 ? `${analysis.totals.averageTurnaroundMinutes} min` : `${(analysis.totals.averageTurnaroundMinutes / 60).toFixed(1)} hr`;
-    return `<section class="trend-analysis" aria-labelledby="trend-analysis-title"><div class="trend-analysis-head"><div><h2 id="trend-analysis-title">Trend Analysis</h2><p>Descriptive and diagnostic views for laboratory volume, turnaround, validation flags, and facility workload.</p></div>${icon("trend")}</div><div class="trend-filter-grid"><label>From<input class="control" type="date" value="${h(analysis.filters.from)}" data-trend-from></label><label>To<input class="control" type="date" value="${h(analysis.filters.to)}" data-trend-to></label><label>Group by${select("trendGroup", [{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], analysis.filters.group, "data-trend-group")}</label><label>Facility${select("trendFacility", [{ value: "", label: "All facilities" }, ...analysis.facilities.map((value) => ({ value, label: value }))], analysis.filters.facility, "data-trend-facility")}</label><label>Test type${select("trendTest", [{ value: "", label: "All test types" }, ...analysis.tests.map((value) => ({ value, label: value }))], analysis.filters.test, "data-trend-test")}</label></div><div class="stats-grid utilization-stats trend-summary">${stat("Tests Processed", analysis.totals.tests, "test", "-", "purple")}${stat("Results Encoded", analysis.totals.results, "results", "-", "blue")}${stat("Average Turnaround", turnaround, "clock", "-", "teal")}${stat("Validation Flags", analysis.totals.flaggedValues, "alert", "-", "orange")}</div><div class="trend-analysis-grid"><section class="trend-panel"><h3>Test Volume by Period</h3><p>Requested tests in each selected time interval.</p>${window.ClinicReportCharts.bars(analysis.buckets, [{key: "tests", label: "Requested tests"}], {title: "Test volume by period", unit: "Tests"})}</section><section class="trend-panel"><h3>Turnaround Time Trends</h3><p>Average time from result encoding to release.</p>${window.ClinicReportCharts.timeline(analysis.buckets, [{key: "averageTurnaroundMinutes", label: "Average turnaround"}], {title: "Turnaround time over time", unit: "Minutes"})}</section><section class="trend-panel"><h3>Flagged-result Trends</h3><p>Flags produced during rule-based result validation.</p>${window.ClinicReportCharts.distribution(analysis.flags, "category", "count")}</section><section class="trend-panel"><h3>Workload Distribution</h3><p>Requested test volume by facility.</p>${window.ClinicReportCharts.pie(analysis.workload, "facility", "tests")}</section></div><p class="utilization-note">Turnaround uses released results with valid encoding and release timestamps. Workload is grouped by facility because staff-shift data is not currently stored.</p></section>`;
+    return `<section class="trend-analysis" aria-labelledby="trend-analysis-title"><div class="trend-analysis-head"><div><h2 id="trend-analysis-title">Trend Analysis</h2><p>Historical charts for laboratory volume, turnaround, validation flags, and facility workload.</p></div>${icon("trend")}</div><div class="trend-filter-grid"><label>From<input class="control" type="date" value="${h(analysis.filters.from)}" data-trend-from></label><label>To<input class="control" type="date" value="${h(analysis.filters.to)}" data-trend-to></label><label>Group by${select("trendGroup", [{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], analysis.filters.group, "data-trend-group")}</label><label>Facility${select("trendFacility", [{ value: "", label: "All facilities" }, ...analysis.facilities.map((value) => ({ value, label: value }))], analysis.filters.facility, "data-trend-facility")}</label><label>Test type${select("trendTest", [{ value: "", label: "All test types" }, ...analysis.tests.map((value) => ({ value, label: value }))], analysis.filters.test, "data-trend-test")}</label></div><div class="stats-grid utilization-stats trend-summary">${stat("Tests Processed", analysis.totals.tests, "test", "-", "purple")}${stat("Results Encoded", analysis.totals.results, "results", "-", "blue")}${stat("Average Turnaround", turnaround, "clock", "-", "teal")}${stat("Validation Flags", analysis.totals.flaggedValues, "alert", "-", "orange")}</div><div class="trend-analysis-grid"><section class="trend-panel"><h3>Test Volume by Period</h3><p>Requested tests in each selected time interval.</p>${window.ClinicReportCharts.bars(analysis.buckets, [{key: "tests", label: "Requested tests"}], {title: "Test volume by period", unit: "Tests"})}</section><section class="trend-panel"><h3>Turnaround Time Trends</h3><p>Average time from result encoding to release.</p>${window.ClinicReportCharts.timeline(analysis.buckets, [{key: "averageTurnaroundMinutes", label: "Average turnaround"}], {title: "Turnaround time over time", unit: "Minutes"})}</section><section class="trend-panel"><h3>Flagged-result Trends</h3><p>Flags produced during rule-based result validation.</p>${window.ClinicReportCharts.distribution(analysis.flags, "category", "count")}</section><section class="trend-panel"><h3>Workload Distribution</h3><p>Requested test volume by facility.</p>${window.ClinicReportCharts.pie(analysis.workload, "facility", "tests")}</section></div><p class="utilization-note">Turnaround uses released results with valid encoding and release timestamps. Workload is grouped by facility because staff-shift data is not currently stored.</p></section>`;
+  }
+
+  function diagnosticAnalysisSection() {
+    const report = trendReportData();
+    if (!report) return "";
+    const { service, analysis } = report;
+    const summary = { filters: analysis.filters, totals: analysis.totals, buckets: analysis.buckets, flags: analysis.flags, workload: analysis.workload };
+    const analysisKey = JSON.stringify(summary);
+    const ai = state.diagnosticAi?.key === analysisKey ? state.diagnosticAi : null;
+    const topics = service.diagnosticTopics(analysis).map((topic, index) => ({ ...topic, ...(ai?.topics?.[index] || {}) }));
+    const filters = analysis.filters;
+    const controls = `<div class="trend-filter-grid"><label>From<input class="control" type="date" value="${h(filters.from)}" data-trend-from></label><label>To<input class="control" type="date" value="${h(filters.to)}" data-trend-to></label><label>Group by${select("diagnosticGroup", [{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], filters.group, "data-trend-group")}</label><label>Facility${select("diagnosticFacility", [{ value: "", label: "All facilities" }, ...analysis.facilities.map((value) => ({ value, label: value }))], filters.facility, "data-trend-facility")}</label><label>Test type${select("diagnosticTest", [{ value: "", label: "All test types" }, ...analysis.tests.map((value) => ({ value, label: value }))], filters.test, "data-trend-test")}</label></div>`;
+    const cards = topics.map((topic, index) => `<article class="diagnostic-topic"><span class="diagnostic-topic-number">0${index + 1}</span><h3>${h(topic.title)}</h3><div class="diagnostic-topic-grid"><div><h4>What happened</h4><p>${h(topic.observed)}</p></div><div><h4>How it may have happened</h4><p>${h(topic.explanation)}</p></div><div><h4>What to do next</h4><p>${h(topic.nextSteps)}</p></div></div></article>`).join("");
+    const aiStatus = ai?.status === "loading" ? "Analyzing the calculated statistics with AI…" : ai?.status === "ready" ? "AI narrative and suggested actions are ready. Verify them against the figures before sharing." : ai?.status === "error" ? `${ai.message} Calculated analysis remains available.` : "Calculating statistics and preparing AI analysis…";
+    return `<section class="diagnostic-analysis" aria-labelledby="diagnostic-analysis-title"><div class="trend-analysis-head"><div><h2 id="diagnostic-analysis-title">Descriptive &amp; Diagnostic Analysis</h2><p>Four operational interpretations based on the selected laboratory records. Possible causes require review of records outside this report.</p></div>${icon("trend")}</div>${controls}<div class="diagnostic-ai-toolbar"><p class="diagnostic-ai-status ${ai?.status === "error" ? "is-error" : ""}" role="status">${h(aiStatus)}</p></div><div class="diagnostic-topics">${cards}</div><p class="utilization-note">Requested tests use request creation dates. Turnaround uses released results with valid encoding and release timestamps. Flags use saved result values. Facility workload uses request facility assignments.</p></section>`;
+  }
+
+  async function generateDiagnosticAi() {
+    if (currentUser?.role !== "Admin" || state.page !== "reports") return;
+    const report = trendReportData();
+    if (!report) return;
+    const { analysis } = report;
+    const summary = { filters: analysis.filters, totals: analysis.totals, buckets: analysis.buckets, flags: analysis.flags, workload: analysis.workload };
+    const key = JSON.stringify(summary);
+    if (state.diagnosticAi?.key === key) return;
+    state.diagnosticAi = { key, status: "loading" };
+    setPage("reports", false);
+    try {
+      const response = await api("admin_report_ai_analysis", { summary }, 40000);
+      if (state.diagnosticAi?.key !== key) return;
+      state.diagnosticAi = { key, status: "ready", topics: response.topics };
+    } catch (error) {
+      if (state.diagnosticAi?.key !== key) return;
+      state.diagnosticAi = { key, status: "error", message: error.message || "AI analysis is unavailable." };
+    }
+    if (state.page === "reports" && new URLSearchParams(location.search).get("report") === "diagnostic") setPage("reports", false);
   }
 
   function syncNotifications(notifications) {
@@ -1205,6 +1305,60 @@
     link.remove();
     URL.revokeObjectURL(url);
     toast("Your records were exported.");
+  }
+
+  async function printInPlace({ html, url, selector }) {
+    if (url) {
+      const response = await fetch(url, { credentials: "same-origin", cache: "no-store", headers: { Accept: "text/html" } });
+      if (!response.ok) throw new Error("This report is not available for printing.");
+      html = await response.text();
+    }
+    const parsed = new DOMParser().parseFromString(html || "", "text/html");
+    const report = parsed.querySelector(selector);
+    if (!report) throw new Error("The printable report could not be loaded.");
+    document.querySelector("#clinic-print-root")?.remove();
+    document.querySelector("#clinic-print-styles")?.remove();
+    const root = document.createElement("div");
+    root.id = "clinic-print-root";
+    root.append(document.importNode(report, true));
+    const styles = document.createElement("style");
+    styles.id = "clinic-print-styles";
+    styles.textContent = `#clinic-print-root{display:none!important}@page{size:A4;margin:16mm 14mm 18mm}@media print{body{background:#fff!important;margin:0!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}body>:not(#clinic-print-root){display:none!important}#clinic-print-root{display:block!important;position:static!important;width:auto!important;max-width:none!important;margin:0!important;padding:0!important;color:#102f43;font:11pt Arial,sans-serif}#clinic-print-root .sheet,#clinic-print-root .print-sheet{display:block!important;width:auto!important;max-width:none!important;margin:0!important;padding:0!important;border:0!important;box-shadow:none!important;border-radius:0!important}#clinic-print-root .head{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #087f83;padding-bottom:16px}#clinic-print-root .brand h1,#clinic-print-root .head h2{margin:0;color:#12385d;font-size:18pt}#clinic-print-root .brand p{font-size:9pt}#clinic-print-root .meta{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:9pt}#clinic-print-root .patient{display:grid;grid-template-columns:1fr 1fr;gap:8px 22px;padding:18px 0}#clinic-print-root .patient div{display:grid;grid-template-columns:90px 1fr;gap:8px;font-size:9pt}#clinic-print-root h3{color:#12385d;margin:16px 0 7px;font-size:12pt}#clinic-print-root .box{border:1px solid #244a63;padding:9px;line-height:1.4}#clinic-print-root table{width:100%;border-collapse:collapse;font-size:9pt}#clinic-print-root th{background:#087f83;color:#fff}#clinic-print-root th,#clinic-print-root td{border:1px solid #31546b;padding:6px;text-align:left;overflow-wrap:anywhere}#clinic-print-root thead{display:table-header-group}#clinic-print-root tr,#clinic-print-root .box,#clinic-print-root .patient,#clinic-print-root .head{break-inside:avoid;page-break-inside:avoid}#clinic-print-root .report-footer{margin-top:22px;border-top:1px solid #93adb8;padding-top:10px;font-size:8pt}#clinic-print-root .report-footer strong{display:block}#clinic-print-root .print-head{border-bottom:2px solid #087f78;padding-bottom:12px;margin-bottom:18px}#clinic-print-root .print-head h1{margin:0 0 6px;font-size:18pt}#clinic-print-root .print-head p{margin:0}#clinic-print-root main.print-sheet.reports-workspace,#clinic-print-root #report-view,#clinic-print-root #report-view>section{display:block!important;break-inside:auto!important;page-break-inside:auto!important}#clinic-print-root #report-view{padding:0!important;border:0!important}#clinic-print-root .trend-analysis-grid{grid-template-columns:1fr}#clinic-print-root .trend-filter-grid{grid-template-columns:repeat(3,1fr)}#clinic-print-root .report-chart,#clinic-print-root .utilization-chart-scroll,#clinic-print-root .report-data>div{overflow:visible!important;max-height:none!important}#clinic-print-root .utilization-chart{min-width:0!important;width:100%!important}#clinic-print-root .report-chart svg,#clinic-print-root .utilization-chart svg{min-width:0!important;max-width:100%!important}#clinic-print-root .stat-card{padding:8px}}`;
+    const originalTitle = document.title;
+    document.title = parsed.title || originalTitle;
+    document.head.append(styles);
+    document.body.append(root);
+    let timeout;
+    const cleanup = () => { clearTimeout(timeout); root.remove(); styles.remove(); document.title = originalTitle; };
+    window.addEventListener("afterprint", cleanup, { once: true });
+    timeout = setTimeout(cleanup, 120000);
+    await document.fonts?.ready;
+    window.print();
+  }
+
+  function printActiveReport() {
+    if (currentUser?.role !== "Admin" || state.page !== "reports") return;
+    const source = $("#report-view");
+    if (!source) { toast("The report is not ready to print.", "error"); return; }
+    const view = new URLSearchParams(location.search).get("report") || "trends";
+    const title = reportViews.find(([key]) => key === view)?.[1] || "Trend Analysis";
+    const copy = source.cloneNode(true);
+    const originalControls = [...source.querySelectorAll("input, select")];
+    copy.querySelectorAll("input, select").forEach((control, index) => {
+      const original = originalControls[index];
+      const value = original?.tagName === "SELECT" ? original.selectedOptions[0]?.textContent : original?.value;
+      const label = document.createElement("span");
+      label.className = "report-print-filter-value";
+      label.textContent = value || "All";
+      control.replaceWith(label);
+    });
+    copy.querySelectorAll("button").forEach((button) => button.remove());
+    copy.querySelectorAll("details").forEach((details) => { details.open = true; });
+    const styles = new URL(`${String(ASSET_BASE).replace(/\/$/, "")}/css/styles.css`, document.baseURI).href;
+    const reportStyles = new URL(`${String(ASSET_BASE).replace(/\/$/, "")}/css/reports.css`, document.baseURI).href;
+    const generated = new Date().toLocaleString();
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${h(title)} | Laboratory Report</title><link rel="stylesheet" href="${h(styles)}"><link rel="stylesheet" href="${h(reportStyles)}"><style>@page{size:A4;margin:15mm}body{margin:0;background:#fff;color:#173d4d;font:12px Arial,sans-serif}.print-sheet{max-width:185mm;margin:auto}.print-head{border-bottom:2px solid #087f78;padding-bottom:12px;margin:0 0 18px}.print-head h1{font-size:22px;margin:0 0 6px}.print-head p{margin:0;color:#526b76}.reports-workspace #report-view{padding:0;border:0}.report-print-filter-value{display:block;padding:10px;border:1px solid #c8d8db;border-radius:6px}.report-chart svg{max-width:100%}thead{display:table-header-group}tr{break-inside:avoid}section,.trend-panel{break-inside:avoid}@media print{.print-sheet{max-width:none}.reports-workspace .trend-analysis-grid{grid-template-columns:1fr}.reports-workspace .trend-filter-grid{grid-template-columns:repeat(3,1fr)}.report-chart{overflow:visible}.report-chart svg{min-width:0!important}.reports-workspace .stat-card{padding:8px}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body><main class="print-sheet reports-workspace"><header class="print-head"><h1>${h(appName())} — ${h(title)}</h1><p>Generated ${h(generated)} · Administrative summary</p></header><div id="report-view">${copy.innerHTML}</div></main></body></html>`;
+    printInPlace({ html, selector: "main.print-sheet" }).catch((error) => toast(error.message || "The report could not be printed.", "error"));
   }
 
   function loading() {
@@ -1415,15 +1569,15 @@
       ${table(["Result", "Patient", "Test & Facility", "Status", "Clinical Note", "Action"], rows)}`;
   }
 
-  const reportViews = [["trends", "Trend Analysis"], ["utilization", "Laboratory Utilization"], ["forecast", "Laboratory Demand Forecast"], ["overview", "Activity Summary"]];
+  const reportViews = [["trends", "Trend Analysis"], ["diagnostic", "Descriptive & Diagnostic"], ["utilization", "Laboratory Utilization"], ["forecast", "Laboratory Demand Forecast"], ["overview", "Activity Summary"]];
   function renderReports() {
     const facilityRows = Object.entries(state.data.reports.ordersByFacility || {}).map(([facility, count]) => ({ cells: [h(facility), h(count), `${Math.round((count / Math.max(1, state.data.orders.length)) * 100)}%`], goPage: "facilities" }));
     const testRows = Object.entries(state.data.reports.topTests || {}).map(([test, count]) => ({ cells: [h(test), h(count), badge(count > 1 ? "Active" : "Pending")], goPage: "tests" }));
     const requestedView = new URLSearchParams(location.search).get("report");
     const activeView = reportViews.some(([key]) => key === requestedView) ? requestedView : "trends";
     const navigation = `<nav class="report-navigation" aria-label="Statistics reports">${reportViews.map(([key, label]) => `<button type="button" data-report-view="${key}" aria-current="${key === activeView ? 'page' : 'false'}">${h(label)}</button>`).join("")}</nav>`;
-    const reportBody = activeView === "trends" ? trendAnalysisSection() : activeView === "utilization" ? utilizationAnalyticsSection() : activeView === "forecast" ? forecastingAnalysisSection() : `<div class="report-overview"><h2>Activity Summary</h2><p>Current request and result status across the clinic.</p><div class="stats-grid stats-eight">${dashboardStats()}</div><div class="charts-pair">${donutCard("Requests by Status", state.data.reports.ordersByStatus, "Requests")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div><div class="dashboard-grid">${filteredTable(["Facility", "Requests", "Share"], facilityRows, "Requests per facility", "Search facility")}${filteredTable(["Requested Test", "Count", "Status"], testRows, "Most requested tests", "Search laboratory test", [["All statuses", ["Active", "Pending"]]])}</div></div>`;
-    return `<div class="reports-workspace"><div class="reports-toolbar">${navigation}<button class="btn btn-secondary report-export" type="button" data-download>${icon("download")} Export report</button></div><div id="report-view">${reportBody}</div></div>`;
+    const reportBody = activeView === "trends" ? trendAnalysisSection() : activeView === "diagnostic" ? diagnosticAnalysisSection() : activeView === "utilization" ? utilizationAnalyticsSection() : activeView === "forecast" ? forecastingAnalysisSection() : `<div class="report-overview"><h2>Activity Summary</h2><p>Current request and result status across the clinic.</p><div class="stats-grid stats-eight">${dashboardStats()}</div><div class="charts-pair">${donutCard("Requests by Status", state.data.reports.ordersByStatus, "Requests")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div><div class="dashboard-grid">${filteredTable(["Facility", "Requests", "Share"], facilityRows, "Requests per facility", "Search facility")}${filteredTable(["Requested Test", "Count", "Status"], testRows, "Most requested tests", "Search laboratory test", [["All statuses", ["Active", "Pending"]]])}</div></div>`;
+    return `<div class="reports-workspace"><div class="reports-toolbar">${navigation}<button class="btn btn-secondary report-export" type="button" data-print-report>${icon("download")} Print / Save PDF</button></div><div id="report-view">${reportBody}</div></div>`;
   }
 
   function renderAudit() {
@@ -1846,6 +2000,13 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
     closeSidebar();
     applyPageFilters();
+    if (diagnosticAiTimer) clearTimeout(diagnosticAiTimer);
+    if (role === "Admin" && page === "reports" && new URLSearchParams(location.search).get("report") === "diagnostic") {
+      diagnosticAiTimer = setTimeout(() => {
+        diagnosticAiTimer = null;
+        if (state.page === "reports" && new URLSearchParams(location.search).get("report") === "diagnostic") generateDiagnosticAi();
+      }, 350);
+    }
   }
 
   function drawerTitle(type) {
@@ -1991,8 +2152,12 @@
     const noteForm = currentUser.role === "Doctor"
       ? `<form data-form="clinical-note"><input type="hidden" name="resultId" value="${h(result.id)}"><div class="form-field full"><label>Clinical Note</label><textarea name="note" required>${h(result.clinicalNote || "")}</textarea></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save Clinical Note</button></div></form>`
       : "";
+    const explanation = result.explanation;
+    const explanationPanel = explanation ? `<section class="clinical-note-box"><h4>Findings Explanation ${explanation.status === "Draft" ? "(Draft)" : "(Doctor approved)"}</h4><p><strong>What happened?</strong><br>${h(explanation.whatHappened)}</p><p><strong>Possible causes</strong><br>${h(explanation.possibleCauses)}</p><p><strong>Next steps</strong><br>${h(explanation.nextSteps)}</p><p><strong>Follow-up</strong><br>${h(explanation.followUp)}</p><small>Possible causes are not a diagnosis. Discuss this report with your doctor.</small></section>` : "";
+    const explanationForm = currentUser.role === "Doctor" && ["Verified", "Released"].includes(result.status)
+      ? `<form data-form="result-explanation"><input type="hidden" name="resultId" value="${h(result.id)}"><input type="hidden" name="expectedUpdatedAt" value="${h(result.updatedAt || result.createdAt || "")}"><h3>Findings Explanation</h3><p>Write possible causes as possibilities. Review the result before approving this for the patient.</p><div class="form-field full"><label>What happened?</label><textarea name="whatHappened">${h(explanation?.whatHappened || "")}</textarea></div><div class="form-field full"><label>Possible causes</label><textarea name="possibleCauses">${h(explanation?.possibleCauses || "")}</textarea></div><div class="form-field full"><label>Next steps</label><textarea name="nextSteps">${h(explanation?.nextSteps || "")}</textarea></div><div class="form-field full"><label>Follow-up</label><textarea name="followUp">${h(explanation?.followUp || "")}</textarea></div><div class="form-actions"><button class="btn btn-secondary" type="submit" name="explanationAction" value="draft">Save draft</button>${result.status === "Released" ? '<button class="btn btn-primary" type="submit" name="explanationAction" value="approve">Approve for patient</button>' : ""}</div></form>` : "";
     const canDownload = result.status === "Released";
-    const detailDownload = canDownload ? `<a class="btn btn-primary btn-sm" href="${h(apiUrl("download_result_details", { id: result.id }))}" target="_blank" rel="noopener">${icon("download")} Print / Save PDF</a>` : "";
+    const detailDownload = canDownload ? `<button class="btn btn-primary btn-sm" type="button" data-print-result="${h(result.id)}">${icon("download")} Print / Save PDF</button>` : "";
     const previousResults = canDownload && window.PatientResultTools ? window.PatientResultTools.comparableResults(result, state.data.results || []) : [];
     const compareButton = previousResults.length ? `<button class="btn btn-secondary btn-sm" type="button" data-drawer="result-compare" data-id="${h(result.id)}">Compare previous result</button>` : "";
     const terms = currentUser.role === "Patient" && window.PatientResultTools ? window.PatientResultTools.matchingTerms(result) : [];
@@ -2002,9 +2167,9 @@
       : '<p>No files attached.</p>';
     if (currentUser.role === "Patient") {
       const patientInfo = drawerInfo([["Result ID", h(result.resultNumber)], ["Test", h(result.testName)], ["Laboratory", h(result.facilityName)], ["Released", h(shortDateTime(result.releasedAt))]]);
-      return `${patientInfo}${detailDownload ? `<div class="result-download-actions">${detailDownload}${compareButton}</div>` : ""}${patientValues(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${plainLanguage}`;
+      return `${patientInfo}${detailDownload ? `<div class="result-download-actions">${detailDownload}${compareButton}</div>` : ""}${patientValues(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div>${explanationPanel}<div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${plainLanguage}`;
     }
-    return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Request No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Created", h(shortDateTime(result.createdAt || result.uploadedAt))], ["Updated", h(shortDateTime(result.updatedAt || result.uploadedAt))], ["Released", h(shortDateTime(result.releasedAt))], ["Status", badge(result.status)], ["Entered by", h(result.uploadedBy || "-")], ["Verified by", h(result.reviewedBy || "-")], ["Released by", h(result.releasedBy || "-")]])}${detailDownload ? `<div class="result-download-actions">${detailDownload}${compareButton}</div>` : ""}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div><div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${plainLanguage}${noteForm}${labActions}`;
+    return `${drawerInfo([["Result ID", h(result.resultNumber)], ["Request No.", h(result.orderNumber)], ["Patient", h(result.patientName)], ["Test", h(result.testName)], ["Facility", h(result.facilityName)], ["Created", h(shortDateTime(result.createdAt || result.uploadedAt))], ["Updated", h(shortDateTime(result.updatedAt || result.uploadedAt))], ["Released", h(shortDateTime(result.releasedAt))], ["Status", badge(result.status)], ["Entered by", h(result.uploadedBy || "-")], ["Verified by", h(result.reviewedBy || "-")], ["Released by", h(result.releasedBy || "-")]])}${detailDownload ? `<div class="result-download-actions">${detailDownload}${compareButton}</div>` : ""}<h3 class="form-section-title">${icon("activity")} Result Values</h3>${valuesTable(result.values)}<div class="clinical-note-box"><h4>${icon("file")} Laboratory Findings</h4><p>${h(result.findings || "No findings entered.")}</p><p>${h(result.remarks || "")}</p></div>${explanationPanel}<div class="clinical-note-box"><h4>${icon("file")} Attachments</h4>${files}</div><div class="clinical-note-box" style="border-color:#ddd2f1;background:#f7f3fc"><h4 style="color:var(--purple)">${icon("note")} Clinical Note</h4><p>${h(result.clinicalNote || "No clinical note has been added.")}</p></div>${plainLanguage}${noteForm}${explanationForm}${labActions}`;
   }
 
   function resultComparison(current, previousId = null) {
@@ -2017,7 +2182,7 @@
       current: row.current ? { ...row.current, flag: window.PatientResultTools.patientValueView(row.current).label } : null,
       previous: row.previous ? { ...row.previous, flag: window.PatientResultTools.patientValueView(row.previous).label } : null,
     }));
-    const reportLink = result => `<a class="btn btn-secondary btn-sm" href="${h(apiUrl("download_result_details", { id: result.id }))}" target="_blank" rel="noopener">${icon("download")} ${h(result.resultNumber)} report</a>`;
+    const reportLink = result => `<button class="btn btn-secondary btn-sm" type="button" data-print-result="${h(result.id)}">${icon("download")} Print ${h(result.resultNumber)} report</button>`;
     return `<section class="result-comparison"><p>Only released results for the same patient and test appear here. Match each value with its unit and reference range; your clinician can explain a change.</p><label for="comparison-previous">Previous result</label><select id="comparison-previous" data-comparison-previous>${available.map(item => `<option value="${h(item.id)}" ${item.id === previous.id ? "selected" : ""}>${h(item.resultNumber)} — ${h(shortDateTime(item.releasedAt))}</option>`).join("")}</select><div class="result-download-actions">${reportLink(current)}${reportLink(previous)}</div><div class="table-responsive"><table class="comparison-table"><thead><tr><th>Test component</th><th>Previous<br>${h(shortDateTime(previous.releasedAt))}</th><th>Current<br>${h(shortDateTime(current.releasedAt))}</th><th>Difference</th></tr></thead><tbody>${rows.map(row => `<tr><th scope="row">${h(row.parameter)}<small>${h(row.unit)}</small></th><td>${row.previous ? `${h(row.previous.value)}<small>${h(row.previous.referenceRange || "No range")} · ${h(row.previous.flag || "-")}</small>` : "Not reported"}</td><td>${row.current ? `${h(row.current.value)}<small>${h(row.current.referenceRange || "No range")} · ${h(row.current.flag || "-")}</small>` : "Not reported"}</td><td>${row.difference === null ? "—" : h(`${row.difference > 0 ? "+" : ""}${Number(row.difference.toPrecision(5))} ${row.unit}`)}</td></tr>`).join("")}</tbody></table></div><p>Differences are arithmetic only and are not a diagnosis. Reference intervals may vary between reports.</p></section>`;
   }
 
@@ -2242,6 +2407,11 @@
         result = await api("add_clinical_note", payload);
         await refreshAfter(result, "Clinical note saved.");
         closeDrawer();
+      } else if (kind === "result-explanation") {
+        payload.approve = event.submitter?.value === "approve";
+        result = await api("save_result_explanation", payload);
+        await refreshAfter(result, payload.approve ? "Explanation approved for the patient." : "Explanation draft saved.");
+        closeDrawer();
       } else if (kind === "patient-profile") {
         result = await api("update_patient_profile", payload);
         await refreshAfter(result, "Profile updated.");
@@ -2322,6 +2492,15 @@
     if (event.target.closest("[data-toggle-sidebar]")) { toggleSidebarCollapsed(); return; }
     if (event.target.closest("[data-open-sidebar]")) { openSidebar(); return; }
     if (event.target.closest("[data-close-sidebar]")) { closeSidebar(); return; }
+    const resultPrint = event.target.closest("[data-print-result]");
+    if (resultPrint) {
+      printInPlace({ url: apiUrl("download_result_details", { id: resultPrint.dataset.printResult }), selector: "main.sheet" }).catch((error) => toast(error.message || "The report could not be printed.", "error"));
+      return;
+    }
+    if (event.target.closest("[data-print-report]")) {
+      printActiveReport();
+      return;
+    }
     if (event.target.closest("[data-download]")) {
       downloadRecords().catch((error) => toast(error.message || "The export failed.", "error"));
       return;
@@ -2734,6 +2913,29 @@
   }
 
   function handleDashboardInput(event) {
+    const resultForm = event.target.closest('form[data-form="upload-result"], form[data-form="result-edit"]');
+    if (resultForm && event.target.closest(".parameter-input-table")) {
+      clearTimeout(resultValidationTimer);
+      resultValidationTimer = setTimeout(async () => {
+        if (!resultForm.isConnected) return;
+        const values = $$(".parameter-input-table tbody tr", resultForm).map((row) => ({
+          parameter: $('input[name="parameter"]', row)?.value || "",
+          value: $('input[name="value"]', row)?.value || "",
+          unit: $('input[name="unit"]', row)?.value || "",
+          referenceRange: $('input[name="referenceRange"]', row)?.value || "",
+        })).filter((item) => item.parameter || item.value);
+        const orderId = $('select[name="orderId"]', resultForm)?.value;
+        const resultId = $('input[name="resultId"]', resultForm)?.value;
+        if (!orderId && !resultId) return;
+        try {
+          const { validation } = await api("validate_result", { orderId, resultId, values });
+          if (!resultForm.isConnected) return;
+          showResultValidationErrors(resultForm, validation);
+          resultForm.querySelector(".validation-report")?.remove();
+          resultForm.querySelector(".form-actions")?.insertAdjacentHTML("beforebegin", validationReportHtml(validation));
+        } catch { /* Submission repeats server validation and reports errors. */ }
+      }, 600);
+    }
     if (event.target.matches('form[data-form="user"] input[name="contact"]')) {
       event.target.value = formatPhilippineMobile(event.target.value);
       return;

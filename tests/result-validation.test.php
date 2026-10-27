@@ -30,4 +30,16 @@ expect_validation(array_map('clinic_patient_value_label', $assessed['values']), 
 expect_validation(clinic_patient_value_label(['flag' => 'Normal', 'validationRule' => null]), 'Range not assessed', 'Legacy Normal must not be trusted without a saved rule');
 expect_validation(clinic_patient_value_label(['flag' => 'Normal', 'validationRule' => ['type' => 'text']]), 'Result recorded - ask your care team to interpret it', 'Allowed qualitative text must not be presented as healthy');
 
+$conflicting = clinic_evaluate_values([['parameter' => 'Hemoglobin', 'value' => '13', 'unit' => 'g/dL', 'referenceRange' => '18-10']], [$rules[0]]);
+expect_validation($conflicting['valid'], false, 'Reversed OCR reference range must not pass');
+expect_validation($conflicting['values'][0]['referenceRange'], '18-10', 'Unresolved OCR range must remain visible');
+expect_validation($conflicting['values'][0]['approvedReferenceRange'], '12 - 16', 'Approved range must be shown separately');
+$missingRange = clinic_evaluate_values([['parameter' => 'Hemoglobin', 'value' => '13', 'unit' => 'g/dL', 'referenceRange' => '']], [$rules[0]]);
+expect_validation($missingRange['valid'], false, 'Missing OCR reference range must require review');
+$wrongUnit = clinic_evaluate_values([['parameter' => 'Hemoglobin', 'value' => '13', 'unit' => 'mg/dL', 'referenceRange' => '12-16']], [$rules[0]]);
+expect_validation($wrongUnit['valid'], false, 'Incorrect unit must fail validation');
+expect_validation(clinic_patient_explanation_visible(['status' => 'Released', 'updated_at' => '2026-10-27 10:00:00'], ['review_status' => 'Approved', 'result_updated_at' => '2026-10-27 10:00:00']), true, 'Approved current explanation is visible');
+expect_validation(clinic_patient_explanation_visible(['status' => 'Verified', 'updated_at' => '2026-10-27 10:00:00'], ['review_status' => 'Approved', 'result_updated_at' => '2026-10-27 10:00:00']), false, 'Unreleased explanation stays private');
+expect_validation(clinic_patient_explanation_visible(['status' => 'Released', 'updated_at' => '2026-10-27 11:00:00'], ['review_status' => 'Approved', 'result_updated_at' => '2026-10-27 10:00:00']), false, 'Stale approval stays private');
+
 echo "Result validation and patient labels passed.\n";
