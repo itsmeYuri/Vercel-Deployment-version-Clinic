@@ -295,9 +295,22 @@ function clinic_historical_anomalies($pdo, $orderId, $values)
 function clinic_require_valid_result($pdo, $orderId, $values, $data)
 {
     $report = clinic_order_validation($pdo, $orderId, $values);
-    if (!$report['valid']) respond(false, 'Correct the validation issues before saving.', ['validation' => $report], 422);
+    if (!$report['valid'] && !clinic_only_missing_required_parameters($report)) respond(false, 'Correct the validation issues before saving.', ['validation' => $report], 422);
     if (($data['validationReviewed'] ?? false) !== true) respond(false, 'Review the validation report and confirm the source values before saving.', ['validation' => $report], 422);
     return $report;
+}
+
+function clinic_only_missing_required_parameters($report)
+{
+    $issues = $report['issues'] ?? [];
+    if (!$issues || empty($report['values'])) return false;
+    foreach ($issues as $issue) {
+        if (!str_starts_with($issue, 'Missing required parameter: ')) return false;
+    }
+    foreach ($report['values'] as $value) {
+        if (($value['flag'] ?? '') === 'Invalid Entry') return false;
+    }
+    return true;
 }
 
 function clinic_save_validation_report($pdo, $resultId, $report)

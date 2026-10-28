@@ -718,6 +718,10 @@
           showResultValidationErrors(form, validation);
           form.querySelector(".validation-report")?.remove();
           form.querySelector(".form-actions")?.insertAdjacentHTML("beforebegin", validationReportHtml(validation));
+          const missing = (validation.issues || []).filter((issue) => issue.startsWith("Missing required parameter: "));
+          if (missing.length && missing.length === (validation.issues || []).length && !(validation.values || []).some((value) => value.flag === "Invalid Entry")) {
+            await glassDialog({ title: "Incomplete laboratory report", message: `The scan contains ${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"}, but ${missing.join(" ")} The detected values were kept. Add the missing values before verification or release.`, confirmText: "Review detected values" });
+          }
         } catch (validationError) {
           updateScannerStatus(form, "OCR finished, but validation could not be completed. Review the values and retry before uploading.", null, "warning");
           return;
@@ -2079,14 +2083,16 @@
     showResultValidationErrors(form, validation);
     form.querySelector(".validation-report")?.remove();
     form.querySelector(".form-actions").insertAdjacentHTML("beforebegin", validationReportHtml(validation));
-    if (!validation.valid) {
+    const missing = (validation.issues || []).filter((issue) => issue.startsWith("Missing required parameter: "));
+    const partialResult = !validation.valid && missing.length > 0 && missing.length === (validation.issues || []).length && (validation.values || []).length > 0 && !(validation.values || []).some((value) => value.flag === "Invalid Entry");
+    if (!validation.valid && !partialResult) {
       const wrongTest = (validation.issues || []).find((issue) => /wrong laboratory test/i.test(issue));
       if (wrongTest) await glassDialog({ title: "Wrong laboratory test", message: `${wrongTest} This result cannot be uploaded for the selected request.`, confirmText: "OK", danger: true });
       form.querySelector(".validation-report").scrollIntoView({ block: "nearest", behavior: "smooth" });
       toast("Correct the validation issues shown below the result values.", "error");
       return false;
     }
-    const confirmed = await glassDialog({ title: "Confirm laboratory values", message: "Compare every value and unit with the source report and review the validation report. Approved reference ranges and calculated flags will be saved. Abnormal or critical values require professional review; this confirmation does not verify or release the result.", confirmText: "I reviewed the values", detailHtml: validationReportHtml(validation) });
+    const confirmed = await glassDialog({ title: partialResult ? "Save incomplete result for review?" : "Confirm laboratory values", message: partialResult ? `${missing.join(" ")} The entered values can be saved for review, but the result cannot be verified or released until the missing components are added. Compare each entered value with the source report.` : "Compare every value and unit with the source report and review the validation report. Approved reference ranges and calculated flags will be saved. Abnormal or critical values require professional review; this confirmation does not verify or release the result.", confirmText: partialResult ? "Save for review" : "I reviewed the values", detailHtml: validationReportHtml(validation) });
     if (!confirmed) return false;
     payload.validationReviewed = true;
     return true;
