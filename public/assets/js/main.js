@@ -1836,7 +1836,9 @@
   };
 
   async function loadAppData(page = "dashboard") {
-    const data = await api("app_data", { page });
+    const reportView = new URLSearchParams(location.search).get("report");
+    const collections = page === "reports" && reportView !== "overview" ? ["orders", "results"] : undefined;
+    const data = await api("app_data", { page, ...(collections ? { collections } : {}) });
     state.data = data;
     currentUser = data.currentUser || currentUser;
     state.collectionLoadedAt.clear();
@@ -1848,11 +1850,14 @@
 
   function pageDataKeys(page) {
     const role = currentUser?.role;
+    const reportCollections = new URLSearchParams(location.search).get("report") === "overview"
+      ? ["users", "facilities", "tests", "orders", "results", "notifications"]
+      : ["orders", "results"];
     const map = {
-      dashboard: role === "Admin" ? ["users", "facilities", "tests", "orders", "results", "notifications", "audit"] : role === "Doctor" ? ["patients", "orders", "results", "notifications"] : role === "Patient" ? ["patients", "orders", "results", "notifications"] : ["orders", "results", "notifications"],
-      users: ["users", "facilities"], facilities: ["facilities"], tests: ["tests"], patients: ["patients", "facilities"],
+      dashboard: role === "Admin" ? ["users", "facilities", "notifications", "audit"] : role === "Doctor" ? ["patients", "orders", "results", "notifications"] : role === "Patient" ? ["patients", "orders", "results", "notifications"] : ["orders", "results", "notifications"],
+      users: ["users", "facilities"], facilities: role === "Admin" ? ["facilities", "tests"] : ["facilities"], tests: ["tests"], patients: ["patients", "facilities"],
       "create-order": ["patients", "availablePatients", "facilities", "tests"], orders: ["orders", "facilities"], queue: ["orders", "facilities"], upload: ["orders", "results"],
-      review: ["results"], results: ["results", "facilities"], reports: ["users", "facilities", "tests", "orders", "results", "notifications"],
+      review: ["results"], results: ["results", "facilities"], reports: reportCollections,
       audit: ["audit"], notifications: ["notifications"], profile: role === "Patient" ? ["patients", "results"] : [], settings: [], maintenance: [],
     };
     return map[page] || [];
@@ -1870,18 +1875,6 @@
 
   function missingPageCollections(page, force = false) {
     return pageDataKeys(page).filter((key) => force || !state.collectionLoadedAt.has(key) || Date.now() - state.collectionLoadedAt.get(key) >= PAGE_CACHE_TTL);
-  }
-
-  async function warmPanelCache() {
-    const role = currentUser?.role;
-    const pages = role === "Admin" ? ["tests", "orders", "results"] : role === "Doctor" ? ["orders", "facilities", "tests"] : ["orders"];
-    for (const page of ["dashboard", ...pages]) {
-      if (!currentUser || currentUser.role !== role || document.hidden || navigator.connection?.saveData || state.pageRequests.size) return;
-      if (!pageHasData(page)) {
-        await ensurePageData(page);
-        if (!pageHasData(page)) return; // Do not keep retrying an unavailable server.
-      }
-    }
   }
 
   async function ensurePageData(page, force = false) {
@@ -1958,6 +1951,7 @@
   }
 
   function setPage(requested = "dashboard", updateHash = true) {
+    if (!currentUser) return;
     hideTooltip();
     stopResultCamera();
     const role = currentUser.role;
@@ -3423,7 +3417,6 @@
       }
       initPatientAssistant();
       startNotificationPolling();
-      setTimeout(warmPanelCache, 250);
     } catch (error) {
       clearAppCache();
       location.replace(LOGIN_URL);

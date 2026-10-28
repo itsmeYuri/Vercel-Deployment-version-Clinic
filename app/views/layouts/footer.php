@@ -18,12 +18,8 @@ $roleUrls = $roleUrls ?? [
       window.CLINIC_MAINTENANCE_URL = <?= json_encode($maintenanceUrl, JSON_UNESCAPED_SLASHES) ?>;
       window.CLINIC_ASSET_BASE = <?= json_encode($assetBase, JSON_UNESCAPED_SLASHES) ?>;
     </script>
-    <script src="<?= e($assetBase) ?>/js/lab-result-scanner.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-result-scanner.js')) ?>"></script>
-    <script src="<?= e($assetBase) ?>/js/lab-utilization-analytics.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-utilization-analytics.js')) ?>"></script>
-    <script src="<?= e($assetBase) ?>/js/lab-forecasting-analysis.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-forecasting-analysis.js')) ?>"></script>
-    <script src="<?= e($assetBase) ?>/js/lab-trend-analysis.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/lab-trend-analysis.js')) ?>"></script>
-    <script src="<?= e($assetBase) ?>/js/report-charts.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/report-charts.js')) ?>"></script>
-    <script src="<?= e($assetBase) ?>/js/patient-result-tools.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/patient-result-tools.js')) ?>"></script>
-    <script src="<?= e($assetBase) ?>/js/main.js?v=<?= e((string) filemtime(__DIR__ . '/../../../public/assets/js/main.js')) ?>"></script>
+    <?php foreach (['lab-result-scanner', 'lab-utilization-analytics', 'lab-forecasting-analysis', 'lab-trend-analysis', 'report-charts', 'patient-result-tools', 'main'] as $scriptName): ?>
+    <script src="<?= e($assetBase) ?>/js/<?= e($scriptName) ?>.js?v=<?= e(substr(hash_file('sha256', __DIR__ . '/../../../public/assets/js/' . $scriptName . '.js'), 0, 16)) ?>"></script>
+    <?php endforeach; ?>
   </body>
 </html>

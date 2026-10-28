@@ -1196,15 +1196,16 @@ function fetch_notifications($pdo, $user)
         $params[] = $user['patientId'];
     }
     $where[0] .= ')';
-    $rows = all_rows($pdo, 'SELECT n.* FROM notifications n WHERE ' . implode(' AND ', $where) . ' ORDER BY n.created_at DESC LIMIT 200', $params);
+    $join = '';
     if ($user['role'] === 'Laboratory Staff') {
-        $rows = array_values(array_filter($rows, function ($row) use ($pdo, $user) {
-            if (empty($row['related_order_id'])) {
-                return true;
-            }
-            return can_access_order($pdo, $user, order_by_identifier($pdo, (int) $row['related_order_id']));
-        }));
+        $ids = lab_facility_ids($pdo, $user);
+        $join = ' LEFT JOIN lab_orders notification_order ON notification_order.id = n.related_order_id';
+        $where[] = $ids
+            ? '(n.related_order_id IS NULL OR notification_order.facility_id IN (' . placeholders(count($ids)) . '))'
+            : 'n.related_order_id IS NULL';
+        $params = array_merge($params, $ids);
     }
+    $rows = all_rows($pdo, 'SELECT n.* FROM notifications n' . $join . ' WHERE ' . implode(' AND ', $where) . ' ORDER BY n.created_at DESC LIMIT 200', $params);
     return array_map(function ($row) {
         return [
             'id' => (int) $row['id'],
@@ -1302,9 +1303,9 @@ function app_data($pdo, $user, $page = 'dashboard', $collections = null)
     $role = $user['role'];
     $needs = ['users' => false, 'facilities' => false, 'tests' => false, 'patients' => false, 'orders' => false, 'results' => false, 'notifications' => false, 'audit' => false];
     $pageNeeds = [
-        'dashboard' => $role === 'Admin' ? ['users', 'facilities', 'tests', 'orders', 'results', 'notifications', 'audit'] : ($role === 'Doctor' ? ['patients', 'orders', 'results', 'notifications'] : ($role === 'Patient' ? ['patients', 'orders', 'results', 'notifications'] : ['orders', 'results', 'notifications'])),
+        'dashboard' => $role === 'Admin' ? ['users', 'facilities', 'notifications', 'audit'] : ($role === 'Doctor' ? ['patients', 'orders', 'results', 'notifications'] : ($role === 'Patient' ? ['patients', 'orders', 'results', 'notifications'] : ['orders', 'results', 'notifications'])),
         'users' => ['users', 'facilities'],
-        'facilities' => ['facilities'],
+        'facilities' => $role === 'Admin' ? ['facilities', 'tests'] : ['facilities'],
         'tests' => ['tests'],
         'patients' => ['patients', 'facilities'],
         'create-order' => ['patients', 'facilities', 'tests'],
@@ -1473,28 +1474,45 @@ function clinic_gemini_generate($payload, $logContext)
     $fallbackModel = trim((string) (getenv('GEMINI_FALLBACK_MODEL') ?: 'gemini-3-flash-preview'));
     $models = array_values(array_unique([$model, $fallbackModel]));
     $caBundle = trim((string) getenv('GEMINI_CA_BUNDLE'));
+    try {
+        $requestBody = json_encode($payload, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
+    } catch (Throwable $e) {
+        error_log($logContext . ' AI request could not be encoded: ' . $e->getMessage());
+        return ['error' => 'The AI analysis could not be prepared. The calculated report is still available.', 'status' => 502];
+    }
     foreach ($models as $index => $requestedModel) {
-        $curl = curl_init('https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($requestedModel) . ':generateContent');
-        curl_setopt_array($curl, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_HTTPHEADER => ['x-goog-api-key: ' . $apiKey, 'Content-Type: application/json'],
-            CURLOPT_POSTFIELDS => json_encode($payload, JSON_THROW_ON_ERROR),
-            CURLOPT_CONNECTTIMEOUT => 8,
-            CURLOPT_TIMEOUT => 20,
-        ]);
-        if ($caBundle !== '' && is_file($caBundle) && is_readable($caBundle)) {
-            curl_setopt($curl, CURLOPT_CAINFO, $caBundle);
+        $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($requestedModel) . ':generateContent';
+        $raw = false; $status = 0; $networkError = ''; $curlCode = 0;
+        if (function_exists('curl_init')) {
+            $curl = curl_init($url);
+            if ($curl === false) return ['error' => 'The AI connection could not be initialized.', 'status' => 502];
+            curl_setopt_array($curl, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST => true,
+                CURLOPT_HTTPHEADER => ['x-goog-api-key: ' . $apiKey, 'Content-Type: application/json'],
+                CURLOPT_POSTFIELDS => $requestBody,
+                CURLOPT_CONNECTTIMEOUT => 8,
+                CURLOPT_TIMEOUT => 20,
+            ]);
+            if ($caBundle !== '' && is_file($caBundle) && is_readable($caBundle)) curl_setopt($curl, CURLOPT_CAINFO, $caBundle);
+            $raw = curl_exec($curl);
+            $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+            $networkError = curl_error($curl);
+            $curlCode = curl_errno($curl);
+            curl_close($curl);
+        } else {
+            $context = stream_context_create([
+                'http' => ['method' => 'POST', 'header' => "x-goog-api-key: $apiKey\r\nContent-Type: application/json\r\n", 'content' => $requestBody, 'timeout' => 20, 'ignore_errors' => true],
+                'ssl' => $caBundle !== '' && is_file($caBundle) && is_readable($caBundle) ? ['cafile' => $caBundle] : [],
+            ]);
+            $raw = @file_get_contents($url, false, $context);
+            foreach ($http_response_header ?? [] as $header) if (preg_match('/^HTTP\/\S+\s+(\d{3})/', $header, $match)) $status = (int) $match[1];
+            if ($raw === false) $networkError = 'HTTP transport failed';
         }
-        $raw = curl_exec($curl);
-        $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
-        $networkError = curl_error($curl);
-        $curlCode = curl_errno($curl);
-        curl_close($curl);
         if ($raw !== false && $status >= 200 && $status < 300) break;
         error_log($logContext . ' Gemini request failed for ' . $requestedModel . ': ' . ($networkError ?: 'HTTP ' . $status));
         if ($curlCode === 60) return ['error' => 'The server cannot verify the AI service certificate. Configure a trusted CA bundle.', 'status' => 502];
-        if ($index + 1 >= count($models) || !in_array($status, [429, 503], true)) {
+        if ($index + 1 >= count($models) || !in_array($status, [404, 429, 503], true)) {
             return ['error' => in_array($status, [429, 503], true) ? 'The AI service is busy right now. The calculated analysis is still available.' : 'The AI assistant is temporarily unavailable.', 'status' => 502];
         }
     }
@@ -1585,7 +1603,8 @@ function admin_report_ai_analysis($data)
         return is_numeric($value) ? max(0, min(1000000, (float) $value)) : 0;
     };
     $label = static function ($value) {
-        return mb_substr(trim(preg_replace('/[\x00-\x1F\x7F]/u', ' ', (string) $value)), 0, 100);
+        $clean = trim(preg_replace('/[\x00-\x1F\x7F]/u', ' ', (string) $value) ?? '');
+        return function_exists('mb_substr') ? mb_substr($clean, 0, 100) : substr($clean, 0, 100);
     };
     $buckets = [];
     foreach (array_slice(is_array($source['buckets'] ?? null) ? $source['buckets'] : [], 0, 120) as $bucket) {
@@ -1634,7 +1653,7 @@ function admin_report_ai_analysis($data)
         $topic = [];
         foreach (['observed', 'explanation', 'nextSteps'] as $field) {
             $value = trim((string) ($decoded[$key][$field] ?? ''));
-            if ($value === '' || mb_strlen($value) > 1200) respond(false, 'The AI analysis was incomplete. The calculated report is still available.', ['fallback' => true], 502);
+            if ($value === '' || (function_exists('mb_strlen') ? mb_strlen($value) : strlen($value)) > 1200) respond(false, 'The AI analysis was incomplete. The calculated report is still available.', ['fallback' => true], 502);
             $topic[$field] = $value;
         }
         $topics[] = $topic;
@@ -2797,7 +2816,7 @@ try {
                 ], 503);
             }
         }
-        $collections = $action === 'page_data' && isset($data['collections']) && is_array($data['collections'])
+        $collections = in_array($action, ['app_data', 'page_data'], true) && isset($data['collections']) && is_array($data['collections'])
             ? array_values(array_filter($data['collections'], 'is_string')) : null;
         respond(true, 'Application data loaded.', app_data($pdo, $user, $requestedPage, $collections));
     }
@@ -2808,7 +2827,12 @@ try {
 
     if ($action === 'admin_report_ai_analysis') {
         require_auth($pdo, ['Admin']);
-        admin_report_ai_analysis($data);
+        try {
+            admin_report_ai_analysis($data);
+        } catch (Throwable $e) {
+            error_log('Admin report AI analysis failed: ' . $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine());
+            respond(false, 'AI analysis could not be completed. The calculated report is still available.', ['fallback' => true], 502, error_details($e));
+        }
     }
 
     if (in_array($action, ['list_users'], true)) {
