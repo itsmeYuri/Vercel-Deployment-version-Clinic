@@ -1499,7 +1499,9 @@ function clinic_gemini_generate($payload, $logContext)
             $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
             $networkError = curl_error($curl);
             $curlCode = curl_errno($curl);
-            curl_close($curl);
+            // Releasing the handle this way also works on PHP 8.5, where
+            // curl_close() emits a deprecation that our error handler throws.
+            unset($curl);
         } else {
             $context = stream_context_create([
                 'http' => ['method' => 'POST', 'header' => "x-goog-api-key: $apiKey\r\nContent-Type: application/json\r\n", 'content' => $requestBody, 'timeout' => 20, 'ignore_errors' => true],
