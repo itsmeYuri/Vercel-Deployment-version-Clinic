@@ -26,8 +26,9 @@ function clinic_lab_packages($pdo, $publishedOnly = false)
     return array_values($packages);
 }
 
-function clinic_save_lab_package($pdo, $input, $actor = null)
+function clinic_save_lab_package($pdo, $input, $actor = null, &$duplicate = false)
 {
+    $duplicate = false;
     $id = filter_var($input['id'] ?? '0', FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
     $name = trim((string) ($input['name'] ?? ''));
     $description = trim((string) ($input['description'] ?? ''));
@@ -45,8 +46,31 @@ function clinic_save_lab_package($pdo, $input, $actor = null)
     $check = $pdo->prepare("SELECT id FROM test_definitions WHERE id IN ($marks) AND status='Active'");
     $check->execute($testIds);
     if (count($check->fetchAll(PDO::FETCH_COLUMN)) !== count($testIds)) throw new InvalidArgumentException('Select only active laboratory tests.');
-    $pdo->beginTransaction();
+    $normalizedName = function_exists('mb_strtolower') ? mb_strtolower($name, 'UTF-8') : strtolower($name);
+    $lockName = 'clinic_lab_package_' . substr(hash('sha256', $normalizedName), 0, 40);
+    $mysqlLockHeld = false;
+    if (!$id && !db_is_postgres()) {
+        $lock = $pdo->prepare('SELECT GET_LOCK(?, 10)');
+        $lock->execute([$lockName]);
+        if ((int) $lock->fetchColumn() !== 1) throw new RuntimeException('Could not lock package creation.');
+        $mysqlLockHeld = true;
+    }
     try {
+        $pdo->beginTransaction();
+        if (!$id) {
+            if (db_is_postgres()) {
+                $lock = $pdo->prepare('SELECT pg_advisory_xact_lock(hashtext(?))');
+                $lock->execute([$lockName]);
+            }
+            $existing = $pdo->prepare('SELECT id FROM lab_packages WHERE LOWER(name) = LOWER(?) LIMIT 1');
+            $existing->execute([$name]);
+            $existingId = $existing->fetchColumn();
+            if ($existingId !== false) {
+                $duplicate = true;
+                $pdo->commit();
+                return (int) $existingId;
+            }
+        }
         if ($id) {
             $check = $pdo->prepare('SELECT id FROM lab_packages WHERE id=?');
             $check->execute([$id]);
@@ -65,8 +89,13 @@ function clinic_save_lab_package($pdo, $input, $actor = null)
         }
         $pdo->commit();
     } catch (Throwable $error) {
-        $pdo->rollBack();
+        if ($pdo->inTransaction()) $pdo->rollBack();
         throw $error;
+    } finally {
+        if ($mysqlLockHeld) {
+            $unlock = $pdo->prepare('SELECT RELEASE_LOCK(?)');
+            $unlock->execute([$lockName]);
+        }
     }
     return $id;
 }
