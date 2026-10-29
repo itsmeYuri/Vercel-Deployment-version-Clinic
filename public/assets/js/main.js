@@ -288,6 +288,7 @@
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let response;
+    let text;
     try {
       response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
         method: "POST",
@@ -299,13 +300,13 @@
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
+      text = await response.text();
     } catch (error) {
       if (error.name === "AbortError") throw new Error("The clinic server took too long to respond. Try again.");
       throw new Error("The clinic server could not be reached. Check your connection and try again.");
     } finally {
       clearTimeout(timeout);
     }
-    const text = await response.text();
     let json;
     try {
       json = JSON.parse(text);
@@ -1841,7 +1842,7 @@
 
   async function loadAppData(page = "dashboard") {
     const reportView = new URLSearchParams(location.search).get("report");
-    const collections = page === "reports" && reportView !== "overview" ? ["orders", "results"] : undefined;
+    const collections = document.body.dataset.serverPage ? [] : page === "reports" && reportView !== "overview" ? ["orders", "results"] : undefined;
     const data = await api("app_data", { page, ...(collections ? { collections } : {}) });
     state.data = data;
     currentUser = data.currentUser || currentUser;
@@ -1956,6 +1957,10 @@
 
   function setPage(requested = "dashboard", updateHash = true) {
     if (!currentUser) return;
+    if (document.body.dataset.serverPage) {
+      if (requested !== document.body.dataset.serverPage) location.href = `dashboard.php#${encodeURIComponent(requested)}`;
+      return;
+    }
     hideTooltip();
     stopResultCamera();
     const role = currentUser.role;
@@ -1972,7 +1977,7 @@
     }
     const liveFacilityPage = (role === "Laboratory Staff" && ["dashboard", "orders", "upload", "review", "queue"].includes(page))
       || (role === "Doctor" && ["dashboard", "patients", "create-order", "orders", "results"].includes(page));
-    if (liveFacilityPage) ensurePageData(page, true);
+    if (liveFacilityPage && Date.now() - (state.pageLoadedAt.get(page) || 0) > 5000) ensurePageData(page, true);
     else if (missingPageCollections(page).length || Date.now() - state.metadataLoadedAt >= PAGE_CACHE_TTL) ensurePageData(page);
     const maintenance = state.data?.maintenance;
     const roleBlocked = maintenance?.scope === "all"
@@ -3259,7 +3264,7 @@
     const prefetchPanel = (event) => {
       const link = event.target.closest?.(".nav-item[data-page], [data-go-page]");
       const page = link?.dataset.page || link?.dataset.goPage;
-      if (!state.data || !renderers[currentUser?.role]?.[page] || state.pageRequests.size || navigator.connection?.saveData) return;
+      if (document.body.dataset.serverPage || !state.data || !renderers[currentUser?.role]?.[page] || state.pageRequests.size || navigator.connection?.saveData) return;
       if (missingPageCollections(page).length || Date.now() - state.metadataLoadedAt >= PAGE_CACHE_TTL) ensurePageData(page);
     };
     document.addEventListener("pointerover", prefetchPanel);
@@ -3402,10 +3407,11 @@
     const requiredRole = document.body?.dataset.requiredRole;
     if (!requiredRole) return;
     const requestedPage = location.hash.slice(1) || document.body.dataset.initialPage || "dashboard";
-    $("#page-content").innerHTML = loading();
+    const serverPage = document.body.dataset.serverPage;
+    if (!serverPage) $("#page-content").innerHTML = loading();
     bindProtectedAppEvents();
     try {
-      await loadAppData(requestedPage);
+      await loadAppData(serverPage ? "dashboard" : requestedPage);
       if (!currentUser || currentUser.role !== requiredRole) {
         clearAppCache();
         location.replace(currentUser ? destinations[currentUser.role] : LOGIN_URL);
@@ -3413,7 +3419,8 @@
       }
       hydrateStaticIcons();
       hydrateProfile();
-      setPage(requestedPage, false);
+      if (serverPage) state.page = serverPage;
+      else setPage(requestedPage, false);
       const securityTab = new URLSearchParams(location.search).get('security');
       if (['password', 'authenticator', 'google'].includes(securityTab)) {
         openSecurityPopup(securityTab);
@@ -3424,8 +3431,15 @@
       initPatientAssistant();
       startNotificationPolling();
     } catch (error) {
-      clearAppCache();
-      location.replace(LOGIN_URL);
+      if (error.status === 401 || error.status === 403) {
+        clearAppCache();
+        location.replace(LOGIN_URL);
+        return;
+      }
+      const message = `<section class="card" role="alert"><div class="empty-state"><h3>Unable to connect</h3><p>${h(error.message || "Please check your connection and try again.")}</p><button class="btn btn-primary" type="button" data-retry-startup>Try again</button></div></section>`;
+      if (serverPage) $("#page-content").insertAdjacentHTML("afterbegin", message);
+      else $("#page-content").innerHTML = message;
+      $("[data-retry-startup]")?.addEventListener("click", () => location.reload());
     }
   }
 

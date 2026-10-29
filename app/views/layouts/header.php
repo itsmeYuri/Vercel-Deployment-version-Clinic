@@ -22,5 +22,8 @@ $bodyClass = trim($bodyClass ?? '');
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="<?= e($assetBase) ?>/css/styles.css?v=<?= e(substr(hash_file('sha256', __DIR__ . '/../../../public/assets/css/styles.css'), 0, 16)) ?>" />
     <link rel="stylesheet" href="<?= e($assetBase) ?>/css/reports.css?v=<?= e(substr(hash_file('sha256', __DIR__ . '/../../../public/assets/css/reports.css'), 0, 16)) ?>" />
+    <?php foreach ($pageStyles ?? [] as $pageStyle): ?>
+    <link rel="stylesheet" href="<?= e($assetBase) ?>/css/<?= e($pageStyle) ?>.css?v=<?= e(substr(hash_file('sha256', __DIR__ . '/../../../public/assets/css/' . $pageStyle . '.css'), 0, 16)) ?>" />
+    <?php endforeach; ?>
   </head>
   <body<?= $bodyClass !== '' ? ' class="' . e($bodyClass) . '"' : '' ?> <?= $bodyAttributes ?>>

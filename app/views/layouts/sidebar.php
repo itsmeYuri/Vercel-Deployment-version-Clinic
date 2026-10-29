@@ -23,7 +23,7 @@ $logoutUrl = $logoutUrl ?? '../auth/logout.php';
         <?php continue; ?>
       <?php endif; ?>
       <?php $isCurrent = ($item['page'] ?? '') === ($initialPage ?? 'dashboard'); ?>
-      <a href="<?= e($item['href']) ?>" class="nav-item <?= $isCurrent ? 'active' : '' ?>" data-page="<?= e($item['page']) ?>" data-icon-name="<?= e($item['icon']) ?>" title="<?= e($item['label']) ?>"<?= $isCurrent ? ' aria-current="page"' : '' ?>>
+      <a href="<?= e($item['href']) ?>" class="nav-item <?= $isCurrent ? 'active' : '' ?>" <?= empty($item['external']) ? 'data-page="' . e($item['page']) . '"' : '' ?> data-icon-name="<?= e($item['icon']) ?>" title="<?= e($item['label']) ?>"<?= $isCurrent ? ' aria-current="page"' : '' ?>>
         <span><?= e($item['label']) ?></span>
         <?php if (array_key_exists('count', $item)): ?><b class="nav-count"><?= e($item['count']) ?></b><?php endif; ?>
       </a>

@@ -7,3 +7,7 @@ Local MySQL databases: run `20261027_result_explanations.mysql.sql` once before 
 Rollback: stop using the explanation feature, export any explanation rows that need to be retained, then drop `result_explanations`. Dropping that table deletes those explanation drafts and approvals; it does not delete laboratory results. Review the exported data before any rollback.
 
 The PostgreSQL table has RLS enabled and no browser-access policy. The authenticated PHP backend remains the only application path for reads and writes. The application database role must have permission to use the new table.
+
+## Laboratory packages
+
+For an existing Supabase database, run `20261029_lab_packages.sql` in the SQL Editor before using the admin package editor. For local MySQL or MariaDB, run `20261029_lab_packages.mysql.sql`. Fresh Supabase installations get the tables from `database/supabase_schema.sql`. These migrations add package tables and leave existing tests, orders, and results intact. The public landing page displays only packages marked Published; drafts stay visible only to administrators.

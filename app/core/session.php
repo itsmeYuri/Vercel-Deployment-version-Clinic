@@ -74,9 +74,12 @@ function clinic_start_session()
         $token = bin2hex(random_bytes(32));
     }
     try {
-        $stmt = db()->prepare('SELECT user_id, csrf_token, mfa_verified, pending_mfa_user_id, pending_mfa_expires_at, oauth_flow, recent_auth_at, auth_notice FROM auth_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1');
-        $stmt->execute([hash('sha256', $token)]);
-        $row = $validToken ? ($stmt->fetch() ?: null) : null;
+        $row = null;
+        if ($validToken) {
+            $stmt = db()->prepare('SELECT user_id, csrf_token, mfa_verified, pending_mfa_user_id, pending_mfa_expires_at, oauth_flow, recent_auth_at, auth_notice FROM auth_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1');
+            $stmt->execute([hash('sha256', $token)]);
+            $row = $stmt->fetch() ?: null;
+        }
     } catch (PDOException $error) {
         clinic_session_unavailable($error);
     }

@@ -5,7 +5,9 @@ $publicRoot = realpath($projectRoot . '/public');
 $path = rawurldecode((string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH));
 
 if ($path === '/' || $path === '') {
-    header('Location: /auth/login.php#login', true, 302);
+    $_SERVER['SCRIPT_NAME'] = '/index.php';
+    $_SERVER['PHP_SELF'] = '/index.php';
+    require $publicRoot . '/index.php';
     exit;
 }
 

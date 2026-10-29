@@ -50,6 +50,7 @@ $configs = [
             ['page' => 'users', 'file' => 'users', 'icon' => 'users', 'label' => 'Users'],
             ['page' => 'facilities', 'file' => 'facilities', 'icon' => 'facility', 'label' => 'Facilities'],
             ['page' => 'tests', 'file' => 'tests', 'icon' => 'test', 'label' => 'Laboratory Tests'],
+            ['page' => 'packages', 'file' => 'packages', 'icon' => 'test', 'label' => 'Laboratory Packages', 'external' => true],
             ['section' => 'Insights & controls'],
             ['page' => 'reports', 'file' => 'reports', 'icon' => 'chart', 'label' => 'Reports'],
             ['page' => 'audit', 'file' => 'audit', 'icon' => 'audit', 'label' => 'Audit Trail'],
@@ -132,10 +133,14 @@ $configs = [
 ];
 
 $roleConfig = $configs[$requiredRole];
+if (isset($serverPageContent)) {
+    $roleConfig['title'] = 'Laboratory Packages';
+}
 $pageTitle = $pageTitle ?? ($roleConfig['title'] . ' | ' . clinic_app_name());
 $pageDescription = $pageDescription ?? clinic_app_name() . ' ' . strtolower($roleConfig['brandSmall']);
 $bodyAttributes = 'data-required-role="' . e($requiredRole) . '" data-user-id="' . e($currentUser['id'] ?? '') . '" data-initial-page="' . e($initialPage) . '"';
 
+if (isset($serverPageContent)) $bodyAttributes .= ' data-server-page="' . e($initialPage) . '"';
 require __DIR__ . '/../layouts/header.php';
 ?>
     <div class="<?= e($roleConfig['bodyClass']) ?>">
@@ -143,7 +148,7 @@ require __DIR__ . '/../layouts/header.php';
 
       <div class="admin-main">
         <?php require __DIR__ . '/../layouts/navbar.php'; ?>
-        <main class="page-content" id="page-content" tabindex="-1"></main>
+        <main class="page-content" id="page-content" tabindex="-1"><?= $serverPageContent ?? '' ?></main>
       </div>
 
       <div class="toast-region" aria-live="polite" aria-atomic="true"></div>

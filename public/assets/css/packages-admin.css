@@ -1,0 +1,61 @@
+.packages-page { --ink: #173d4d; --teal: #08767b; --line: #dce9eb; --muted: #536d79; --surface: #fff; }
+
+.packages-page .page-heading { margin-bottom: 30px; }
+.packages-page .page-heading h1 { margin: 0; font-size: clamp(28px, 3vw, 36px); font-weight: 700; line-height: 1.2; letter-spacing: -.03em; }
+.packages-page .page-heading p, .packages-page .panel-title p { color: var(--muted); margin: 9px 0 0; font-size: 14px; }
+.packages-page .notice { padding: 14px 18px; margin: 0 0 24px; border-radius: 10px; overflow-wrap: anywhere; }
+.packages-page .notice.error { background: #fff0f2; color: #ad3645; }
+.packages-page .notice.success { background: #e5f7f2; color: #136650; }
+.packages-page .package-admin-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.packages-page .editor-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 28px; }
+.packages-page .existing-panel { min-width: 0; padding-top: 28px; }
+.packages-page .panel-title { padding-bottom: 20px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+.packages-page .panel-title h2 { font-size: 21px; font-weight: 700; letter-spacing: -.02em; margin: 0; }
+.packages-page .package-form { display: grid; gap: 20px; min-width: 0; }
+.packages-page .package-form label { display: grid; gap: 7px; color: #345762; font-weight: 600; font-size: 14px; min-width: 0; }
+.packages-page .package-form :is(input[type=text], .packages-page input[type=number], .packages-page textarea, .packages-page select) { width: 100%; min-width: 0; padding: 11px 13px; min-height: 46px; border: 1px solid var(--line); border-radius: 10px; background: #fbfdfd; color: var(--ink); font-weight: 400; caret-color: var(--teal); }
+.packages-page .package-form :is(input, .packages-page textarea)::placeholder { color: var(--muted); opacity: 1; }
+.packages-page .package-form :is(input[type=text], .packages-page input[type=number], .packages-page textarea, .packages-page select):focus { border-color: var(--teal); background: var(--surface); }
+.packages-page .package-form textarea { resize: vertical; }
+.packages-page .form-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.packages-page .package-form fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
+.packages-page .package-form legend { font-size: 14px; font-weight: 600; padding: 0; margin-bottom: 6px; }
+.packages-page .package-form fieldset p { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+.packages-page .test-options { display: grid; gap: 0; max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; scrollbar-color: #9bbdbd #f0faf9; scrollbar-width: thin; }
+.packages-page .test-options label { display: flex; gap: 12px; align-items: center; min-height: 62px; font-weight: 500; padding: 10px 13px; cursor: pointer; overflow-wrap: anywhere; }
+.packages-page .test-options label + label { border-top: 1px solid var(--line); }
+.packages-page .test-options label:hover { background: #f0faf9; }
+.packages-page .test-options label:has(input:checked) { background: #e8f7f4; color: #075d68; }
+.packages-page .test-options label:focus-within { outline: 2px solid var(--teal); outline-offset: -2px; }
+.packages-page .test-options input { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--teal); margin: 0; }
+.packages-page .test-options small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.packages-page .test-options label:has(input:disabled) { background: #f3f5f5; color: var(--muted); cursor: not-allowed; }
+.packages-page .save-button { border: 0; border-radius: 10px; background: var(--teal); color: #fff; min-height: 48px; padding: 12px 18px; font-weight: 700; cursor: pointer; transition: background .16s ease; }
+.packages-page .save-button:hover { background: #075d68; }
+.packages-page .save-button:disabled { opacity: .5; cursor: not-allowed; }
+.packages-page .existing-package { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; margin: 14px 0; }
+.packages-page .existing-package summary { display: flex; align-items: center; gap: 14px; padding: 22px; cursor: pointer; list-style: none; border-radius: 14px; }
+.packages-page .existing-package summary:hover { background: #f0faf9; }
+.packages-page .existing-package summary::-webkit-details-marker { display: none; }
+.packages-page .package-summary-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.packages-page .existing-package summary strong, .packages-page .existing-package summary small { display: block; }
+.packages-page .existing-package summary strong { font-size: 17px; font-weight: 600; }
+.packages-page .existing-package summary small { color: var(--muted); font-size: 13px; margin-top: 5px; font-variant-numeric: tabular-nums; }
+.packages-page .existing-package summary em { flex-shrink: 0; font-style: normal; font-size: 12px; font-weight: 600; padding: 5px 9px; border-radius: 6px; background: #edf1f3; color: #536570; }
+.packages-page .existing-package summary em.published { background: #e6f7ef; color: #17775e; }
+.packages-page .disclosure-icon { width: 18px; height: 18px; flex-shrink: 0; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.packages-page .existing-package[open] .disclosure-icon { transform: rotate(180deg); }
+.packages-page .existing-package[open] summary { border-bottom: 1px solid var(--line); border-radius: 14px 14px 0 0; }
+.packages-page .existing-package .package-form { padding: 24px; }
+.packages-page .empty-packages { color: var(--muted); padding: 28px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+@media(max-width: 850px) {
+.packages-page .package-admin-layout { grid-template-columns: 1fr; }
+.packages-page .existing-panel { padding-top: 6px; } }
+@media(max-width: 560px) {
+.packages-page .editor-panel { padding: 20px; }
+.packages-page .form-pair { grid-template-columns: 1fr; }
+.packages-page .existing-package summary { padding: 18px; gap: 10px; }
+.packages-page .existing-package .package-form { padding: 20px; }
+}
+@media(prefers-reduced-motion: reduce) {
+.packages-page .save-button { transition: none; } }
