@@ -32,6 +32,9 @@
     { name: "LDL", aliases: ["ldl cholesterol", "ldl-c", "ldl"] },
     { name: "AST/SGOT", aliases: ["ast/sgot", "sgot", "ast"] },
     { name: "ALT/SGPT", aliases: ["alt/sgpt", "sgpt", "alt"] },
+    { name: "TSH", aliases: ["thyroid stimulating hormone", "thyrotropin", "tsh"] },
+    { name: "FT4", aliases: ["free thyroxine", "free t4", "ft4"] },
+    { name: "FT3", aliases: ["free triiodothyronine", "free t3", "ft3"] },
     { name: "Sodium", aliases: ["sodium", "na+"] },
     { name: "Potassium", aliases: ["potassium", "k+"] },
     { name: "Chloride", aliases: ["chloride", "cl-"] },
@@ -80,7 +83,9 @@
     const aliasMatch = line.match(new RegExp(`^\\s*(?:[-•]\\s*)?(${aliasPattern})(?=\\b|\\s|:|-)`, "i"));
     if (!aliasMatch) return null;
 
-    const remainder = line.slice((aliasMatch.index || 0) + aliasMatch[0].length).replace(/^\s*[:=-]?\s*/, "");
+    const remainder = line.slice((aliasMatch.index || 0) + aliasMatch[0].length)
+      .replace(/^\s*\([A-Za-z0-9]{1,8}\)\s*/, "")
+      .replace(/^\s*[:=-]?\s*/, "");
     const valueMatch = remainder.match(new RegExp(`^${numberPattern}`));
     if (!valueMatch) {
       const qualitative = remainder.match(/^(non[- ]?reactive|not detected|positive|negative|reactive|detected|trace|present|absent)\b/i);
@@ -132,6 +137,16 @@
       content.push(lines[index]);
     }
     return content.join(" ").trim();
+  }
+
+  function extractPatientName(lines) {
+    const line = lines.find((item) => /^patient\s*name\s*[:\-]?\s*\S/i.test(item));
+    if (!line) return "";
+    const raw = line.replace(/^patient\s*name\s*[:\-]?\s*/i, "");
+    // OCR often merges the left and right columns of a report into one line.
+    // Stop before the next printed field instead of treating it as a surname.
+    return raw.split(/\s+(?=(?:sample\s*type|patient\s*id|age\s*\/\s*sex|date\s*of\s*birth|requested\s*by|department|clinical\s*information|status)\b)/i)[0]
+      .replace(/[\s:;|©]+$/g, "").trim();
   }
 
   function parseGenericResultLine(line) {
@@ -217,7 +232,7 @@
     });
     return {
       values,
-      patientName: lines.map((line) => line.match(/^patient\s*name\s*[:\-]?\s*(.+)$/i)).find(Boolean)?.[1]?.trim() || "",
+      patientName: extractPatientName(lines),
       findings: extractSection(lines, /^findings summary\b/i, [/^remarks\b/i, /^result values?\b/i, /^performed by\b/i]),
       remarks: extractSection(lines, /^remarks\b/i, [/^result values?\b/i, /^performed by\b/i, /^reviewed by\b/i]),
       lines,
@@ -226,7 +241,12 @@
   }
 
   function parameterKey(value) {
-    const key = String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const key = String(value || "").toLowerCase().replace(/\s*\([a-z0-9]{1,8}\)\s*$/, "").replace(/[^a-z0-9]/g, "");
+    if (["wbc", "wbccount", "whitebloodcellcount", "whitebloodcells", "leukocytes"].includes(key)) return "wbc";
+    if (["rbc", "rbccount", "redbloodcellcount", "redbloodcells", "erythrocytes"].includes(key)) return "rbc";
+    if (["hemoglobin", "haemoglobin", "hgb", "hb"].includes(key)) return "hemoglobin";
+    if (["hematocrit", "haematocrit", "hct"].includes(key)) return "hematocrit";
+    if (["platelet", "platelets", "plateletcount", "plt"].includes(key)) return "platelets";
     if (["hemoglobina1c", "hba1c", "a1c"].includes(key)) return "hba1c";
     if (["creactiveprotein", "crp"].includes(key)) return "crp";
     if (["fastingglucose", "fastingbloodsugar", "glucose", "fbs"].includes(key)) return "glucose";
@@ -234,18 +254,36 @@
     if (["esr", "erythrocytesedimentationrate"].includes(key)) return "esr";
     if (["ldl", "ldlcholesterol"].includes(key)) return "ldl";
     if (["hdl", "hdlcholesterol"].includes(key)) return "hdl";
+    if (["ast", "astsgot", "sgot", "aspartateaminotransferase"].includes(key)) return "ast";
+    if (["tsh", "thyroidstimulatinghormone", "thyrotropin"].includes(key)) return "tsh";
+    if (["ft4", "freet4", "freethyroxine"].includes(key)) return "ft4";
+    if (["ft3", "freet3", "freetriiodothyronine"].includes(key)) return "ft3";
     return key;
   }
 
-  function expectedParameters(testNames) {
+  function expectedParameters(testNames, definitions = []) {
     const expected = new Set();
     const add = (...names) => names.forEach((name) => expected.add(parameterKey(name)));
+    const panelAliases = [
+      ["cbc", "completebloodcount", "completebloodcountwithdifferential"],
+      ["ua", "urinalysis", "routineurinalysis"],
+      ["lipid", "lipidprofile", "lipidpanel"],
+      ["cmp", "comprehensivemetabolicpanel"],
+      ["thyroidpanel", "thyroidfunctionpanel"],
+      ["liverfunctionpanel", "hepaticfunctionpanel"],
+      ["renalfunctionpanel", "kidneyfunctionpanel"],
+      ["electrolytepanel"],
+    ];
     for (const name of testNames) {
       const test = parameterKey(name).replace(/^demo/, "");
       if (test.includes("completebloodcount") || test === "cbc") add("WBC", "RBC", "Hemoglobin", "Hematocrit", "Platelets", "MCV", "MCH", "MCHC", "RDW", "Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Basophils");
-      else if (test.includes("urinalysis") || test === "ua") add("Urine pH", "Specific Gravity");
-      else if (test.includes("lipidprofile") || test === "lipid") add("Total Cholesterol", "LDL", "HDL", "Triglycerides");
-      else if (test.includes("metabolicpanel") || test === "cmp") add("Glucose", "Creatinine", "BUN", "Sodium", "Potassium", "Chloride", "Calcium", "ALT", "AST/SGOT");
+      else if (test.includes("urinalysis") || test === "ua") add("Urine pH", "Specific Gravity", "Protein", "Urine Glucose", "Ketones", "Blood", "Leukocyte Esterase", "Nitrite", "Bilirubin", "Urobilinogen");
+      else if (test.includes("lipidprofile") || test === "lipid" || test === "lipidpanel") add("Total Cholesterol", "LDL", "HDL", "Triglycerides", "Non-HDL Cholesterol", "VLDL");
+      else if (test.includes("metabolicpanel") || test === "cmp") add("Glucose", "Creatinine", "BUN", "Sodium", "Potassium", "Chloride", "Calcium", "ALT", "AST/SGOT", "Albumin", "Total Protein", "Bilirubin", "CO2", "Alkaline Phosphatase");
+      else if (test.includes("thyroidpanel") || test.includes("thyroidfunctionpanel")) add("TSH", "FT4", "FT3", "T4", "T3");
+      else if (test.includes("liverfunctionpanel") || test.includes("hepaticfunctionpanel")) add("ALT", "AST/SGOT", "Alkaline Phosphatase", "Bilirubin", "Direct Bilirubin", "Albumin", "Total Protein", "GGT");
+      else if (test.includes("renalfunctionpanel") || test.includes("kidneyfunctionpanel")) add("Creatinine", "BUN", "Uric Acid", "eGFR", "Sodium", "Potassium", "Chloride");
+      else if (test.includes("electrolytepanel")) add("Sodium", "Potassium", "Chloride", "CO2", "Bicarbonate");
       else if (test.includes("creactiveprotein") || test === "crp") add("CRP");
       else if (test.includes("hemoglobina1c") || test === "hba1c") add("HbA1c");
       else if (test.includes("fastingbloodsugar") || test === "fbs") add("Glucose");
@@ -253,14 +291,24 @@
       else if (test.includes("thyroidstimulatinghormone") || test === "tsh") add("TSH");
       else if (test.includes("alanineaminotransferase") || test === "alt") add("ALT");
       else if (test.includes("erythrocytesedimentationrate") || test === "esr") add("ESR");
+      const definition = definitions.find((item) => parameterKey(item.name) === parameterKey(name));
+      const rules = definition?.validationRules || [];
+      rules.forEach((rule) => {
+        const parameter = parameterKey(rule.parameter);
+        const panelHeading = panelAliases.some((aliases) => aliases.includes(test) && aliases.includes(parameter));
+        if (!panelHeading && (parameter !== test || rules.length === 1)) add(rule.parameter);
+      });
     }
     return expected;
   }
 
-  function scanMismatch(parsed, order) {
+  function scanMismatch(parsed, order, definitions = []) {
     if (!order) return { reasons: ["Select a laboratory request before scanning."] };
-    const testNames = String(order.tests || "").split(/,|;/).map((name) => name.trim()).filter(Boolean);
-    const expected = expectedParameters(testNames);
+    const orderedDefinitions = (order.testIds || []).map((id) => definitions.find((item) => String(item.id) === String(id))).filter(Boolean);
+    const testNames = orderedDefinitions.length
+      ? orderedDefinitions.map((item) => item.name)
+      : String(order.tests || "").split(/,|;/).map((name) => name.trim()).filter(Boolean);
+    const expected = expectedParameters(testNames, definitions);
     const unexpected = expected.size ? (parsed.values || []).filter((value) => !expected.has(parameterKey(value.parameter))).map((value) => value.parameter) : [];
     const normalizeName = (name) => String(name || "").toLowerCase().replace(/\b(?:mr|mrs|ms|dr)\.?\b/g, "").replace(/[^a-z]/g, "");
     const patientMismatch = parsed.patientName && order.patientName && normalizeName(parsed.patientName) !== normalizeName(order.patientName);

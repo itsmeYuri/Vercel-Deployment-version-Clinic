@@ -99,3 +99,30 @@ function clinic_save_lab_package($pdo, $input, $actor = null, &$duplicate = fals
     }
     return $id;
 }
+
+function clinic_delete_lab_package($pdo, $packageId, $actor)
+{
+    $id = filter_var($packageId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    if ($id === false) throw new InvalidArgumentException('Select a valid package to delete.');
+
+    $pdo->beginTransaction();
+    try {
+        $lookup = $pdo->prepare('SELECT name FROM lab_packages WHERE id = ? FOR UPDATE');
+        $lookup->execute([$id]);
+        $name = $lookup->fetchColumn();
+        if ($name === false) throw new InvalidArgumentException('Package not found. It may already have been deleted.');
+
+        // Remove this bundle's links; test definitions and existing orders remain intact.
+        $pdo->prepare('DELETE FROM lab_package_tests WHERE package_id = ?')->execute([$id]);
+        $delete = $pdo->prepare('DELETE FROM lab_packages WHERE id = ?');
+        $delete->execute([$id]);
+        if ($delete->rowCount() !== 1) throw new RuntimeException('Package deletion did not complete.');
+
+        $audit = $pdo->prepare('INSERT INTO audit_logs (user_id, user_name, role_name, action, module, details, ip_address) VALUES (?,?,?,?,?,?,?)');
+        $audit->execute([(int) $actor['id'], $actor['name'], 'Admin', 'DELETE', 'Laboratory Package', substr('Deleted package ' . $name . ' (ID ' . $id . ')', 0, 255), $_SERVER['REMOTE_ADDR'] ?? null]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $error;
+    }
+}

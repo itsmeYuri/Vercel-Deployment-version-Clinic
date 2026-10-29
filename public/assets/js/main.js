@@ -164,7 +164,7 @@
 
   let currentUser = null;
   const PAGE_CACHE_TTL = 60000;
-  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, trends: null, diagnosticAi: null, adminTurnaroundPeriod: "week", loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map(), collectionLoadedAt: new Map(), metadataLoadedAt: 0 };
+  const state = { data: null, page: "dashboard", activeDrawer: null, activeRecordId: null, lastFocusedElement: null, utilization: null, forecast: { horizon: 7 }, trends: null, diagnosticAi: null, reportRanking: null, adminTurnaroundPeriod: "week", loadingPages: new Set(), pageRequests: new Map(), pageLoadedAt: new Map(), collectionLoadedAt: new Map(), metadataLoadedAt: 0 };
   let diagnosticAiTimer = null;
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -696,7 +696,7 @@
       }
       const selectedOrderId = $('select[name="orderId"]', form)?.value;
       const selectedOrder = state.data?.orders?.find((order) => String(order.id) === String(selectedOrderId));
-      const mismatch = window.ClinicLabScanner?.scanMismatch(parsed, selectedOrder);
+      const mismatch = window.ClinicLabScanner?.scanMismatch(parsed, selectedOrder, state.data?.tests || []);
       if (mismatch?.reasons?.length) {
         const message = `Wrong scan. This report does not match the selected doctor's request. ${mismatch.reasons.join(" ")} Choose the correct report and scan again.`;
         updateScannerStatus(form, message, null, "error");
@@ -1352,6 +1352,10 @@
 
   function printActiveReport() {
     if (currentUser?.role !== "Admin" || state.page !== "reports") return;
+    if (new URLSearchParams(location.search).get("report") === "overview" && reportRankingState().pendingKey) {
+      toast("Wait for the dated request ranking to load before printing.", "error");
+      return;
+    }
     const source = $("#report-view");
     if (!source) { toast("The report is not ready to print.", "error"); return; }
     const view = new URLSearchParams(location.search).get("report") || "trends";
@@ -1584,13 +1588,79 @@
   }
 
   const reportViews = [["trends", "Trend Analysis"], ["diagnostic", "Descriptive & Diagnostic"], ["utilization", "Laboratory Utilization"], ["forecast", "Laboratory Demand Forecast"], ["overview", "Activity Summary"]];
+  function reportRankingState() {
+    if (!state.reportRanking) {
+      const today = new Date();
+      const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29);
+      const dateKey = window.LabUtilizationAnalytics.dateKey;
+      state.reportRanking = { from: dateKey(start), to: dateKey(today), data: null, loadedKey: "", pendingKey: "", error: "" };
+    }
+    return state.reportRanking;
+  }
+
+  function reportRankingResults() {
+    const ranking = reportRankingState();
+    if (ranking.pendingKey) return '<p class="report-ranking-message" role="status">Loading request rankings…</p>';
+    if (ranking.error) return `<p class="report-ranking-message report-ranking-error" role="alert">${h(ranking.error)}</p>`;
+    if (!ranking.data) return '<p class="report-ranking-message">Select a date range to view request rankings.</p>';
+    const tests = ranking.data.tests || [];
+    const packages = ranking.data.packages || [];
+    const testList = tests.length
+      ? `<ol class="report-ranking-list">${tests.map((test, index) => `<li><span class="report-rank">${index + 1}</span><span class="report-rank-name">${h(test.name)}</span><strong>${h(test.requests)} request${test.requests === 1 ? "" : "s"}</strong></li>`).join("")}</ol>`
+      : '<p class="report-ranking-message">No tests were requested in this period.</p>';
+    const packageList = !ranking.data.packagesAvailable
+      ? '<p class="report-ranking-message">Package tables are not installed yet.</p>'
+      : packages.length
+        ? `<ol class="report-ranking-list">${packages.map((item, index) => `<li><span class="report-rank">${index + 1}</span><span class="report-rank-name">${h(item.name)} <small>${h(item.status)} · ${h(item.matchingTests)} matching test${item.matchingTests === 1 ? "" : "s"}</small></span><strong>${h(item.requestMatches)} matches</strong></li>`).join("")}</ol>`
+        : '<p class="report-ranking-message">No configured package contains a test requested in this period.</p>';
+    return `<div class="report-ranking-grid"><section><h4>Most requested tests</h4>${testList}</section><section><h4>Packages to consider offering</h4>${packageList}</section></div><p class="report-ranking-note">Counts use non-cancelled requests created from ${h(ranking.data.from)} through ${h(ranking.data.to)}. Package matches add the request counts of included tests; they are not package sales or a demand forecast.</p>`;
+  }
+
+  function reportRankingSection() {
+    const ranking = reportRankingState();
+    return `<section class="report-ranking" aria-labelledby="report-ranking-title"><div class="report-ranking-head"><div><h3 id="report-ranking-title">Request ranking</h3><p>See which tests were requested most often and which configured packages contain them.</p></div><div class="report-ranking-dates"><label>From<input type="date" value="${h(ranking.from)}" data-ranking-from></label><label>To<input type="date" value="${h(ranking.to)}" data-ranking-to></label></div></div><div data-report-ranking-results aria-live="polite">${reportRankingResults()}</div></section>`;
+  }
+
+  async function loadReportRanking() {
+    const ranking = reportRankingState();
+    const key = `${ranking.from}|${ranking.to}`;
+    if (ranking.loadedKey === key || ranking.pendingKey === key) return;
+    if (!ranking.from || !ranking.to || ranking.from > ranking.to) {
+      ranking.error = 'Choose a From date on or before the To date.';
+      ranking.data = null;
+      ranking.pendingKey = '';
+      const target = $('[data-report-ranking-results]');
+      if (target) target.innerHTML = reportRankingResults();
+      return;
+    }
+    ranking.pendingKey = key;
+    ranking.error = '';
+    const target = $('[data-report-ranking-results]');
+    if (target) target.innerHTML = reportRankingResults();
+    try {
+      const data = await api('report_test_ranking', { from: ranking.from, to: ranking.to });
+      if (`${ranking.from}|${ranking.to}` !== key) return;
+      ranking.data = data;
+      ranking.loadedKey = key;
+    } catch (error) {
+      if (`${ranking.from}|${ranking.to}` !== key) return;
+      ranking.error = error.message || 'Request rankings could not be loaded.';
+      ranking.data = null;
+    } finally {
+      if (ranking.pendingKey === key) ranking.pendingKey = '';
+      if (state.page === 'reports' && new URLSearchParams(location.search).get('report') === 'overview') {
+        const currentTarget = $('[data-report-ranking-results]');
+        if (currentTarget) currentTarget.innerHTML = reportRankingResults();
+      }
+    }
+  }
+
   function renderReports() {
     const facilityRows = Object.entries(state.data.reports.ordersByFacility || {}).map(([facility, count]) => ({ cells: [h(facility), h(count), `${Math.round((count / Math.max(1, state.data.orders.length)) * 100)}%`], goPage: "facilities" }));
-    const testRows = Object.entries(state.data.reports.topTests || {}).map(([test, count]) => ({ cells: [h(test), h(count), badge(count > 1 ? "Active" : "Pending")], goPage: "tests" }));
     const requestedView = new URLSearchParams(location.search).get("report");
     const activeView = reportViews.some(([key]) => key === requestedView) ? requestedView : "trends";
     const navigation = `<nav class="report-navigation" aria-label="Statistics reports">${reportViews.map(([key, label]) => `<button type="button" data-report-view="${key}" aria-current="${key === activeView ? 'page' : 'false'}">${h(label)}</button>`).join("")}</nav>`;
-    const reportBody = activeView === "trends" ? trendAnalysisSection() : activeView === "diagnostic" ? diagnosticAnalysisSection() : activeView === "utilization" ? utilizationAnalyticsSection() : activeView === "forecast" ? forecastingAnalysisSection() : `<div class="report-overview"><h2>Activity Summary</h2><p>Current request and result status across the clinic.</p><div class="stats-grid stats-eight">${dashboardStats()}</div><div class="charts-pair">${donutCard("Requests by Status", state.data.reports.ordersByStatus, "Requests")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div><div class="dashboard-grid">${filteredTable(["Facility", "Requests", "Share"], facilityRows, "Requests per facility", "Search facility")}${filteredTable(["Requested Test", "Count", "Status"], testRows, "Most requested tests", "Search laboratory test", [["All statuses", ["Active", "Pending"]]])}</div></div>`;
+    const reportBody = activeView === "trends" ? trendAnalysisSection() : activeView === "diagnostic" ? diagnosticAnalysisSection() : activeView === "utilization" ? utilizationAnalyticsSection() : activeView === "forecast" ? forecastingAnalysisSection() : `<div class="report-overview"><h2>Activity Summary</h2><p>Current request and result status across the clinic.</p><div class="stats-grid stats-eight">${dashboardStats()}</div><div class="charts-pair">${donutCard("Requests by Status", state.data.reports.ordersByStatus, "Requests")}${donutCard("Results by Status", state.data.reports.resultsByStatus, "Results")}</div><div class="dashboard-grid">${filteredTable(["Facility", "Requests", "Share"], facilityRows, "Requests per facility", "Search facility")}</div>${reportRankingSection()}</div>`;
     return `<div class="reports-workspace"><div class="reports-toolbar">${navigation}<button class="btn btn-secondary report-export" type="button" data-print-report>${icon("download")} Print / Save PDF</button></div><div id="report-view">${reportBody}</div></div>`;
   }
 
@@ -2012,6 +2082,7 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
     closeSidebar();
     applyPageFilters();
+    if (role === "Admin" && page === "reports" && new URLSearchParams(location.search).get("report") === "overview") loadReportRanking();
     if (diagnosticAiTimer) clearTimeout(diagnosticAiTimer);
     if (role === "Admin" && page === "reports" && new URLSearchParams(location.search).get("report") === "diagnostic") {
       diagnosticAiTimer = setTimeout(() => {
@@ -2124,7 +2195,7 @@
   }
 
   function testForm(test = {}) {
-    return `<form data-form="test"><input type="hidden" name="id" value="${h(test.id || "")}"><div class="form-grid">${field("Code", "code", test.code || "")}${field("Name", "name", test.name || "")}${field("Category", "category", test.category || "")}${field("Sample Type", "sampleType", test.sampleType || "")}${field("Turnaround Time", "turnaroundTime", test.turnaroundTime || "")}${field("Price", "price", test.price || "0", "number", 'step="0.01"')}${field("Reference Range", "referenceRange", test.referenceRange || "")}${field("Instructions", "instructions", test.instructions || "", "textarea")}<div class="form-field full"><label>Status</label>${select("status", ["Active", "Inactive"], test.status || "Active")}</div></div><section class="validation-rule-editor"><h3>Approved validation rules</h3><p>Configure rules for the exact parameters in this test. Choose whether each reference boundary is inclusive. Leave a critical limit blank only when it does not apply. Record the approved source and patient applicability. Unconfigured tests cannot pass validation.</p><div data-validation-rules>${(test.validationRules || []).map(validationRuleEditor).join("")}</div><button type="button" class="btn btn-secondary" data-add-validation-rule>Add test component rule</button></section><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Save Test</button></div></form>`;
+    return `<form data-form="test"><input type="hidden" name="id" value="${h(test.id || "")}"><div class="form-grid">${field("Code", "code", test.code || "")}${field("Name", "name", test.name || "")}${field("Category", "category", test.category || "")}${field("Sample Type", "sampleType", test.sampleType || "")}${field("Turnaround Time", "turnaroundTime", test.turnaroundTime || "")}${field("Price", "price", test.price || "0", "number", 'step="0.01"')}${field("Reference Range", "referenceRange", test.referenceRange || "")}${field("Instructions", "instructions", test.instructions || "", "textarea")}<div class="form-field full"><label>Status</label>${select("status", ["Active", "Inactive"], test.status || "Active")}</div></div><section class="validation-rule-editor"><h3>Approved validation rules</h3><p>Configure rules for each measured component, such as WBC, hemoglobin, and platelets in a CBC. Do not use the panel title as a component. Mark the components required for a complete report, and record the approved source and applicable reference range for each.</p><div data-validation-rules>${(test.validationRules || []).map(validationRuleEditor).join("")}</div><button type="button" class="btn btn-secondary" data-add-validation-rule>Add test component rule</button></section><div class="form-actions"><button class="btn btn-secondary" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" type="submit">Save Test</button></div></form>`;
   }
 
   function facilityDetails(facility) {
@@ -2980,6 +3051,14 @@
       $$('[data-maintenance-options]', form).forEach((group) => {
         group.hidden = group.dataset.maintenanceOptions !== event.target.value;
       });
+      return;
+    }
+    if (event.target.matches('[data-ranking-from], [data-ranking-to]')) {
+      const ranking = reportRankingState();
+      if (event.target.matches('[data-ranking-from]')) ranking.from = event.target.value;
+      else ranking.to = event.target.value;
+      ranking.loadedKey = '';
+      loadReportRanking();
       return;
     }
     if (event.target.matches("[data-utilization-anchor], [data-utilization-from], [data-utilization-to]")) {

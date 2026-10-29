@@ -1297,6 +1297,70 @@ function reports_summary($orders, $results)
     ];
 }
 
+function report_test_ranking($pdo, $from, $to)
+{
+    $timezone = new DateTimeZone(APP_TIMEZONE);
+    $start = DateTimeImmutable::createFromFormat('!Y-m-d', (string) $from, $timezone);
+    $end = DateTimeImmutable::createFromFormat('!Y-m-d', (string) $to, $timezone);
+    if (!$start || !$end || $start->format('Y-m-d') !== $from || $end->format('Y-m-d') !== $to || $start > $end) {
+        respond(false, 'Select a valid From and To date.', [], 422);
+    }
+    if ($start->diff($end)->days > 366) respond(false, 'Select a date range of up to one year.', [], 422);
+
+    $statement = $pdo->prepare("SELECT loi.test_definition_id AS test_id,
+                                      COALESCE(td.name, loi.test_name) AS test_name,
+                                      COUNT(*) AS request_count
+                               FROM lab_orders lo
+                               JOIN lab_order_items loi ON loi.order_id = lo.id
+                               LEFT JOIN test_definitions td ON td.id = loi.test_definition_id
+                               WHERE lo.created_at >= ? AND lo.created_at < ? AND lo.status <> 'Cancelled'
+                               GROUP BY loi.test_definition_id, COALESCE(td.name, loi.test_name)
+                               ORDER BY request_count DESC, test_name ASC");
+    $statement->execute([$start->format('Y-m-d 00:00:00'), $end->modify('+1 day')->format('Y-m-d 00:00:00')]);
+    $tests = [];
+    $countsById = [];
+    foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $count = (int) $row['request_count'];
+        $testId = $row['test_id'] === null ? null : (int) $row['test_id'];
+        $tests[] = ['testId' => $testId, 'name' => $row['test_name'], 'requests' => $count];
+        if ($testId !== null) $countsById[$testId] = $count;
+    }
+
+    $packages = [];
+    $packagesAvailable = true;
+    try {
+        $packageRows = $pdo->query('SELECT p.id, p.name, p.status, pt.test_id
+                                    FROM lab_packages p
+                                    JOIN lab_package_tests pt ON pt.package_id = p.id
+                                    ORDER BY p.id')->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($packageRows as $row) {
+            $id = (int) $row['id'];
+            if (!isset($packages[$id])) $packages[$id] = [
+                'id' => $id, 'name' => $row['name'], 'status' => $row['status'],
+                'matchingTests' => 0, 'requestMatches' => 0,
+            ];
+            $count = $countsById[(int) $row['test_id']] ?? 0;
+            if ($count > 0) {
+                $packages[$id]['matchingTests']++;
+                $packages[$id]['requestMatches'] += $count;
+            }
+        }
+    } catch (PDOException $error) {
+        if (!in_array((string) $error->getCode(), ['42P01', '42S02'], true)) throw $error;
+        $packagesAvailable = false;
+    }
+    $packages = array_values(array_filter($packages, fn($package) => $package['requestMatches'] > 0));
+    usort($packages, fn($a, $b) => ($b['requestMatches'] <=> $a['requestMatches'])
+        ?: ($b['matchingTests'] <=> $a['matchingTests']) ?: strcmp($a['name'], $b['name']));
+
+    return [
+        'from' => $start->format('Y-m-d'), 'to' => $end->format('Y-m-d'),
+        'tests' => array_slice($tests, 0, 10),
+        'packages' => array_slice($packages, 0, 5),
+        'packagesAvailable' => $packagesAvailable,
+    ];
+}
+
 function app_data($pdo, $user, $page = 'dashboard', $collections = null)
 {
     $page = clinic_maintenance_page_key($page ?: 'dashboard');
@@ -1859,6 +1923,11 @@ function save_test($pdo, $data, $actor)
     clinic_validation_schema($pdo);
     try { $rules = clinic_validate_rule_config($data['validationRules'] ?? []); }
     catch (InvalidArgumentException $error) { respond(false, $error->getMessage(), [], 422); }
+    foreach ($rules as $rule) {
+        if (clinic_is_panel_heading_rule($values[1], $rules, $rule['parameter'])) {
+            respond(false, 'Use measurable component names in validation rules. The panel title is not a result value.', [], 422);
+        }
+    }
     $pdo->beginTransaction();
     if ($id > 0) {
         $stmt = $pdo->prepare('UPDATE test_definitions SET code=?, name=?, category=?, sample_type=?, turnaround_time=?, price=?, reference_range=?, instructions=?, status=? WHERE id=?');
@@ -3047,6 +3116,11 @@ try {
         $orders = fetch_orders($pdo, $user);
         $results = fetch_results($pdo, $user);
         respond(true, 'Reports loaded.', ['reports' => reports_summary($orders, $results)]);
+    }
+
+    if ($action === 'report_test_ranking') {
+        require_auth($pdo, ['Admin']);
+        respond(true, 'Request ranking loaded.', report_test_ranking($pdo, $data['from'] ?? '', $data['to'] ?? ''));
     }
 
     if (in_array($action, ['admin_dashboard', 'doctor_dashboard', 'lab_dashboard', 'patient_dashboard', 'lab_queue'], true)) {

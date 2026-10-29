@@ -30,6 +30,30 @@
 .reports-workspace #report-view { padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: white; }
 .reports-workspace .trend-analysis-head h2, .report-overview h2 { margin: 0 0 8px; font-size: 24px; letter-spacing: -.02em; }
 .reports-workspace .trend-analysis-head p, .report-overview > p { max-width: 72ch; line-height: 1.6; }
+.report-overview > .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
+.report-ranking { margin-top: 30px; padding-top: 28px; border-top: 1px solid #d7e5e7; }
+.report-ranking-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+.report-ranking-head h3 { margin: 0 0 5px; color: #173d4d; font-size: 21px; }
+.report-ranking-head p { margin: 0; color: #526b76; font-size: 14px; line-height: 1.5; }
+.report-ranking-dates { display: flex; gap: 12px; }
+.report-ranking-dates label { display: grid; gap: 5px; color: #365563; font-size: 12px; font-weight: 600; }
+.report-ranking-dates input { min-width: 0; min-height: 44px; padding: 9px 11px; border: 1px solid #c8d8db; border-radius: 7px; background: #fff; color: #173d4d; font: inherit; font-size: 14px; }
+.report-ranking-dates input:focus-visible { outline: 3px solid #087f78; outline-offset: 2px; }
+.report-ranking-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+.report-ranking-grid section { min-width: 0; }
+.report-ranking-grid h4 { margin: 0 0 10px; color: #173d4d; font-size: 16px; }
+.report-ranking-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid #d7e5e7; }
+.report-ranking-list li { display: flex; align-items: center; gap: 12px; min-height: 55px; padding: 10px 0; border-bottom: 1px solid #d7e5e7; font-size: 14px; }
+.report-rank { flex: 0 0 22px; color: #087f78; font-weight: 700; font-variant-numeric: tabular-nums; }
+.report-rank-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.report-rank-name small { display: block; margin-top: 2px; color: #526b76; font-size: 12px; }
+.report-ranking-list strong { flex: 0 0 auto; color: #173d4d; font-variant-numeric: tabular-nums; }
+.report-ranking-message { margin: 12px 0; color: #526b76; font-size: 14px; }
+.report-ranking-error { color: #ad3645; }
+.report-ranking-note { margin: 17px 0 0; color: #526b76; font-size: 12px; line-height: 1.5; }
+@media (max-width: 850px) { .report-ranking-head { align-items: start; flex-direction: column; } .report-ranking-grid { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .report-ranking-dates { width: 100%; } .report-ranking-dates label { flex: 1; min-width: 0; } .report-ranking-dates input { width: 100%; } }
+@media (max-width: 390px) { .report-ranking-dates { flex-direction: column; } }
 .reports-workspace .trend-filter-grid { padding: 18px 0; border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: white; border-radius: 0; }
 .reports-workspace .trend-analysis-grid { gap: 32px; }
 .reports-workspace .trend-panel { padding: 22px 0 0; background: white; border: 0; border-top: 1px solid var(--line); border-radius: 0; }

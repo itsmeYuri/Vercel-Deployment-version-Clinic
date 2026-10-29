@@ -47,6 +47,16 @@
 .packages-page .existing-package[open] .disclosure-icon { transform: rotate(180deg); }
 .packages-page .existing-package[open] summary { border-bottom: 1px solid var(--line); border-radius: 14px 14px 0 0; }
 .packages-page .existing-package .package-form { padding: 24px; }
+/* One action row: destructive action left, primary save action right. */
+.packages-page .package-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 24px; padding: 20px 0 24px; border-top: 1px solid var(--line); }
+.packages-page .package-delete-form { margin: 0; padding: 0; }
+.packages-page .package-actions .save-button { min-width: 150px; font-size: 14px; }
+.packages-page .delete-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 12px; border: 1px solid transparent; border-radius: 10px; background: #fff0f2; color: #a12939; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: background .16s ease, border-color .16s ease; }
+.packages-page .delete-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.packages-page .delete-button:hover { background: #fbe0e5; border-color: #e7aab4; }
+.packages-page .delete-button:active { background: #f5d2d9; }
+.packages-page .delete-button:focus-visible { outline: 3px solid #a12939; outline-offset: 3px; }
+.packages-page .delete-button[aria-disabled="true"] { opacity: .6; cursor: progress; }
 .packages-page .empty-packages { color: var(--muted); padding: 28px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
 @media(max-width: 850px) {
 .packages-page .package-admin-layout { grid-template-columns: 1fr; }
@@ -56,6 +66,8 @@
 .packages-page .form-pair { grid-template-columns: 1fr; }
 .packages-page .existing-package summary { padding: 18px; gap: 10px; }
 .packages-page .existing-package .package-form { padding: 20px; }
+.packages-page .package-actions { margin-inline: 20px; flex-wrap: wrap; gap: 12px; }
+.packages-page .package-actions .save-button { min-width: 0; flex: 1; }
 }
 @media(prefers-reduced-motion: reduce) {
-.packages-page .save-button { transition: none; } }
+.packages-page .save-button, .packages-page .delete-button { transition: none; } }

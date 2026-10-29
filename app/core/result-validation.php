@@ -30,7 +30,7 @@ function clinic_validate_rule_config($rules)
             if (strlen($r[$key]) > ($key === 'source' ? 1000 : ($key === 'unit' ? 60 : 120))) throw new InvalidArgumentException('Validation rule text is too long.');
         }
         if (!$r['parameter'] || !$r['source']) throw new InvalidArgumentException('Every rule requires a parameter and its approved source/basis.');
-        $name = strtolower($r['parameter']);
+        $name = clinic_parameter_key($r['parameter']);
         if (isset($names[$name])) throw new InvalidArgumentException('Use one rule per parameter in each test.');
         $names[$name] = true;
         $r['type'] = $rule['type'] ?? 'numeric';
@@ -102,10 +102,10 @@ function clinic_validate_unconfigured_value($value)
 function clinic_evaluate_values($values, $rules)
 {
     $rows = []; $issues = []; $seen = []; $byName = [];
-    foreach ($rules as $rule) $byName[strtolower($rule['parameter'])][] = $rule;
+    foreach ($rules as $rule) $byName[clinic_parameter_key($rule['parameter'])][] = $rule;
     if (!$values) $issues[] = 'At least one result parameter is required.';
     foreach ($values as $value) {
-        $name = strtolower(trim($value['parameter']));
+        $name = clinic_parameter_key($value['parameter']);
         $reasons = []; $flag = 'Not Evaluated';
         if (isset($seen[$name])) $reasons[] = 'Duplicate parameter.';
         $seen[$name] = true;
@@ -146,7 +146,7 @@ function clinic_evaluate_values($values, $rules)
         $value['validationRule'] = $rule;
         $rows[] = $value;
     }
-    foreach ($rules as $rule) if ($rule['required'] && !isset($seen[strtolower($rule['parameter'])])) $issues[] = 'Missing required parameter: ' . $rule['parameter'] . '.';
+    foreach ($rules as $rule) if ($rule['required'] && !isset($seen[clinic_parameter_key($rule['parameter'])])) $issues[] = 'Missing required parameter: ' . $rule['parameter'] . '.';
     return ['valid' => !$issues && !array_filter($rows, fn($v) => $v['flag'] === 'Invalid Entry'), 'issues' => $issues, 'values' => $rows];
 }
 
@@ -182,10 +182,21 @@ function clinic_order_validation($pdo, $orderId, $values)
     $rules = []; $missing = [];
     foreach ($tests as $test) {
         $testRules = json_decode($test['rules_json'] ?? '[]', true) ?: [];
-        if (!$testRules) $missing[] = 'Administrator must configure approved rules for ' . $test['test_name'] . '.';
-        $rules = array_merge($rules, $testRules);
+        // A panel title describes the ordered test, not a measurable result row.
+        $componentRules = array_values(array_filter($testRules, fn($rule) => !clinic_is_panel_heading_rule($test['test_name'], $testRules, $rule['parameter'] ?? '')));
+        if (!$componentRules) $missing[] = 'Administrator must configure approved component rules for ' . $test['test_name'] . '.';
+        $rules = array_merge($rules, $componentRules);
     }
     $report = clinic_evaluate_values($values, $rules);
+    $seenParameters = array_fill_keys(array_map(fn($value) => clinic_parameter_key($value['parameter'] ?? ''), $values), true);
+    foreach ($tests as $test) {
+        foreach (clinic_panel_required_parameters($test['test_name']) as $component) {
+            if (isset($seenParameters[clinic_parameter_key($component)])) continue;
+            $issue = 'Missing required parameter: ' . $component . '.';
+            if (!in_array($issue, $report['issues'], true)) $report['issues'][] = $issue;
+            $report['valid'] = false;
+        }
+    }
     $expected = [];
     foreach ($rules as $rule) $expected[clinic_parameter_key($rule['parameter'])] = true;
     foreach ($tests as $test) {
@@ -210,8 +221,14 @@ function clinic_order_validation($pdo, $orderId, $values)
 
 function clinic_parameter_key($name)
 {
-    $key = preg_replace('/[^a-z0-9]/', '', strtolower((string) $name));
+    $label = preg_replace('/\s*\([a-z0-9]{1,8}\)\s*$/i', '', trim((string) $name));
+    $key = preg_replace('/[^a-z0-9]/', '', strtolower($label));
     foreach ([
+        'wbc' => ['wbc', 'wbccount', 'whitebloodcellcount', 'whitebloodcells', 'leukocytes'],
+        'rbc' => ['rbc', 'rbccount', 'redbloodcellcount', 'redbloodcells', 'erythrocytes'],
+        'hemoglobin' => ['hemoglobin', 'haemoglobin', 'hgb', 'hb'],
+        'hematocrit' => ['hematocrit', 'haematocrit', 'hct'],
+        'platelets' => ['platelets', 'platelet', 'plateletcount', 'plt'],
         'hba1c' => ['hemoglobina1c', 'hba1c', 'a1c'],
         'crp' => ['creactiveprotein', 'crp'],
         'glucose' => ['fastingglucose', 'fastingbloodsugar', 'glucose', 'fbs'],
@@ -219,6 +236,10 @@ function clinic_parameter_key($name)
         'esr' => ['esr', 'erythrocytesedimentationrate'],
         'ldl' => ['ldl', 'ldlcholesterol'],
         'hdl' => ['hdl', 'hdlcholesterol'],
+        'ast' => ['ast', 'astsgot', 'sgot', 'aspartateaminotransferase'],
+        'tsh' => ['tsh', 'thyroidstimulatinghormone', 'thyrotropin'],
+        'ft4' => ['ft4', 'freet4', 'freethyroxine'],
+        'ft3' => ['ft3', 'freet3', 'freetriiodothyronine'],
     ] as $canonical => $aliases) if (in_array($key, $aliases, true)) return $canonical;
     return $key;
 }
@@ -228,14 +249,53 @@ function clinic_test_parameter_keys($name)
     $test = clinic_parameter_key($name);
     $test = preg_replace('/^demo/', '', $test);
     if (str_contains($test, 'completebloodcount') || $test === 'cbc') $names = ['WBC','RBC','Hemoglobin','Hematocrit','Platelets','MCV','MCH','MCHC','RDW','Neutrophils','Lymphocytes','Monocytes','Eosinophils','Basophils'];
-    elseif (str_contains($test, 'urinalysis') || $test === 'ua') $names = ['Urine pH','Specific Gravity'];
-    elseif (str_contains($test, 'lipidprofile') || $test === 'lipid') $names = ['Total Cholesterol','LDL','HDL','Triglycerides'];
-    elseif (str_contains($test, 'metabolicpanel') || $test === 'cmp') $names = ['Glucose','Creatinine','BUN','Sodium','Potassium','Chloride','Calcium','ALT','AST/SGOT'];
+    elseif (str_contains($test, 'urinalysis') || $test === 'ua') $names = ['Urine pH','Specific Gravity','Protein','Urine Glucose','Ketones','Blood','Leukocyte Esterase','Nitrite','Bilirubin','Urobilinogen'];
+    elseif (str_contains($test, 'lipidprofile') || $test === 'lipid' || $test === 'lipidpanel') $names = ['Total Cholesterol','LDL','HDL','Triglycerides','Non-HDL Cholesterol','VLDL'];
+    elseif (str_contains($test, 'metabolicpanel') || $test === 'cmp') $names = ['Glucose','Creatinine','BUN','Sodium','Potassium','Chloride','Calcium','ALT','AST/SGOT','Albumin','Total Protein','Bilirubin','CO2','Alkaline Phosphatase'];
+    elseif (str_contains($test, 'thyroidpanel') || str_contains($test, 'thyroidfunctionpanel')) $names = ['TSH','FT4','FT3','T4','T3'];
+    elseif (str_contains($test, 'liverfunctionpanel') || str_contains($test, 'hepaticfunctionpanel')) $names = ['ALT','AST/SGOT','Alkaline Phosphatase','Bilirubin','Direct Bilirubin','Albumin','Total Protein','GGT'];
+    elseif (str_contains($test, 'renalfunctionpanel') || str_contains($test, 'kidneyfunctionpanel')) $names = ['Creatinine','BUN','Uric Acid','eGFR','Sodium','Potassium','Chloride'];
+    elseif (str_contains($test, 'electrolytepanel')) $names = ['Sodium','Potassium','Chloride','CO2','Bicarbonate'];
     elseif (in_array($test, ['crp','hba1c','glucose','alt','esr'], true)) $names = [$test];
     elseif (str_contains($test, 'creatinine')) $names = ['Creatinine'];
     elseif (str_contains($test, 'thyroidstimulatinghormone') || $test === 'tsh') $names = ['TSH'];
     else return [];
     return array_map('clinic_parameter_key', $names);
+}
+
+function clinic_panel_required_parameters($name)
+{
+    $test = preg_replace('/^demo/', '', clinic_parameter_key($name));
+    // The core CBC rows come from the laboratory's report layout. Differential
+    // counts and RDW vary by panel, so admins configure those as required when
+    // their own laboratory includes them.
+    if (str_contains($test, 'completebloodcount') || $test === 'cbc') {
+        return ['Hemoglobin', 'Hematocrit', 'RBC', 'WBC', 'Platelets', 'MCV', 'MCH', 'MCHC'];
+    }
+    return [];
+}
+
+function clinic_is_panel_heading_rule($testName, $rules, $parameter)
+{
+    $test = clinic_parameter_key($testName);
+    $test = preg_replace('/^demo/', '', $test);
+    $parameter = clinic_parameter_key($parameter);
+    $panelAliases = [
+        'cbc' => ['cbc', 'completebloodcount', 'completebloodcountwithdifferential'],
+        'urinalysis' => ['ua', 'urinalysis', 'routineurinalysis'],
+        'lipid' => ['lipid', 'lipidprofile', 'lipidpanel'],
+        'cmp' => ['cmp', 'comprehensivemetabolicpanel'],
+        'thyroid' => ['thyroidpanel', 'thyroidfunctionpanel'],
+        'liver' => ['liverfunctionpanel', 'hepaticfunctionpanel'],
+        'renal' => ['renalfunctionpanel', 'kidneyfunctionpanel'],
+        'electrolytes' => ['electrolytepanel'],
+    ];
+    foreach ($panelAliases as $aliases) {
+        if (in_array($test, $aliases, true) && in_array($parameter, $aliases, true)) return true;
+    }
+    // Admin-defined panels can have arbitrary names. With multiple rules, a
+    // rule named exactly like the test is its heading rather than a component.
+    return count($rules) > 1 && $parameter === $test;
 }
 
 function clinic_median($numbers)

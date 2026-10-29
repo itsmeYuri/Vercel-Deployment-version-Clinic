@@ -53,7 +53,17 @@ $name = clinic_app_name();
     <section class="packages-section<?= $packages ? '' : ' is-empty' ?>" id="packages" aria-labelledby="packages-title">
       <div class="section-heading"><h2 id="packages-title">Laboratory packages</h2><p>See what each package includes and its published price. Ask the clinic about availability and preparation instructions.</p></div>
       <?php if ($packages): ?><div class="package-list">
-        <?php foreach ($packages as $package): ?><article class="package-row"><div class="package-main"><h3><?= e($package['name']) ?></h3><p><?= e($package['description']) ?></p></div><div class="package-tests"><h4>Included tests</h4><ul><?php foreach ($package['tests'] as $test): ?><li><?= e($test['name']) ?></li><?php endforeach; ?></ul></div><div class="package-purchase"><span>Package price</span><strong>PHP <?= e(number_format($package['price'], 2)) ?></strong></div></article><?php endforeach; ?>
+        <?php foreach ($packages as $package): ?><details class="package-row">
+          <summary class="package-summary">
+            <span class="package-main"><span class="package-name"><?= e($package['name']) ?></span><span class="package-count"><?= count($package['tests']) ?> included test<?= count($package['tests']) === 1 ? '' : 's' ?></span></span>
+            <span class="package-purchase"><span>Package price</span><strong>PHP <?= e(number_format($package['price'], 2)) ?></strong></span>
+            <svg class="package-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="package-details">
+            <?php if (trim((string) $package['description']) !== ''): ?><p class="package-description"><?= e($package['description']) ?></p><?php endif; ?>
+            <div class="package-tests"><h3>Included tests</h3><ul><?php foreach ($package['tests'] as $test): ?><li><?= e($test['name']) ?></li><?php endforeach; ?></ul></div>
+          </div>
+        </details><?php endforeach; ?>
       </div><?php else: ?><div class="package-empty"><div><h3>Packages will appear here when published.</h3><p><?= $catalogueUnavailable ? 'Package details are temporarily unavailable. Please check back later.' : 'The clinic has not published any packages yet.' ?></p></div></div><?php endif; ?>
     </section>
   </main>
