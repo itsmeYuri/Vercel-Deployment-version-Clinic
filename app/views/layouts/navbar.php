@@ -10,13 +10,6 @@ $notificationCount = $roleConfig['notificationCount'] ?? 0;
   </div>
 
   <div class="topbar-actions">
-    <label class="global-search">
-      <span class="sr-only">Global search</span>
-      <i data-icon="search"></i>
-      <input id="global-search" type="search" placeholder="<?= e($roleConfig['searchPlaceholder'] ?? 'Search records...') ?>" autocomplete="off" />
-      <kbd>Ctrl K</kbd>
-    </label>
-
     <a class="icon-button notification-button" href="notifications.php" aria-label="View <?= e($notificationCount) ?> unread notifications" data-go-page="notifications" data-icon-button="bell">
       <span class="notification-count"<?= $notificationCount > 0 ? '' : ' hidden' ?>><?= e($notificationCount) ?></span>
     </a>

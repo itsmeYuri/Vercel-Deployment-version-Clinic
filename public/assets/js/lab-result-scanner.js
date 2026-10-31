@@ -153,7 +153,7 @@
     if (/^(?:parameter|value|unit|reference|range|flag|result values?)\b/i.test(line)) return null;
     const qualitativeMatch = line.match(/^([A-Za-z][A-Za-z0-9 %()/.,+-]{1,48}?)\s+(non[- ]?reactive|not detected|positive|negative|reactive|detected|trace|present|absent)(?:\s+.*)?$/i);
     if (qualitativeMatch) {
-      const parameter = qualitativeMatch[1].trim();
+      const parameter = canonicalParameterName(qualitativeMatch[1]);
       if (/^(?:patient|age|date|lab|sample|department|status|requested|no\s+.+\s+values?)\b/i.test(parameter)) return null;
       const value = normalizeQualitative(qualitativeMatch[2]);
       return {
@@ -167,7 +167,7 @@
     }
     const match = line.match(/^([A-Za-z][A-Za-z0-9 %()/.,+-]{1,48}?)\s+([<>]?\s*[-+]?(?:\d+(?:[.,]\d+)?|[.,]\d+))\s+(.+)$/);
     if (!match) return null;
-    const parameter = match[1].trim();
+    const parameter = canonicalParameterName(match[1]);
     if (/^(?:patient|age|date|lab|sample|department|status|requested)\b/i.test(parameter)) return null;
     const value = cleanNumber(match[2]);
     const remainder = match[3].trim();
@@ -241,7 +241,10 @@
   }
 
   function parameterKey(value) {
-    const key = String(value || "").toLowerCase().replace(/\s*\([a-z0-9]{1,8}\)\s*$/, "").replace(/[^a-z0-9]/g, "");
+    // Synthetic/demo catalogues prefix test labels with "Demo". That prefix is
+    // not part of the analyte identity and must not make a matching report look
+    // like the wrong laboratory test.
+    const key = String(value || "").toLowerCase().replace(/\s*\([a-z0-9]{1,8}\)\s*$/, "").replace(/[^a-z0-9]/g, "").replace(/^demo/, "");
     if (["wbc", "wbccount", "whitebloodcellcount", "whitebloodcells", "leukocytes"].includes(key)) return "wbc";
     if (["rbc", "rbccount", "redbloodcellcount", "redbloodcells", "erythrocytes"].includes(key)) return "rbc";
     if (["hemoglobin", "haemoglobin", "hgb", "hb"].includes(key)) return "hemoglobin";
@@ -259,6 +262,14 @@
     if (["ft4", "freet4", "freethyroxine"].includes(key)) return "ft4";
     if (["ft3", "freet3", "freetriiodothyronine"].includes(key)) return "ft3";
     return key;
+  }
+
+  function canonicalParameterName(value) {
+    const label = String(value || "").trim().replace(/^demo\s+/i, "");
+    const key = parameterKey(label);
+    const analyte = analytes.find((item) => parameterKey(item.name) === key
+      || item.aliases.some((alias) => parameterKey(alias) === key));
+    return analyte?.name || label;
   }
 
   function expectedParameters(testNames, definitions = []) {
@@ -318,6 +329,17 @@
     return { reasons, unexpected, patientMismatch };
   }
 
+  function reviewScannedValues(parsed, order, definitions = []) {
+    const mismatch = scanMismatch(parsed, order, definitions);
+    const unexpected = new Set((mismatch.unexpected || []).map(parameterKey));
+    return (parsed.values || []).map((value) => {
+      const warnings = [...(value.reviewWarnings || [])];
+      if (!order || mismatch.patientMismatch) warnings.push(...mismatch.reasons.filter((reason) => !reason.startsWith("Unexpected test components:")));
+      if (unexpected.has(parameterKey(value.parameter))) warnings.push(`${value.parameter} does not match the selected request. Check the test component and source report.`);
+      return { ...value, reviewWarnings: warnings };
+    });
+  }
+
   function imageQuality(imageData) {
     const { width, height, data } = imageData;
     if (!width || !height || !data?.length) return { sharpness: 0, contrast: 0, lowResolution: true, blurry: true, lowContrast: true };
@@ -347,5 +369,5 @@
     return complete * 30 + rows.length * 12 + Math.max(0, Math.min(100, Number(confidence) || 0)) * .15;
   }
 
-  return { parse, inferredFlag, imageQuality, recognitionScore, scanMismatch };
+  return { parse, inferredFlag, imageQuality, recognitionScore, scanMismatch, reviewScannedValues };
 }));

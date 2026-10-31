@@ -223,6 +223,9 @@ function clinic_parameter_key($name)
 {
     $label = preg_replace('/\s*\([a-z0-9]{1,8}\)\s*$/i', '', trim((string) $name));
     $key = preg_replace('/[^a-z0-9]/', '', strtolower($label));
+    // Demo data uses a display prefix (for example "Demo Hemoglobin A1c").
+    // It must validate as the underlying analyte rather than as a different test.
+    $key = preg_replace('/^demo/', '', $key);
     foreach ([
         'wbc' => ['wbc', 'wbccount', 'whitebloodcellcount', 'whitebloodcells', 'leukocytes'],
         'rbc' => ['rbc', 'rbccount', 'redbloodcellcount', 'redbloodcells', 'erythrocytes'],

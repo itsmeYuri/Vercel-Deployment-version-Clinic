@@ -417,8 +417,8 @@
   function resultValueInputRow(item = {}, disabled = "") {
     const warnings = item.reviewWarnings || [];
     const lowConfidence = Number(item.confidence ?? 100) < 75 || warnings.length > 0;
-    const reviewNote = warnings.length ? `<small class="ocr-review-note">${h(warnings.join(" "))}</small>` : "";
-    return `<tr class="${lowConfidence ? "ocr-low-confidence" : ""}" ${item.confidence ? `data-tooltip="OCR confidence: ${h(item.confidence)}%. Verify this row carefully."` : ""}><td><input name="parameter" aria-label="Test component" value="${h(item.parameter || "")}" ${disabled}>${reviewNote}</td><td><input name="value" aria-label="Result" value="${h(item.value || "")}" ${disabled}></td><td><input name="unit" aria-label="Measurement unit" value="${h(item.unit || "")}" ${disabled}></td><td><input name="referenceRange" aria-label="Reference range" value="${h(item.referenceRange || "")}" ${disabled}></td><td><input name="flag" aria-label="Flag" value="${h(item.flag || "")}" ${disabled}></td><td><button class="parameter-remove" type="button" data-remove-result-parameter aria-label="Remove test component" data-tooltip="Remove test component" ${disabled}>${icon("trash")}</button></td></tr>`;
+    const reviewNote = warnings.length ? `<small class="ocr-review-note"><strong>Needs action — manual checking required.</strong> ${h(warnings.join(" "))}</small>` : "";
+    return `<tr class="${lowConfidence ? "ocr-low-confidence" : ""}" ${item.confidence ? `data-tooltip="OCR confidence: ${h(item.confidence)}%. Verify this row carefully."` : ""}><td><input name="parameter" aria-label="Test component" value="${h(item.parameter || "")}" ${disabled}></td><td><input name="value" aria-label="Result" value="${h(item.value || "")}" ${disabled}>${reviewNote}</td><td><input name="unit" aria-label="Measurement unit" value="${h(item.unit || "")}" ${disabled}></td><td><input name="referenceRange" aria-label="Reference range" value="${h(item.referenceRange || "")}" ${disabled}></td><td><input name="flag" aria-label="Flag" value="${h(item.flag || "")}" ${disabled}></td><td><button class="parameter-remove" type="button" data-remove-result-parameter aria-label="Remove test component" data-tooltip="Remove test component" ${disabled}>${icon("trash")}</button></td></tr>`;
   }
 
   function resultValueTable(rows, disabled = "") {
@@ -697,12 +697,7 @@
       const selectedOrderId = $('select[name="orderId"]', form)?.value;
       const selectedOrder = state.data?.orders?.find((order) => String(order.id) === String(selectedOrderId));
       const mismatch = window.ClinicLabScanner?.scanMismatch(parsed, selectedOrder, state.data?.tests || []);
-      if (mismatch?.reasons?.length) {
-        const message = `Wrong scan. This report does not match the selected doctor's request. ${mismatch.reasons.join(" ")} Choose the correct report and scan again.`;
-        updateScannerStatus(form, message, null, "error");
-        await glassDialog({ title: "Wrong laboratory report", message, confirmText: "OK", danger: true });
-        return;
-      }
+      parsed.values = window.ClinicLabScanner.reviewScannedValues(parsed, selectedOrder, state.data?.tests || []);
       const confidence = Math.round(recognizedPages.reduce((sum, page) => sum + Number(page.data?.confidence || 0), 0) / Math.max(1, recognizedPages.length));
       parsed.values = parsed.values.map((value) => ({ ...value, confidence,
         reviewWarnings: [...(value.reviewWarnings || []), ...(!value.unit || !value.referenceRange ? ["Unit or reference range was not read; compare with the source."] : [])] }));
@@ -721,7 +716,8 @@
           form.querySelector(".form-actions")?.insertAdjacentHTML("beforebegin", validationReportHtml(validation));
           const missing = (validation.issues || []).filter((issue) => issue.startsWith("Missing required parameter: "));
           if (missing.length && missing.length === (validation.issues || []).length && !(validation.values || []).some((value) => value.flag === "Invalid Entry")) {
-            await glassDialog({ title: "Incomplete laboratory report", message: `The scan contains ${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"}, but ${missing.join(" ")} The detected values were kept. Add the missing values before verification or release.`, confirmText: "Review detected values" });
+            const acknowledged = await glassDialog({ title: "Incomplete laboratory report", message: `The scan contains ${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"}, but ${missing.join(" ")} The detected values have been entered below and the result remains marked incomplete. It cannot be verified or released until the missing measurements are added.`, confirmText: "OK, review values" });
+            if (acknowledged) form.dataset.incompleteScanReviewed = "true";
           }
         } catch (validationError) {
           updateScannerStatus(form, "OCR finished, but validation could not be completed. Review the values and retry before uploading.", null, "warning");
@@ -730,7 +726,7 @@
       }
       const reviewCount = parsed.values.filter((value) => value.reviewWarnings?.length).length;
       const qualityMessage = [bestQuality?.lowResolution ? "Low image resolution detected." : "", bestQuality?.blurry ? "Image appears blurry. Please upload a clearer photo if values are unclear." : "", bestQuality?.lowContrast ? "Low image contrast detected." : ""].filter(Boolean).join(" ");
-      const reviewMessage = reviewCount ? ` ${reviewCount} row(s) contain unclear fields and are highlighted for review.` : "";
+      const reviewMessage = reviewCount ? ` ${reviewCount} row(s) need action and require manual checking. ${mismatch?.reasons?.join(" ") || ""}` : "";
       updateScannerStatus(form, `${qualityMessage} ${parsed.values.length} result value${parsed.values.length === 1 ? "" : "s"} detected with ${confidence}% OCR confidence.${reviewMessage} Compare every value with the source image before uploading.`.trim(), null, confidence >= 75 && !reviewCount && !qualityMessage ? "success" : "warning");
       toast(`${parsed.values.length} laboratory values filled from the scanned image.`);
     } catch (error) {
@@ -3372,10 +3368,6 @@
         event.preventDefault();
         setPage(keyboardPage.dataset.goPage);
         return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        $("#global-search")?.focus();
       }
       if (event.key === "Escape") {
         closeDrawer();
