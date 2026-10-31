@@ -1083,13 +1083,13 @@ function fetch_results($pdo, $user)
         $where[] = 'lr.status = "Released"';
         $params[] = $user['patientId'];
     }
-    $testsAggregate = db_group_concat('test_name', 'id', ', ');
+    $testsAggregate = db_group_concat('li.test_name', 'li.id', ', ');
     $sql = 'SELECT lr.*, lo.order_number, lo.patient_id, lo.doctor_id, lo.facility_id,
                    p.patient_code, p.user_id AS patient_user_id, pu.name AS patient_name,
                    du.name AS doctor_name, f.name AS facility_name, f.address AS facility_address, f.phone AS facility_phone, uu.name AS uploaded_by_name, ru.name AS reviewed_by_name,
                    (SELECT su.name FROM result_workflow_events rwe JOIN users su ON su.id = rwe.user_id WHERE rwe.result_id = lr.id AND rwe.action = "Released" ORDER BY rwe.id DESC LIMIT 1) AS released_by_name,
                    cn.note AS clinical_note, cn.created_at AS clinical_note_created_at,
-                   nd.name AS clinical_note_doctor, oi.tests
+                   nd.name AS clinical_note_doctor, oi.tests, oi.listed_total, oi.item_count, oi.priced_count
             FROM lab_results lr
             JOIN lab_orders lo ON lo.id = lr.order_id
             JOIN patients p ON p.id = lo.patient_id
@@ -1099,8 +1099,12 @@ function fetch_results($pdo, $user)
             LEFT JOIN users ru ON ru.id = lr.reviewed_by
             JOIN facilities f ON f.id = lo.facility_id
             LEFT JOIN (
-              SELECT order_id, ' . $testsAggregate . ' AS tests
-              FROM lab_order_items GROUP BY order_id
+              SELECT li.order_id, ' . $testsAggregate . ' AS tests,
+                     SUM(td.price) AS listed_total, COUNT(*) AS item_count,
+                     COUNT(td.price) AS priced_count
+              FROM lab_order_items li
+              LEFT JOIN test_definitions td ON td.id = li.test_definition_id
+              GROUP BY li.order_id
             ) oi ON oi.order_id = lo.id
             LEFT JOIN clinical_notes cn ON cn.id = (SELECT MAX(id) FROM clinical_notes WHERE result_id = lr.id)
             LEFT JOIN users nd ON nd.id = cn.doctor_id' .
@@ -1142,6 +1146,10 @@ function fetch_results($pdo, $user)
             'facilityAddress' => $row['facility_address'],
             'facilityPhone' => $row['facility_phone'],
             'testName' => $row['tests'] ?: 'Laboratory Result',
+            // Existing requests have no charged-price snapshot. Show a total only
+            // when every linked test still has a listed price.
+            'currentListedTotal' => (int) $row['item_count'] > 0 && (int) $row['item_count'] === (int) $row['priced_count']
+                ? (float) $row['listed_total'] : null,
             'status' => $row['status'],
             'findings' => $row['findings'],
             'remarks' => $row['remarks'],
@@ -2189,6 +2197,8 @@ function download_result_details($pdo, $resultId, $actor)
     if ($valueRows === '') {
         $valueRows = '<tr><td colspan="5">No structured values recorded.</td></tr>';
     }
+    $listedTotal = $details['currentListedTotal'] === null
+        ? 'Unavailable' : 'PHP ' . number_format((float) $details['currentListedTotal'], 2);
     $filename = preg_replace('/[^A-Za-z0-9_-]+/', '-', $details['resultNumber']) . '-laboratory-result.html';
     header('Content-Type: text/html; charset=utf-8');
     header('Content-Disposition: inline; filename="' . $filename . '"');
@@ -2196,6 +2206,10 @@ function download_result_details($pdo, $resultId, $actor)
     ob_start();
     echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . $esc($details['resultNumber']) . ' Laboratory Result</title><style>body{margin:0;background:#eef4f5;color:#102f43;font:14px Arial,sans-serif}.sheet{width:min(100% - 32px,980px);margin:24px auto;padding:34px;background:#fff;border:1px solid #bfd1d6;border-radius:14px}.head{display:flex;justify-content:space-between;gap:30px;border-bottom:3px solid #087f83;padding-bottom:20px}.brand h1,.head h2{margin:0;color:#12385d}.brand p{margin:7px 0 0}.meta{display:grid;grid-template-columns:auto 1fr;gap:7px 15px}.patient{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 30px;padding:20px 0}.patient div{display:grid;grid-template-columns:140px 1fr}.box{border:1px solid #244a63;padding:12px;margin:0 0 18px;line-height:1.5}h3{margin:18px 0 7px;color:#12385d}table{width:100%;border-collapse:collapse}th{background:#087f83;color:#fff}th,td{border:1px solid #31546b;padding:10px;text-align:left}.flag{font-weight:700}.actions{display:flex;justify-content:flex-end;margin:0 auto 12px;width:min(100% - 32px,1048px)}button{padding:10px 16px;border:0;border-radius:8px;background:#087f83;color:#fff;font-weight:700;cursor:pointer}@media print{body{background:#fff}.actions{display:none}.sheet{width:auto;margin:0;border:0;border-radius:0;padding:0}}@media(max-width:650px){.head,.patient{display:block}.meta{margin-top:18px}.patient div{grid-template-columns:115px 1fr;margin:7px 0}.sheet{padding:20px;overflow:auto}}</style></head><body><div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div><main class="sheet"><header class="head"><div class="brand"><h1>' . $esc(clinic_app_name()) . '</h1><p>Accurate results. Connected care.</p></div><div><h2>Laboratory Result</h2><div class="meta"><strong>Result ID</strong><span>' . $esc($details['resultNumber']) . '</span><strong>Released</strong><span>' . $esc($details['releasedAt'] ?: '-') . '</span><strong>Status</strong><span>' . $esc($details['status']) . '</span></div></div></header><section class="patient"><div><strong>Patient</strong><span>' . $esc($details['patientName']) . '</span></div><div><strong>Patient ID</strong><span>' . $esc($details['patientCode']) . '</span></div><div><strong>Request No.</strong><span>' . $esc($details['orderNumber']) . '</span></div><div><strong>Requested by</strong><span>' . $esc($details['doctorName']) . '</span></div><div><strong>Facility</strong><span>' . $esc($details['facilityName']) . '</span></div><div><strong>Test</strong><span>' . $esc($details['testName']) . '</span></div></section><h3>Findings Summary</h3><div class="box">' . nl2br($esc($details['findings'] ?: 'No findings recorded.')) . '</div><h3>Remarks</h3><div class="box">' . nl2br($esc($details['remarks'] ?: 'No remarks recorded.')) . '</div><h3>Result Values</h3><table><thead><tr><th>Test component</th><th>Result</th><th>Measurement unit</th><th>Reference Range</th><th>Range assessment</th></tr></thead><tbody>' . $valueRows . '</tbody></table><h3>Clinical Note</h3><div class="box">' . nl2br($esc($details['clinicalNote'] ?: 'No clinical note recorded.')) . '</div></main></body></html>';
     $html = ob_get_clean();
+    $html = str_replace('<h3>Findings Summary</h3>',
+        '<div class="box"><strong>Current listed test total:</strong> ' . $esc($listedTotal)
+        . '<br><small>Based on current test prices; this is not a payment receipt.</small></div><h3>Findings Summary</h3>',
+        $html);
     $printCss = '@page{size:A4;margin:16mm 14mm 18mm}*{box-sizing:border-box}thead{display:table-header-group}tfoot{display:table-footer-group}tr{break-inside:avoid;page-break-inside:avoid}.sheet{max-width:190mm}.head,.patient,.box,h3{break-inside:avoid}.report-footer{margin-top:24px;border-top:1px solid #93adb8;padding-top:12px;color:#31546b;font-size:11px;line-height:1.5}.report-footer strong{display:block;color:#102f43;margin-bottom:4px}.report-status{font-weight:700;color:#087f83}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.sheet{max-width:none!important;box-shadow:none!important}table{font-size:10pt}th,td{padding:6px!important;overflow-wrap:anywhere}h3{margin-top:14px}.report-footer{position:relative}}';
     $html = str_replace('</style>', $printCss . '</style>', $html);
     $facilityDetails = trim((string) ($details['facilityAddress'] ?? '') . ' | ' . (string) ($details['facilityPhone'] ?? ''), ' |');

@@ -1718,6 +1718,7 @@ form.card .form-actions,
 .drawer-info { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin-bottom: 20px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: #f8fbfc; }
 .drawer-info span { display: block; color: var(--muted); font-size: 8.5px; }
 .drawer-info strong { display: block; margin-top: 4px; font-size: 10.5px; }
+.result-price-note { margin: -10px 0 18px; color: var(--ink-700); font-size: 12px; line-height: 1.5; }
 html[data-text-size="large"] .data-table td,
 html[data-text-size="extra-large"] .data-table td { white-space: normal; }
 
@@ -3850,6 +3851,9 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
   overflow: hidden;
   border-radius: 20px;
 }
+.popup-layer > .drawer.drawer--result {
+  width: min(920px, calc(100vw - 32px));
+}
 .popup-layer > .drawer.open { transform: none; }
 .popup-layer > .drawer .drawer-head {
   position: relative;
@@ -3863,8 +3867,10 @@ html[data-text-size="extra-large"] .data-table td:has(time) {
 }
 .popup-layer > .drawer .drawer-body > form {
   display: flex;
-  min-height: 100%;
   flex-direction: column;
+}
+.popup-layer > .drawer .drawer-body > form:only-child {
+  min-height: 100%;
 }
 .popup-layer > .drawer .drawer-body > form > .form-actions {
   z-index: 2;
